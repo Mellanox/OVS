@@ -2168,7 +2168,6 @@ struct act_vars {
     struct flow_tnl tnl_mask;
     struct rte_flow_action_jump *jump;
     bool is_e2e_cache_flow;
-    struct rte_flow_action *shared;
     uintptr_t ct_counter_key;
     struct flows_counter_key flows_counter_key;
     enum tnl_type tnl_type;
@@ -2492,6 +2491,21 @@ add_miss_flow(struct netdev *netdev,
               uint32_t table_id,
               uint32_t mark_id,
               struct act_vars *act_vars);
+
+static struct rte_flow_action *
+find_action(const struct rte_flow_action *actions,
+            uint32_t type)
+{
+    while (actions && actions->type != RTE_FLOW_ACTION_TYPE_END) {
+        if (actions->type == type) {
+            return CONST_CAST(struct rte_flow_action *, actions);
+         }
+         actions++;
+    }
+
+    return NULL;
+}
+
 static int
 create_offload_flow(struct netdev *netdev,
                     const uint32_t group_id,
@@ -2503,6 +2517,7 @@ create_offload_flow(struct netdev *netdev,
                     struct flow_item *fi,
                     int pos)
 {
+    struct rte_flow_action *shared_action_ptr;
     struct rte_flow_attr attr = {
         .transfer = 1,
         .ingress = 1,
@@ -2570,7 +2585,8 @@ create_offload_flow(struct netdev *netdev,
         act_vars->jump->group = fi->next_e2e_table_id ? fi->next_e2e_table_id
                                                       : next_table_id;
     }
-    if (act_vars->shared) {
+    shared_action_ptr = find_action(actions, RTE_FLOW_ACTION_TYPE_SHARED);
+    if (shared_action_ptr) {
         struct rte_flow_shared_action *shared_action = NULL;
         uint32_t ct_shared_age_id;
 
@@ -2583,12 +2599,12 @@ create_offload_flow(struct netdev *netdev,
         } else {
             put_shared_age_id(ct_shared_age_id);
         }
-        act_vars->shared->conf = shared_action;
+        shared_action_ptr->conf = shared_action;
     }
     ret = create_rte_flow(netdev, &attr, items, actions,
                           error, fi, pos, act_vars);
-    if (act_vars->shared) {
-        act_vars->shared->conf = NULL;
+    if (shared_action_ptr) {
+        shared_action_ptr->conf = NULL;
     }
     if (ret) {
         goto err;
@@ -3612,8 +3628,7 @@ add_count_action(struct flow_actions *actions,
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_COUNT, count);
 
     if (act_vars->is_e2e_cache_flow && act_vars->ct_counter_key) {
-        act_vars->shared =
-            add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SHARED, NULL);
+        add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SHARED, NULL);
     }
     return 0;
 }
