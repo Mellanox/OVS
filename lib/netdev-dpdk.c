@@ -32,6 +32,7 @@
 #include <rte_errno.h>
 #include <rte_eth_ring.h>
 #include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 #include <rte_malloc.h>
 #include <rte_mbuf.h>
 #include <rte_meter.h>
@@ -1610,6 +1611,73 @@ netdev_dpdk_get_port_by_mac(const char *mac_str)
 }
 
 /*
+ * Given a pattern which represents a PCI device with a group of
+ * represenotrs (e.g. '0000:08:00.0,representor=[1-2,5]') - iterate
+ * to get each device name individually, for example:
+ *
+ * 1st iteration: "0000:08:00.0"
+ * 2nd iteration: "0000:08:00.0_representor_1"
+ * 3rd iteration: "0000:08:00.0_represnetor_2"
+ * 4th iteration: "0000:08:00.0_representor_5"
+ * 5th iteration: NULL
+
+ * The order of iterator calls:
+ * 1. init_representor_name_iter(...)
+ * 2. get_next_representor_name_iter(...); // loop to get next name until NULL
+ * 3. deinit_representor_name_iter(...)
+ */
+struct representor_name_iter {
+    char *devargs;
+    struct rte_eth_devargs eth_da;
+    int last_index;
+    int max_name_len;
+};
+
+static char *get_next_representor_name_iter(struct representor_name_iter *iter,
+                                            char *name, int *is_representor)
+{
+    if (iter->last_index == -1) {
+        /* return the device name */
+        *is_representor = 0;
+        ovs_strzcpy(name, iter->devargs, iter->max_name_len);
+        iter->last_index = 0;
+    } else {
+        /* return next representor name if exists*/
+        if (iter->last_index < iter->eth_da.nb_representor_ports) {
+            *is_representor = 1;
+            snprintf(name, iter->max_name_len, "%s_representor_%d",
+                     iter->devargs,
+                     iter->eth_da.representor_ports[iter->last_index]);
+            (iter->last_index)++;
+        } else {
+            return NULL;
+        }
+    }
+
+    return name;
+}
+
+static void init_representor_name_iter(const char *devargs, int max_name_len,
+                                       struct representor_name_iter *iter)
+{
+    int i;
+
+    memset((void *)iter, 0, sizeof(*iter));
+    /* get device name and store it in iterator */
+    iter->devargs = xmemdup0(devargs, strlen(devargs));
+    i = strcspn(iter->devargs, ",");
+    iter->devargs[i] = 0;
+    rte_eth_devargs_parse(iter->devargs+i + 1, &iter->eth_da);
+    iter->max_name_len = max_name_len;
+    iter->last_index = -1;
+}
+
+static void deinit_representor_name_iter(struct representor_name_iter *iter)
+{
+    free(iter->devargs);
+}
+
+/*
  * Normally, a PCI id is enough for identifying a specific DPDK port.
  * However, for some NICs having multiple ports sharing the same PCI
  * id, using PCI id won't work then.
@@ -1623,13 +1691,26 @@ static dpdk_port_t
 netdev_dpdk_process_devargs(struct netdev_dpdk *dev,
                             const char *devargs, char **errp)
 {
-    char *name;
+    char name[32];
     dpdk_port_t new_port_id = DPDK_ETH_PORT_ID_INVALID;
 
+    struct representor_name_iter iter;
+    char *devnamep = name;
+    int is_representor = 0;
+    init_representor_name_iter(devargs, sizeof(name), &iter);
+    /*
+     * get a PCI address as a device name (e.g. 0000:08:00.0)
+     * or a representor name (e.g. 0000:08:00.0_representor_2)
+     * as the device name
+     */
+    while (devnamep && !is_representor) {
+        devnamep = get_next_representor_name_iter(&iter,
+                                        name, &is_representor);
+    }
+    deinit_representor_name_iter(&iter);
     if (strncmp(devargs, "class=eth,mac=", 14) == 0) {
         new_port_id = netdev_dpdk_get_port_by_mac(&devargs[14]);
     } else {
-        name = xmemdup0(devargs, strcspn(devargs, ","));
         if (rte_eth_dev_get_port_by_name(name, &new_port_id)
                 || !rte_eth_dev_is_valid_port(new_port_id)) {
             /* Device not found in DPDK, attempt to attach it */
@@ -1642,11 +1723,13 @@ netdev_dpdk_process_devargs(struct netdev_dpdk *dev,
                 new_port_id = DPDK_ETH_PORT_ID_INVALID;
             }
         }
-        free(name);
     }
-
     if (new_port_id == DPDK_ETH_PORT_ID_INVALID) {
         VLOG_WARN_BUF(errp, "Error attaching device '%s' to DPDK", devargs);
+    } else {
+        /* Attach successful */
+        dev->attached = true;
+        VLOG_INFO("Device '%s' attached to DPDK", devargs);
     }
 
     return new_port_id;
