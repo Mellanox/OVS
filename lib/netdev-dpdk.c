@@ -367,6 +367,7 @@ struct ingress_policer {
 enum dpdk_hw_ol_features {
     NETDEV_RX_CHECKSUM_OFFLOAD = 1 << 0,
     NETDEV_RX_HW_CRC_STRIP = 1 << 1,
+    NETDEV_RX_HW_SCATTER = 1 << 2
 };
 
 /*
@@ -894,13 +895,11 @@ dpdk_eth_dev_port_config(struct netdev_dpdk *dev, int n_rxq, int n_txq)
     rte_eth_dev_info_get(dev->port_id, &info);
 
     /* As of DPDK 17.11.1 a few PMDs require to explicitly enable
-     * scatter to support jumbo RX. Checking the offload capabilities
-     * is not an option as PMDs are not required yet to report
-     * them. The only reliable info is the driver name and knowledge
-     * (testing or code review). Listing all such PMDs feels harder
-     * than highlighting the one known not to need scatter */
+     * scatter to support jumbo RX.
+     * Setting scatter for the device is done after checking for
+     * scatter support in the device capabilites. */
     if (dev->mtu > ETHER_MTU) {
-        if (strncmp(info.driver_name, "net_nfp", 7)) {
+        if (dev->hw_ol_features & NETDEV_RX_HW_SCATTER) {
             conf.rxmode.offloads |= DEV_RX_OFFLOAD_SCATTER;
         }
     }
@@ -1033,6 +1032,13 @@ dpdk_eth_dev_init(struct netdev_dpdk *dev)
         dev->hw_ol_features &= ~NETDEV_RX_CHECKSUM_OFFLOAD;
     } else {
         dev->hw_ol_features |= NETDEV_RX_CHECKSUM_OFFLOAD;
+    }
+
+    if (info.rx_offload_capa & DEV_RX_OFFLOAD_SCATTER) {
+        dev->hw_ol_features |= NETDEV_RX_HW_SCATTER;
+    } else {
+        /* Do not warn on lack of scatter support */
+        dev->hw_ol_features &= ~NETDEV_RX_HW_SCATTER;
     }
 
     n_rxq = MIN(info.max_rx_queues, dev->up.n_rxq);
