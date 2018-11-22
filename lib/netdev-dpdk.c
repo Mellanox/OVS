@@ -4257,6 +4257,14 @@ struct flow_actions {
 };
 
 static void
+free_flow_patterns(struct flow_patterns *patterns)
+{
+    free(patterns->items);
+    patterns->items = NULL;
+    patterns->cnt = 0;
+}
+
+static void
 dump_flow_pattern(struct rte_flow_item *item)
 {
     struct ds s;
@@ -4473,6 +4481,14 @@ add_flow_pattern(struct flow_patterns *patterns, enum rte_flow_item_type type,
 }
 
 static void
+free_flow_actions(struct flow_actions *actions)
+{
+    free(actions->actions);
+    actions->actions = NULL;
+    actions->cnt = 0;
+}
+
+static void
 add_flow_action(struct flow_actions *actions, enum rte_flow_action_type type,
                 const void *conf)
 {
@@ -4531,12 +4547,12 @@ add_flow_rss_action(struct flow_actions *actions,
 static int
 netdev_dpdk_add_rte_flow_offload(struct netdev *netdev,
                                  const struct match *match,
-                                 struct nlattr *nl_actions OVS_UNUSED,
-                                 size_t actions_len OVS_UNUSED,
+                                 struct nlattr *nl_actions,
+                                 size_t actions_len,
                                  const ovs_u128 *ufid,
                                  struct offload_info *info) {
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
-    const struct rte_flow_attr flow_attr = {
+    struct rte_flow_attr flow_attr = {
         .group = 0,
         .priority = 0,
         .ingress = 1,
@@ -4547,6 +4563,7 @@ netdev_dpdk_add_rte_flow_offload(struct netdev *netdev,
     struct rte_flow *flow;
     struct rte_flow_error error;
     uint8_t *ipv4_next_proto_mask = NULL;
+    struct action_rss_data *rss = NULL;
     int ret = 0;
 
     /* Eth */
@@ -4734,20 +4751,88 @@ end_proto_check:
 
     add_flow_pattern(&patterns, RTE_FLOW_ITEM_TYPE_END, NULL, NULL);
 
-    struct rte_flow_action_mark mark;
-    struct action_rss_data *rss;
+    const struct nlattr *a;
+    unsigned int left;
 
-    mark.id = info->flow_mark;
-    add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_MARK, &mark);
-
-    ovs_mutex_lock(&dev->mutex);
-
-    rss = add_flow_rss_action(&actions, netdev);
+    if (!actions_len || !nl_actions) {
+        VLOG_DBG("%s: skip flow offload without actions\n",
+                        netdev_get_name(netdev));
+        ret = -1;
+        goto out;
+    }
+    NL_ATTR_FOR_EACH_UNSAFE (a, left, nl_actions, actions_len) {
+        int type = nl_attr_type(a);
+        switch ((enum ovs_action_attr) type) {
+        case OVS_ACTION_ATTR_OUTPUT: {
+            struct rte_flow_action_port_id port_id;
+            odp_port_t odp_port = nl_attr_get_odp_port(a);
+            /* Output port should be hardware port number. */
+            struct netdev *dst_netdev = netdev_ports_get(odp_port,
+                                                  info->dpif_class);
+            if (!dst_netdev) {
+                VLOG_WARN("Cannot find dpdk port %u", odp_to_u32(odp_port));
+                continue;
+            }
+            struct netdev_dpdk *dst_dev = netdev_dpdk_cast(dst_netdev);
+            port_id.id = dst_dev->port_id;
+            port_id.original = 0;
+            add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_PORT_ID, &port_id);
+            break;
+        }
+        case OVS_ACTION_ATTR_PUSH_VLAN:
+        case OVS_ACTION_ATTR_POP_VLAN:
+        case OVS_ACTION_ATTR_UNSPEC:
+        case OVS_ACTION_ATTR_USERSPACE:
+        case OVS_ACTION_ATTR_SET:
+        case OVS_ACTION_ATTR_SAMPLE:
+        case OVS_ACTION_ATTR_RECIRC:
+        case OVS_ACTION_ATTR_HASH:
+        case OVS_ACTION_ATTR_PUSH_MPLS:
+        case OVS_ACTION_ATTR_POP_MPLS:
+        case OVS_ACTION_ATTR_SET_MASKED:
+        case OVS_ACTION_ATTR_CT:
+        case OVS_ACTION_ATTR_TRUNC:
+        case OVS_ACTION_ATTR_PUSH_ETH:
+        case OVS_ACTION_ATTR_POP_ETH:
+        case OVS_ACTION_ATTR_CT_CLEAR:
+        case OVS_ACTION_ATTR_PUSH_NSH:
+        case OVS_ACTION_ATTR_POP_NSH:
+        case OVS_ACTION_ATTR_METER:
+        case OVS_ACTION_ATTR_TUNNEL_PUSH:
+        case OVS_ACTION_ATTR_TUNNEL_POP:
+        case OVS_ACTION_ATTR_CLONE:
+        case __OVS_ACTION_ATTR_MAX:
+            goto mark_action;
+            break;
+        }
+    }
     add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_END, NULL);
-
+    ovs_mutex_lock(&dev->mutex);
+    flow_attr.transfer = 1;
     flow = rte_flow_create(dev->port_id, &flow_attr, patterns.items,
                            actions.actions, &error);
+    ovs_mutex_unlock(&dev->mutex);
+    if (!flow) {
+        VLOG_ERR("%s: rte flow creat offload error: %u : message : %s\n",
+                 netdev_get_name(netdev), error.type, error.message);
+    } else {
+        goto install_flow;
+    }
 
+    /*
+     * If flow actions failed to be offloaded - try offloading the mark action
+     */
+    struct rte_flow_action_mark mark;
+mark_action:
+    free_flow_actions(&actions);
+    mark.id = info->flow_mark;
+    add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_MARK, &mark);
+    ovs_mutex_lock(&dev->mutex);
+    rss = add_flow_rss_action(&actions, netdev);
+    add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_END, NULL);
+    flow_attr.transfer = 0;
+    flow = rte_flow_create(dev->port_id, &flow_attr, patterns.items,
+                           actions.actions, &error);
     ovs_mutex_unlock(&dev->mutex);
 
     free(rss);
@@ -4757,13 +4842,14 @@ end_proto_check:
         ret = -1;
         goto out;
     }
+
+install_flow:
     ufid_to_rte_flow_associate(ufid, flow);
     VLOG_DBG("%s: installed flow %p by ufid "UUID_FMT"\n",
              netdev_get_name(netdev), flow, UUID_ARGS((struct uuid *)ufid));
-
 out:
-    free(patterns.items);
-    free(actions.actions);
+    free_flow_patterns(&patterns);
+    free_flow_actions(&actions);
     return ret;
 }
 
