@@ -527,6 +527,7 @@ struct dp_netdev_flow {
 
     bool dead;
     uint32_t mark;               /* Unique flow mark assigned to a flow */
+    bool is_hwol;                /* true if flow is fully offloaded */
 
     /* Statistics. */
     struct dp_netdev_flow_stats stats;
@@ -2410,6 +2411,7 @@ dp_netdev_flow_offload_put(struct dp_flow_offload_item *offload)
         }
     }
     info.flow_mark = mark;
+    info.is_hwol = false;
 
     ovs_mutex_lock(&pmd->dp->port_mutex);
     port = dp_netdev_lookup_port(pmd->dp, in_port);
@@ -2422,6 +2424,7 @@ dp_netdev_flow_offload_put(struct dp_flow_offload_item *offload)
                           offload->actions_len, &flow->mega_ufid, &info,
                           NULL);
     ovs_mutex_unlock(&pmd->dp->port_mutex);
+    flow->is_hwol = info.is_hwol;
 
     if (ret) {
         goto err_free;
@@ -3073,7 +3076,7 @@ dp_netdev_flow_to_dpif_flow(const struct dp_netdev_flow *netdev_flow,
     flow->pmd_id = netdev_flow->pmd_id;
     get_dpif_flow_stats(netdev_flow, &flow->stats);
 
-    flow->attrs.offloaded = false;
+    flow->attrs.offloaded = netdev_flow->is_hwol;
     flow->attrs.dp_layer = "ovs";
 }
 
@@ -3244,6 +3247,7 @@ dp_netdev_flow_add(struct dp_netdev_pmd_thread *pmd,
     flow->dead = false;
     flow->batch = NULL;
     flow->mark = INVALID_FLOW_MARK;
+    flow->is_hwol = false;
     *CONST_CAST(unsigned *, &flow->pmd_id) = pmd->core_id;
     *CONST_CAST(struct flow *, &flow->flow) = match->flow;
     *CONST_CAST(ovs_u128 *, &flow->ufid) = *ufid;
@@ -3599,6 +3603,38 @@ dpif_netdev_flow_dump_thread_destroy(struct dpif_flow_dump_thread *thread_)
 }
 
 static int
+dpif_netdev_offload_used(struct dp_netdev_flow *netdev_flow,
+                         struct dp_netdev_pmd_thread *pmd)
+{
+    int ret;
+    struct dp_netdev_port *port;
+    struct dpif_flow_stats stats;
+
+    odp_port_t in_port = netdev_flow->flow.in_port.odp_port;
+
+    ovs_mutex_lock(&pmd->dp->port_mutex);
+    port = dp_netdev_lookup_port(pmd->dp, in_port);
+    ovs_assert(port);
+    if (!port) {
+        ovs_mutex_unlock(&pmd->dp->port_mutex);
+        return -1;
+    }
+    /* get offloaded stats */
+    ret = netdev_flow_stats_get(port->netdev, &netdev_flow->mega_ufid, &stats);
+    ovs_mutex_unlock(&pmd->dp->port_mutex);
+    if (ret) {
+        return -1;
+    }
+    if (stats.n_packets) {
+        atomic_store_relaxed(&netdev_flow->stats.used, pmd->ctx.now / 1000);
+        non_atomic_ullong_add(&netdev_flow->stats.packet_count, stats.n_packets);
+        non_atomic_ullong_add(&netdev_flow->stats.byte_count, stats.n_bytes);
+    }
+
+    return 0;
+}
+
+static int
 dpif_netdev_flow_dump_next(struct dpif_flow_dump_thread *thread_,
                            struct dpif_flow *flows, int max_flows)
 {
@@ -3630,6 +3666,7 @@ dpif_netdev_flow_dump_next(struct dpif_flow_dump_thread *thread_,
         do {
             for (n_flows = 0; n_flows < flow_limit; n_flows++) {
                 struct cmap_node *node;
+                struct dp_netdev_flow *flow;
 
                 node = cmap_next_position(&pmd->flow_table, &dump->flow_pos);
                 if (!node) {
@@ -3638,6 +3675,11 @@ dpif_netdev_flow_dump_next(struct dpif_flow_dump_thread *thread_,
                 netdev_flows[n_flows] = CONTAINER_OF(node,
                                                      struct dp_netdev_flow,
                                                      node);
+                flow = netdev_flows[n_flows];
+                /* Read hardware stats in case of hardware offload */
+                if (netdev_is_flow_api_enabled() && flow->is_hwol) {
+                    dpif_netdev_offload_used(flow, pmd);
+                }
             }
             /* When finishing dumping the current pmd thread, moves to
              * the next. */
