@@ -867,6 +867,13 @@ struct netdev_class {
     int (*flow_del)(struct netdev *, const ovs_u128 *ufid,
                     struct dpif_flow_stats *);
 
+    /* Get offloaded flow stats. When a flow is fully offloaded, reading the
+     * PMD stats will result in no updates. In order to reflect the actual
+     * stats the hardware must be querried.
+     * Return 0 if successful, otherwise returns a positive errno value. */
+    int (*flow_stats_get)(struct netdev *netdev, const ovs_u128 *ufid,
+                struct dpif_flow_stats *stats);
+
     /* Initializies the netdev flow api.
      * Return 0 if successful, otherwise returns a positive errno value. */
     int (*init_flow_api)(struct netdev *);
@@ -893,6 +900,6 @@ extern const struct netdev_class netdev_tap_class;
 }
 #endif
 
-#define NO_OFFLOAD_API NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+#define NO_OFFLOAD_API NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
 
 #endif /* netdev.h */

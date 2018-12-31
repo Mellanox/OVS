@@ -37,6 +37,7 @@ void free_dpdk_buf(struct dp_packet *);
             netdev_vport_flow_put,                                 \
             NULL,                                                  \
             netdev_vport_flow_del,                                 \
+            NULL,                                                  \
             netdev_vport_init_flow_api
 #else
 
