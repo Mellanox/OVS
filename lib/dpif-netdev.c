@@ -3597,6 +3597,38 @@ dpif_netdev_flow_dump_thread_destroy(struct dpif_flow_dump_thread *thread_)
 }
 
 static int
+dp_netdev_offload_used(struct dp_netdev_flow *netdev_flow,
+                       struct dp_netdev_pmd_thread *pmd)
+{
+    int ret;
+    struct dp_netdev_port *port;
+    struct dpif_flow_stats stats;
+
+    odp_port_t in_port = netdev_flow->flow.in_port.odp_port;
+
+    ovs_mutex_lock(&pmd->dp->port_mutex);
+    port = dp_netdev_lookup_port(pmd->dp, in_port);
+    ovs_assert(port);
+    if (!port) {
+            ovs_mutex_unlock(&pmd->dp->port_mutex);
+            return -1;
+    }
+    /* get offloaded stats */
+    ret = netdev_flow_stats_get(port->netdev,
+                    &netdev_flow->mega_ufid, &stats);
+    ovs_mutex_unlock(&pmd->dp->port_mutex);
+    if (ret) {
+            return -1;
+    }
+    atomic_store_relaxed(&netdev_flow->stats.used,
+                    pmd->ctx.now / 1000);
+    non_atomic_ullong_add(&netdev_flow->stats.packet_count, stats.n_packets);
+    non_atomic_ullong_add(&netdev_flow->stats.byte_count, stats.n_bytes);
+
+    return 0;
+}
+
+static int
 dpif_netdev_flow_dump_next(struct dpif_flow_dump_thread *thread_,
                            struct dpif_flow *flows, int max_flows)
 {
@@ -3628,14 +3660,21 @@ dpif_netdev_flow_dump_next(struct dpif_flow_dump_thread *thread_,
         do {
             for (n_flows = 0; n_flows < flow_limit; n_flows++) {
                 struct cmap_node *node;
+                struct dp_netdev_flow *flow;
 
                 node = cmap_next_position(&pmd->flow_table, &dump->flow_pos);
                 if (!node) {
                     break;
                 }
-                netdev_flows[n_flows] = CONTAINER_OF(node,
-                                                     struct dp_netdev_flow,
-                                                     node);
+                flow = netdev_flows[n_flows] = CONTAINER_OF(node,
+                                                    struct dp_netdev_flow,
+                                                    node);
+                /* Read offload stats in case ufid equals mega_ufid. */
+                if (netdev_is_flow_api_enabled() &&
+                   (!memcmp(&flow->ufid, &flow->mega_ufid,
+                            sizeof flow->ufid))) {
+                    dp_netdev_offload_used(flow, pmd);
+                }
             }
             /* When finishing dumping the current pmd thread, moves to
              * the next. */

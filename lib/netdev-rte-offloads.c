@@ -1348,10 +1348,10 @@ netdev_dpdk_flow_stats_get(struct netdev *netdev OVS_UNUSED,
         return EINVAL;
     }
 
-    struct rte_flow_action action = {RTE_FLOW_ACTION_TYPE_COUNT, NULL};
-    memset(&query, 0, sizeof query);
-    /* reset counters after query */
-    query.reset = 1;
+    struct flow_actions actions = { .actions = NULL, .cnt = 0 };
+    struct rte_flow_action_count count = {0};
+    netdev_rte_add_count_flow_action(&count, &actions);
+    add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_END, NULL);
 
     struct rte_flow *rte_flow;
     struct netdev *netd;
@@ -1368,8 +1368,11 @@ netdev_dpdk_flow_stats_get(struct netdev *netdev OVS_UNUSED,
         if (rte_flow) {
             dpdk_port_id = netdev_dpdk_get_port(netd);
             if (dpdk_port_id != DPDK_ETH_PORT_ID_INVALID) {
+                memset(&query, 0, sizeof query);
+                /* reset counters after query */
+                query.reset = 1;
                 ret = rte_flow_query(dpdk_port_id, rte_flow,
-                                     &action, &query, &error);
+                                     actions.actions, &query, &error);
                 if (ret) {
                     return -ret;
                 }
