@@ -50,6 +50,8 @@ int netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
                                  struct dpif_flow_stats *stats);
 int netdev_rte_offloads_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
                                  struct dpif_flow_stats *stats);
+int netdev_dpdk_flow_stats_get(struct netdev *netdev, const ovs_u128 *ufid,
+                               struct dpif_flow_stats *stats);
 
 /*
  * Called by dpif netdev when a port is added/deleted
@@ -63,6 +65,9 @@ void netdev_rte_offload_preprocess(struct dp_packet *packet, uint32_t mark);
 
 #define DPDK_FLOW_OFFLOAD_API                   \
     .flow_put = netdev_rte_offloads_flow_put,   \
-    .flow_del = netdev_rte_offloads_flow_del
+    .flow_del = netdev_rte_offloads_flow_del,   \
+    .flow_stats_get = netdev_dpdk_flow_stats_get
+
+#define DPDK_ETH_PORT_ID_INVALID    RTE_MAX_ETHPORTS
 
 #endif /* netdev-rte-offloads.h */

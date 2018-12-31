@@ -227,6 +227,8 @@ int netdev_flow_get(struct netdev *, struct match *, struct nlattr **actions,
                     struct dpif_flow_attrs *, struct ofpbuf *wbuffer);
 int netdev_flow_del(struct netdev *, const ovs_u128 *,
                     struct dpif_flow_stats *);
+int netdev_flow_stats_get(struct netdev *, const ovs_u128 *,
+                          struct dpif_flow_stats *);
 int netdev_init_flow_api(struct netdev *);
 uint32_t netdev_get_block_id(struct netdev *);
 int netdev_get_hw_info(struct netdev *, int);

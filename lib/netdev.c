@@ -2231,6 +2231,17 @@ netdev_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
 }
 
 int
+netdev_flow_stats_get(struct netdev *netdev, const ovs_u128 *ufid,
+                      struct dpif_flow_stats *stats)
+{
+    const struct netdev_class *class = netdev->netdev_class;
+
+    return (class->flow_stats_get
+            ? class->flow_stats_get(netdev, ufid, stats)
+            : EOPNOTSUPP);
+}
+
+int
 netdev_init_flow_api(struct netdev *netdev)
 {
     const struct netdev_class *class = netdev->netdev_class;
