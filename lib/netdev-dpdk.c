@@ -4014,7 +4014,6 @@ unlock:
     return err;
 }
 
-
 /* Find rte_flow with @ufid */
 static struct rte_flow *
 ufid_to_rte_flow_find(const ovs_u128 *ufid) {
@@ -4069,6 +4068,35 @@ ufid_to_rte_flow_disassociate(const ovs_u128 *ufid) {
               UUID_ARGS((struct uuid *)ufid));
 }
 
+static int
+netdev_dpdk_flow_stats_get(struct netdev *netdev, const ovs_u128 *ufid,
+                     struct dpif_flow_stats *stats) {
+
+    int ret = 0;
+    struct rte_flow_error error;
+    struct rte_flow_query_count query;
+    struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
+
+    struct rte_flow *rte_flow = ufid_to_dpdk_rte_flow(ufid);
+    if (!rte_flow) {
+        return EINVAL;
+    }
+    memset(&query, 0, sizeof(query));
+    /* reset counters after query */
+    query.reset = 1;
+    ret = rte_flow_query(dev->port_id, rte_flow, RTE_FLOW_ACTION_TYPE_COUNT,
+                         &query, &error);
+    if (ret) {
+        return -ret;
+    }
+
+    stats->n_packets = (query.hits_set) ? query.hits : 0;
+    stats->n_bytes = (query.bytes_set) ? query.bytes : 0;
+    stats->used = 0;
+    stats->tcp_flags = 0;
+    return ret;
+}
+
 /*
  * To avoid individual xrealloc calls for each new element, a 'curent_max'
  * is used to keep track of current allocated number of elements. Starts
@@ -4096,6 +4124,7 @@ struct flow_actions {
     netdev_dpdk_flow_put,                                     \
     NULL,                   /* flow_get */                    \
     netdev_dpdk_flow_del,                                     \
+    netdev_dpdk_flow_stats_get,                               \
     NULL                    /* init_flow_api */
 
 
