@@ -18,8 +18,12 @@
 #define NETDEV_DPDK_H
 
 #include <config.h>
+#include <stdint.h>
 
 #include "openvswitch/compiler.h"
+
+/* DPDK library uses uint16_t for port_id. */
+typedef uint16_t dpdk_port_t;
 
 struct dp_packet;
 struct netdev;
@@ -46,6 +50,8 @@ netdev_dpdk_rte_flow_create(struct netdev *netdev,
                             struct rte_flow_error *error);
 
 bool netdev_dpdk_is_uplink_port(const struct netdev *netdev);
+
+dpdk_port_t netdev_dpdk_get_port(const struct netdev *netdev);
 
 #else
 

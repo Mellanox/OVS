@@ -1290,6 +1290,61 @@ netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
     return 0;
 }
 
+int
+netdev_dpdk_flow_stats_get(struct netdev *netdev OVS_UNUSED,
+                           const ovs_u128 *ufid,
+                           struct dpif_flow_stats *stats)
+{
+    int ret;
+    struct rte_flow_error error;
+    struct rte_flow_query_count query;
+
+    struct ufid_to_odp *uto = ufid_to_portid_get(ufid);
+    if (!uto) {
+        return EINVAL;
+    }
+    struct netdev_rte_port *rte_port = netdev_rte_port_search(uto->dp_port,
+                                                              &port_map);
+    if (!rte_port) {
+        return EINVAL;
+    }
+    struct ufid_hw_offload *uho = ufid_hw_offload_find(ufid,
+                                                       &rte_port->ufid_to_rte);
+    if (!uho) {
+        return EINVAL;
+    }
+
+    struct rte_flow_action action = {RTE_FLOW_ACTION_TYPE_COUNT, NULL};
+    memset(stats, 0, sizeof *stats);
+    memset(&query, 0, sizeof query);
+    /* reset counters after query */
+    query.reset = 1;
+
+    struct rte_flow *rte_flow;
+    struct netdev *netd;
+    dpdk_port_t dpdk_port_id;
+    for (int i = 0 ; i < uho->curr_idx ; i++) {
+        netd = uho->rte_flow_data[i].netdev;
+        rte_flow = uho->rte_flow_data[i].flow;
+        if (rte_flow) {
+            dpdk_port_id = netdev_dpdk_get_port(netd);
+            if (dpdk_port_id != DPDK_ETH_PORT_ID_INVALID) {
+                ret = rte_flow_query(dpdk_port_id, rte_flow,
+                                     &action, &query, &error);
+                if (ret) {
+                    return -ret;
+                }
+                stats->n_packets += (query.hits_set) ? query.hits : 0;
+                stats->n_bytes += (query.bytes_set) ? query.bytes : 0;
+                stats->used = 0;
+                stats->tcp_flags = 0;
+            }
+        }
+    }
+
+    return 0;
+}
+
 static int
 netdev_offloads_flow_del(const ovs_u128 *ufid)
 {

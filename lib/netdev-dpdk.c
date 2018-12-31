@@ -153,10 +153,6 @@ BUILD_ASSERT_DECL((MAX_NB_MBUF / ROUND_DOWN_POW2(MAX_NB_MBUF / MIN_NB_MBUF))
 #define OVS_VHOST_QUEUE_DISABLED    (-2) /* Queue was disabled by guest and not
                                           * yet mapped to another queue. */
 
-#define DPDK_ETH_PORT_ID_INVALID    RTE_MAX_ETHPORTS
-
-/* DPDK library uses uint16_t for port_id. */
-typedef uint16_t dpdk_port_t;
 #define DPDK_PORT_ID_FMT "%"PRIu16
 
 #define VHOST_ENQ_RETRY_NUM 8
@@ -499,10 +495,24 @@ is_dpdk_class(const struct netdev_class *class)
            || class->destruct == netdev_dpdk_vhost_destruct;
 }
 
+static struct netdev_dpdk *
+netdev_dpdk_cast(const struct netdev *netdev)
+{
+    return CONTAINER_OF(netdev, struct netdev_dpdk, up);
+}
+
 bool
 netdev_dpdk_is_uplink_port(const struct netdev *netdev)
 {
     return CONTAINER_OF(netdev, struct netdev_dpdk, up)->is_uplink_port;
+}
+
+dpdk_port_t
+netdev_dpdk_get_port(const struct netdev *netdev)
+{
+    struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
+
+    return dev ? dev->port_id : DPDK_ETH_PORT_ID_INVALID;
 }
 
 /* DPDK NIC drivers allocate RX buffers at a particular granularity, typically
@@ -1097,12 +1107,6 @@ dpdk_eth_dev_init(struct netdev_dpdk *dev)
     mbp_priv = rte_mempool_get_priv(dev->dpdk_mp->mp);
     dev->buf_size = mbp_priv->mbuf_data_room_size - RTE_PKTMBUF_HEADROOM;
     return 0;
-}
-
-static struct netdev_dpdk *
-netdev_dpdk_cast(const struct netdev *netdev)
-{
-    return CONTAINER_OF(netdev, struct netdev_dpdk, up);
 }
 
 static struct netdev *
@@ -4244,7 +4248,7 @@ netdev_dpdk_rte_flow_create(struct netdev *netdev,
 }
 
 #define NETDEV_DPDK_CLASS_COMMON                            \
-    .is_pmd = true,                                         \
+    .is_pmd = true,                                     \
     .alloc = netdev_dpdk_alloc,                             \
     .dealloc = netdev_dpdk_dealloc,                         \
     .get_config = netdev_dpdk_get_config,                   \
