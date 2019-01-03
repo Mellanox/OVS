@@ -51,6 +51,10 @@
 #include "netdev-linux.h"
 #endif
 
+#ifdef DPDK_NETDEV
+#include "netdev-rte-offloads.h"
+#endif
+
 VLOG_DEFINE_THIS_MODULE(netdev_vport);
 
 #define GENEVE_DST_PORT 6081
@@ -970,13 +974,19 @@ netdev_vport_get_ifindex(const struct netdev *netdev_)
 
     return linux_get_ifindex(name);
 }
-
 #define NETDEV_VPORT_GET_IFINDEX netdev_vport_get_ifindex
+#ifdef DPDK_NETDEV
+#define NETDEV_FLOW_OFFLOAD_API DPDK_VPORT_FLOW_OFFLOAD_API 
+#else
+
 #define NETDEV_FLOW_OFFLOAD_API LINUX_FLOW_OFFLOAD_API
+#endif
 #else /* !__linux__ */
 #define NETDEV_VPORT_GET_IFINDEX NULL
 #define NETDEV_FLOW_OFFLOAD_API NO_OFFLOAD_API
 #endif /* __linux__ */
+
+
 
 #define VPORT_FUNCTIONS(GET_CONFIG, SET_CONFIG,             \
                         GET_TUNNEL_CONFIG, GET_STATUS,      \

@@ -78,6 +78,8 @@
 #include "util.h"
 #include "uuid.h"
 
+#include "netdev-offload-api.h"
+
 VLOG_DEFINE_THIS_MODULE(dpif_netdev);
 
 #define FLOW_DUMP_MAX_BATCH 50
@@ -1829,7 +1831,9 @@ dpif_netdev_port_add(struct dpif *dpif, struct netdev *netdev,
     if (!error) {
         *port_nop = port_no;
         error = do_add_port(dp, dpif_port, netdev_get_type(netdev), port_no);
+        NETDEV_OFFLOAD_ADD_PORT(port_no, netdev);
     }
+
     ovs_mutex_unlock(&dp->port_mutex);
 
     return error;
@@ -1850,6 +1854,7 @@ dpif_netdev_port_del(struct dpif *dpif, odp_port_t port_no)
         error = get_port_by_number(dp, port_no, &port);
         if (!error) {
             do_del_port(dp, port);
+            NETDEV_OFFLOAD_DEL_PORT(port_no);
         }
     }
     ovs_mutex_unlock(&dp->port_mutex);
@@ -2058,7 +2063,7 @@ dp_netdev_pmd_find_dpcls(struct dp_netdev_pmd_thread *pmd,
     return cls;
 }
 
-#define MAX_FLOW_MARK       (UINT32_MAX - 1)
+#define MAX_FLOW_MARK       (1 << 24)
 #define INVALID_FLOW_MARK   (UINT32_MAX)
 
 struct megaflow_to_mark_data {
@@ -2085,7 +2090,7 @@ flow_mark_alloc(void)
 
     if (!flow_mark.pool) {
         /* Haven't initiated yet, do it here */
-        flow_mark.pool = id_pool_create(0, MAX_FLOW_MARK);
+        flow_mark.pool = id_pool_create(OFFLOAD_RESERVED_MARK , MAX_FLOW_MARK);
     }
 
     if (id_pool_alloc_id(flow_mark.pool, &mark)) {

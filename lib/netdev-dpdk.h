@@ -22,12 +22,22 @@
 #include "openvswitch/compiler.h"
 
 struct dp_packet;
-
+struct netdev_class;
+struct netdev;
 #ifdef DPDK_NETDEV
 
 void netdev_dpdk_register(void);
 void free_dpdk_buf(struct dp_packet *);
 
+#define DPDK_VPORT_FLOW_OFFLOAD_API                                \
+            NULL,                                                  \
+            NULL,                                                  \
+            NULL,                                                  \
+            NULL,                                                  \
+            netdev_vport_flow_put,                                 \
+            NULL,                                                  \
+            netdev_vport_flow_del,                                 \
+            netdev_vport_init_flow_api
 #else
 
 static inline void
@@ -42,5 +52,9 @@ free_dpdk_buf(struct dp_packet *buf OVS_UNUSED)
 }
 
 #endif
+
+bool netdev_dpdk_is_dpdk_class(const struct netdev_class *class);
+
+int  netdev_dpdk_get_port_id(const struct netdev * netdev);
 
 #endif /* netdev-dpdk.h */
