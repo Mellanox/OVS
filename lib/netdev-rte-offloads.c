@@ -1511,6 +1511,7 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
             }
 
             rte_port->default_rte_flow[vport->table_id] = def_flow;
+            info->is_hwol = true;
         }
     } else { /* Previous actions cannot be offloaded to hw,
                 try offloading Mark and RSS actions */
@@ -1790,7 +1791,7 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port * rte_port,
                                         struct nlattr *nl_actions,
                                         size_t actions_len,
                                         const ovs_u128 * ufid ,
-                                        struct offload_info * info OVS_UNUSED,
+                                        struct offload_info * info,
                               struct dpif_flow_stats * flow_stats  OVS_UNUSED)
 {
     if (!actions_len || !nl_actions) {
@@ -1880,7 +1881,7 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port * rte_port,
         } else {
             VLOG_DBG("second flow of decap created");
         }
-
+        info->is_hwol = false;
         ufid_hw_offload_add_rte_flow(ufid_hw_offload, flow,
                                              rte_port_phy_arr[i]->dpdk_port_id,
                                              0);
@@ -1897,7 +1898,7 @@ out:
 
 int netdev_vport_flow_put(struct netdev * netdev , struct match * match,
               struct nlattr *actions OVS_UNUSED, size_t actions_len OVS_UNUSED,
-              const ovs_u128 * ufid , struct offload_info * info OVS_UNUSED,
+              const ovs_u128 * ufid , struct offload_info * info,
               struct dpif_flow_stats * flow_stats  OVS_UNUSED)
 {
     odp_port_t in_port = match->flow.in_port.odp_port;
