@@ -4128,8 +4128,8 @@ struct flow_actions {
 
 #define NETDEV_DPDK_CLASS(NAME, INIT, CONSTRUCT, DESTRUCT,    \
                           SET_CONFIG, SET_TX_MULTIQ, SEND,    \
-                          GET_CARRIER, GET_STATS,			  \
-                          GET_CUSTOM_STATS,					  \
+                          GET_CARRIER, GET_STATS,             \
+                          GET_CUSTOM_STATS,                   \
                           GET_FEATURES, GET_STATUS,           \
                           RECONFIGURE, RXQ_RECV)              \
 {                                                             \
@@ -4164,7 +4164,7 @@ struct flow_actions {
     netdev_dpdk_get_carrier_resets,                           \
     netdev_dpdk_set_miimon,                                   \
     GET_STATS,                                                \
-    GET_CUSTOM_STATS,										  \
+    GET_CUSTOM_STATS,                                         \
     GET_FEATURES,                                             \
     NULL,                       /* set_advertisements */      \
     NULL,                       /* get_pt_mode */             \

@@ -522,6 +522,7 @@ struct dp_netdev_flow {
 
     bool dead;
     uint32_t mark;               /* Unique flow mark assigned to a flow */
+    bool is_hwol;                /* true if flow is fully offloaded */
 
     /* Statistics. */
     struct dp_netdev_flow_stats stats;
@@ -2371,6 +2372,7 @@ dp_netdev_flow_offload_put(struct dp_flow_offload_item *offload)
                           offload->actions_len, &flow->mega_ufid, &info,
                           NULL);
     ovs_mutex_unlock(&pmd->dp->hw_offload_mutex);
+    flow->is_hwol = info.is_hwol;
 
     if (ret) {
         if (!modification) {
@@ -3636,10 +3638,9 @@ dpif_netdev_flow_dump_next(struct dpif_flow_dump_thread *thread_,
                 flow = netdev_flows[n_flows] = CONTAINER_OF(node,
                                                     struct dp_netdev_flow,
                                                     node);
-                /* Read offload stats in case ufid equals mega_ufid. */
+                /* Read offload stats in case fully HW offloaded */
                 if (netdev_is_flow_api_enabled() &&
-                   (!memcmp(&flow->ufid, &flow->mega_ufid,
-                            sizeof flow->ufid))) {
+                   (flow->is_hwol)) {
                     dp_netdev_offload_used(flow, pmd);
                 }
             }
