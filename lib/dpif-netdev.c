@@ -545,6 +545,7 @@ struct dp_netdev_flow {
 
     bool dead;
     uint32_t mark;               /* Unique flow mark assigned to a flow */
+    bool is_hwol;                /* true if flow is fully offloaded */
 
     /* Statistics. */
     struct dp_netdev_flow_stats stats;
@@ -2389,6 +2390,7 @@ dp_netdev_flow_offload_put(struct dp_flow_offload_item *offload)
         }
     }
     info.flow_mark = mark;
+    info.is_hwol = false;
 
     ovs_mutex_lock(&pmd->dp->port_mutex);
     port = dp_netdev_lookup_port(pmd->dp, in_port);
@@ -2401,6 +2403,7 @@ dp_netdev_flow_offload_put(struct dp_flow_offload_item *offload)
                           offload->actions_len, &flow->mega_ufid, &info,
                           NULL);
     ovs_mutex_unlock(&pmd->dp->port_mutex);
+    flow->is_hwol = info.is_hwol;
 
     if (ret) {
         if (!modification) {
@@ -3071,8 +3074,8 @@ dp_netdev_flow_to_dpif_flow(const struct dp_netdev_flow *netdev_flow,
     flow->pmd_id = netdev_flow->pmd_id;
     get_dpif_flow_stats(netdev_flow, &flow->stats);
 
-    flow->attrs.offloaded = false;
-    flow->attrs.dp_layer = "ovs";
+    flow->attrs.offloaded = netdev_flow->is_hwol;
+    flow->attrs.dp_layer = "ovs-dpdk";
 }
 
 static int
@@ -3242,6 +3245,7 @@ dp_netdev_flow_add(struct dp_netdev_pmd_thread *pmd,
     flow->dead = false;
     flow->batch = NULL;
     flow->mark = INVALID_FLOW_MARK;
+    flow->is_hwol = false;
     *CONST_CAST(unsigned *, &flow->pmd_id) = pmd->core_id;
     *CONST_CAST(struct flow *, &flow->flow) = match->flow;
     *CONST_CAST(ovs_u128 *, &flow->ufid) = *ufid;
@@ -3670,10 +3674,8 @@ dpif_netdev_flow_dump_next(struct dpif_flow_dump_thread *thread_,
                                                      struct dp_netdev_flow,
                                                      node);
                 flow = netdev_flows[n_flows];
-                /* Read offload stats in case ufid equals mega_ufid. */
-                if (netdev_is_flow_api_enabled() &&
-                    !memcmp(&flow->ufid, &flow->mega_ufid,
-                            sizeof flow->ufid)) {
+                /* Read hardware stats in case of hardware offload */
+                if (netdev_is_flow_api_enabled() && flow->is_hwol) {
                     dpif_netdev_offload_used(flow, pmd);
                 }
             }
