@@ -35,7 +35,7 @@
 #include "uuid.h"
 #include "netdev.h"
 #include <rte_flow.h>
-
+#include "dp-packet.h"
 
 VLOG_DEFINE_THIS_MODULE(netdev_rte_offload);
 
@@ -86,6 +86,9 @@ struct netdev_rte_port {
   struct cmap_node all_node;  // map by netdev
   struct netdev * netdev;
 
+  struct cmap_node mark_node;
+  uint32_t mark;
+
   enum rte_port_type rte_port_type;
   uint32_t    table_id;
   uint16_t    dpdk_port_id;
@@ -115,7 +118,7 @@ static struct cmap dpdk_map = CMAP_INITIALIZER;
 
 static struct cmap rte_port_by_netdev = CMAP_INITIALIZER;
 
-
+static struct cmap mark_to_rte_port = CMAP_INITIALIZER;
 struct ufid_to_odp {
     struct cmap_node node;
     ovs_u128 ufid;
@@ -411,6 +414,11 @@ static void netdev_rte_port_free(struct netdev_rte_port * rte_port)
                         CONST_CAST(struct cmap_node *, &rte_port->node), hash);
             netdev_rte_free_table_id(rte_port->table_id);
             netdev_rte_reserved_mark_free(rte_port->special_mark);
+            cmap_remove(&mark_to_rte_port, 
+                        CONST_CAST(struct cmap_node *,
+                        &rte_port->mark_node),
+                        hash_bytes(&rte_port->special_mark,
+                        sizeof(rte_port->special_mark),0));
             //TODO - release special mark
             break;
         case RTE_PORT_TYPE_DPDK:
@@ -716,10 +724,14 @@ int netdev_rte_offload_add_port(odp_port_t dp_port, struct netdev * netdev)
             rte_vport->rte_port_type = rte_port_type;
             rte_vport->table_id      = table_id;
             rte_vport->special_mark  = mark;
+            rte_vport->port_no       = dp_port;
+
+            cmap_insert(&mark_to_rte_port,
+                CONST_CAST(struct cmap_node *, &rte_vport->mark_node),
+                hash_bytes(&mark, sizeof(mark),0));
 
             VLOG_INFO("rte port for vport %d allocated, table id %d",
                                                   dp_port, table_id);
-
          }
 
          return 0;
@@ -1549,6 +1561,7 @@ netdev_dpdk_flow_put(struct netdev *netdev , struct match *match ,
         return ret;
     }
 
+    info->flow_mark = 1;
     rte_flow = netdev_dpdk_add_rte_flow_offload(rte_port, netdev, match,
                                    actions,actions_len, ufid, info);
 
@@ -1596,3 +1609,56 @@ netdev_dpdk_flow_del(struct netdev *netdev OVS_UNUSED, const ovs_u128 *ufid,
     return -1;
 }
 
+
+
+static void netdev_rte_port_preprocess(struct netdev_rte_port * rte_port,
+                                       struct dp_packet *packet)
+{
+    switch (rte_port->rte_port_type) {
+        case RTE_PORT_TYPE_VXLAN:
+            {
+                // VXLAN table failed to match on HW. we do however
+                // know the port-id so we just pop it here.
+                if (rte_port->netdev->netdev_class->pop_header) { 
+                    rte_port->netdev->netdev_class->pop_header(packet);
+                    packet->md.in_port.odp_port = rte_port->port_no;
+                    reset_dp_packet_checksum_ol_flags(packet);
+                }
+            }
+            break;
+        case RTE_PORT_TYPE_NONE:
+        case RTE_PORT_TYPE_DPDK:
+            VLOG_WARN("port type %d has no pre-process",rte_port->rte_port_type);
+            break;
+
+    }
+    return;
+}
+
+
+/**
+ * @brief - we got a packet with special mark, means we need to run 
+ *  pre-processing on the packet so it could be processed by the OVS SW.
+ *  example for such case in vxlan is where we get match on outer
+ *  vxlan so we jump to vxlan table, but then we fail on inner match.
+ *  In this case we need to make sure SW processing continues from second flow
+ *
+ *
+ * @param packet
+ * @param mark
+ */
+void netdev_rte_offload_preprocess(struct dp_packet *packet, uint32_t mark)
+{
+
+    struct netdev_rte_port * rte_port;
+    size_t hash = hash_bytes(&mark, sizeof(mark),0);
+
+    CMAP_FOR_EACH_WITH_HASH (rte_port, mark_node, hash, &mark_to_rte_port) {
+        if (rte_port->special_mark == mark) {
+            netdev_rte_port_preprocess(rte_port, packet);
+            return;
+        }
+    }
+    VLOG_WARN("special mark %u with no port", mark);
+    return;
+}

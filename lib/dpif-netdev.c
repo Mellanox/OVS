@@ -5912,7 +5912,11 @@ dfc_processing(struct dp_netdev_pmd_thread *pmd,
                 dp_netdev_queue_batches(packet, flow, tcp_flags, batches,
                                         n_batches);
                 continue;
+            } else if (NETDEV_RTE_IS_OFFLOAD_RESERVED(mark)) {
+                miniflow_extract(packet, &key->mf);
+                NETDEV_PREPROCCESS_PKT(packet, mark);
             }
+
         }
 
         miniflow_extract(packet, &key->mf);

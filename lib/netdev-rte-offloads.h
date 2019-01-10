@@ -20,6 +20,10 @@
 #include "openvswitch/types.h"
 #include "netdev-provider.h"
 
+struct dp_packet;
+
+void netdev_rte_offload_preprocess(struct dp_packet *packet, uint32_t mark);
+
 int netdev_vport_flow_put(struct netdev *, struct match *,
                        struct nlattr *actions, size_t actions_len,
                        const ovs_u128 *, struct offload_info *,
