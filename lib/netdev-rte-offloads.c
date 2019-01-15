@@ -128,6 +128,16 @@ struct ufid_to_odp {
 
 static struct cmap ufid_to_portid_map = CMAP_INITIALIZER;
 
+struct rte_flow_items {
+    struct rte_flow_item_eth eth;
+    struct rte_flow_item_vlan vlan;
+    struct rte_flow_item_ipv4 ipv4;
+    struct rte_flow_item_tcp tcp;
+    struct rte_flow_item_udp udp;
+    struct rte_flow_item_sctp sctp;
+    struct rte_flow_item_icmp icmp;
+};
+
 /**
  * @brief - search for ufid mapping
  *
@@ -568,88 +578,6 @@ static void ufid_hw_offload_add_rte_flow(struct ufid_hw_offload * hw_offload,
     }
     return;
 }
-
-static int netdev_rte_port_offload_vxlan(struct netdev_rte_port * rte_port,
-                                         struct netdev * netdev OVS_UNUSED,
-                                         struct match * match OVS_UNUSED,
-                                         struct nlattr *actions OVS_UNUSED,
-                                         size_t actions_len OVS_UNUSED,
-                                         const ovs_u128 * ufid ,
-                                        struct offload_info * info OVS_UNUSED,
-                              struct dpif_flow_stats * flow_stats  OVS_UNUSED)
-{
-
-    int n_phy = (int) cmap_count(&dpdk_map);
-    struct ufid_hw_offload * ufid_hw_offload = ufid_hw_offload_find(ufid,
-                                                     &rte_port->ufid_to_rte);
-    //struct rte_flow * rte_flow;
-
-    if (ufid_hw_offload != NULL) {
-        //TODO: what to do on modificaiton
-        VLOG_WARN("got modification. not supprted");
-        return 0; // return success because we don't remove the flow yet.
-    }
-
-    if (n_phy < 1 || n_phy > HW_OFFLOAD_MAX_PHY) {
-        VLOG_WARN("offload while no phy ports %d",(int)n_phy);
-        return -1;
-    }
-
-    ufid_hw_offload = netdev_rte_port_ufid_hw_offload_alloc(n_phy, ufid);
-    if (ufid_hw_offload == NULL) {
-        VLOG_WARN("failed to alloctae ufid_hw_offlaod, OOM");
-        return -1;
-    }
-
-    for (int i = 0 ; i < n_phy ; i++) {
-        //TODO ASAF
-        //struct rte_flow * dummy = dummy_rte_flow_alloc();
-        //dummy->ufid = *ufid;
-        //ufid_hw_offload_insert(ufid_hw_offload, dummy);
-    }
-
-    ufid_hw_offload_add(ufid_hw_offload, &rte_port->ufid_to_rte);
-    ufid_to_portid_add(ufid, rte_port->port_no);
-
-    return 0;
-}
-
-
-int netdev_vport_flow_put(struct netdev * netdev , struct match * match,
-              struct nlattr *actions OVS_UNUSED, size_t actions_len OVS_UNUSED,
-              const ovs_u128 * ufid , struct offload_info * info OVS_UNUSED,
-              struct dpif_flow_stats * flow_stats  OVS_UNUSED)
-{
-    odp_port_t in_port = match->flow.in_port.odp_port;
-    struct netdev_rte_port * rte_port = netdev_rte_port_search(in_port,
-                                                            &vport_map);
-
-    if (netdev_dpdk_validate_flow(match)) {
-        return -1;
-    }
-
-    if (rte_port != NULL) {
-         switch (rte_port->rte_port_type) {
-             case RTE_PORT_TYPE_VXLAN:
-                   //TODO called the offload code.
-                   VLOG_DBG("vxlan offload ufid"UUID_FMT" \n",
-                                      UUID_ARGS((struct uuid *)ufid));
-                   netdev_rte_port_offload_vxlan(rte_port, netdev, match,
-                           actions, actions_len , ufid , info ,flow_stats);
-                   break;
-             case RTE_PORT_TYPE_DPDK:
-                   VLOG_WARN("offload of vport could on dpdk port");
-                   return -1;
-             case RTE_PORT_TYPE_NONE:
-             default:
-                  VLOG_DBG("unsupported tunnel type");
-             return -1;
-         }
-    }
-
-    return 0;
-}
-
 
 int netdev_vport_flow_del(struct netdev * netdev OVS_UNUSED,
                         const ovs_u128 * ufid ,
@@ -1177,6 +1105,151 @@ prepare_and_add_jump_count_flow_action(
     return 0;
 }
 
+static int
+add_dpdk_flow_patterns(struct flow_patterns *patterns,
+                       struct rte_flow_items *specs,
+                       struct rte_flow_items *masks,
+                       const struct match *match) {
+    /* Eth */
+    if (!eth_addr_is_zero(match->wc.masks.dl_src) ||
+        !eth_addr_is_zero(match->wc.masks.dl_dst)) {
+        memset(&specs->eth, 0, sizeof(specs->eth));
+        memset(&masks->eth, 0, sizeof(masks->eth));
+        rte_memcpy(&specs->eth.dst, &match->flow.dl_dst,
+                   sizeof(specs->eth.dst));
+        rte_memcpy(&specs->eth.src, &match->flow.dl_src,
+                   sizeof(specs->eth.src));
+        specs->eth.type = match->flow.dl_type;
+
+        rte_memcpy(&masks->eth.dst, &match->wc.masks.dl_dst,
+                   sizeof(masks->eth.dst));
+        rte_memcpy(&masks->eth.src, &match->wc.masks.dl_src,
+                   sizeof(masks->eth.src));
+        masks->eth.type = match->wc.masks.dl_type;
+
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_ETH,
+                         &specs->eth, &masks->eth);
+    } else {
+        /*
+         * If user specifies a flow (like UDP flow) without L2 patterns,
+         * OVS will at least set the dl_type. Normally, it's enough to
+         * create an eth pattern just with it. Unluckily, some Intel's
+         * NIC (such as XL710) doesn't support that. Below is a workaround,
+         * which simply matches any L2 pkts.
+         */
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_ETH, NULL, NULL);
+    }
+
+    /* VLAN */
+    if (match->wc.masks.vlans[0].tci && match->flow.vlans[0].tci) {
+        memset(&specs->vlan, 0, sizeof(specs->vlan));
+        memset(&masks->vlan, 0, sizeof(masks->vlan));
+        specs->vlan.tci  = match->flow.vlans[0].tci & ~htons(VLAN_CFI);
+        masks->vlan.tci  = match->wc.masks.vlans[0].tci & ~htons(VLAN_CFI);
+
+        /* match any protocols */
+        masks->vlan.tpid = 0;
+
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_VLAN,
+                         &specs->vlan, &masks->vlan);
+    }
+
+    /* IP v4 */
+    uint8_t proto = 0;
+    if (match->flow.dl_type == htons(ETH_TYPE_IP)) {
+        memset(&specs->ipv4, 0, sizeof(specs->ipv4));
+        memset(&masks->ipv4, 0, sizeof(masks->ipv4));
+
+        specs->ipv4.hdr.type_of_service = match->flow.nw_tos;
+        specs->ipv4.hdr.time_to_live    = match->flow.nw_ttl;
+        specs->ipv4.hdr.next_proto_id   = match->flow.nw_proto;
+        specs->ipv4.hdr.src_addr        = match->flow.nw_src;
+        specs->ipv4.hdr.dst_addr        = match->flow.nw_dst;
+
+        masks->ipv4.hdr.type_of_service = match->wc.masks.nw_tos;
+        masks->ipv4.hdr.time_to_live    = match->wc.masks.nw_ttl;
+        masks->ipv4.hdr.next_proto_id   = match->wc.masks.nw_proto;
+        masks->ipv4.hdr.src_addr        = match->wc.masks.nw_src;
+        masks->ipv4.hdr.dst_addr        = match->wc.masks.nw_dst;
+
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV4,
+                         &specs->ipv4, &masks->ipv4);
+
+        /* Save proto for L4 protocol setup */
+        proto = specs->ipv4.hdr.next_proto_id &
+                masks->ipv4.hdr.next_proto_id;
+    }
+
+    if (proto != IPPROTO_ICMP && proto != IPPROTO_UDP  &&
+        proto != IPPROTO_SCTP && proto != IPPROTO_TCP  &&
+        (match->wc.masks.tp_src ||
+         match->wc.masks.tp_dst ||
+         match->wc.masks.tcp_flags)) {
+        VLOG_DBG("L4 Protocol (%u) not supported", proto);
+        return -1;
+    }
+
+    if ((match->wc.masks.tp_src && match->wc.masks.tp_src != OVS_BE16_MAX) ||
+        (match->wc.masks.tp_dst && match->wc.masks.tp_dst != OVS_BE16_MAX)) {
+        return -1;
+    }
+
+    if (proto == IPPROTO_TCP) {
+        memset(&specs->tcp, 0, sizeof(specs->tcp));
+        memset(&masks->tcp, 0, sizeof(masks->tcp));
+        specs->tcp.hdr.src_port  = match->flow.tp_src;
+        specs->tcp.hdr.dst_port  = match->flow.tp_dst;
+        specs->tcp.hdr.data_off  = ntohs(match->flow.tcp_flags) >> 8;
+        specs->tcp.hdr.tcp_flags = ntohs(match->flow.tcp_flags) & 0xff;
+
+        masks->tcp.hdr.src_port  = match->wc.masks.tp_src;
+        masks->tcp.hdr.dst_port  = match->wc.masks.tp_dst;
+        masks->tcp.hdr.data_off  = ntohs(match->wc.masks.tcp_flags) >> 8;
+        masks->tcp.hdr.tcp_flags = ntohs(match->wc.masks.tcp_flags) & 0xff;
+
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_TCP,
+                         &specs->tcp, &masks->tcp);
+
+    } else if (proto == IPPROTO_UDP) {
+        memset(&specs->udp, 0, sizeof(specs->udp));
+        memset(&masks->udp, 0, sizeof(masks->udp));
+        specs->udp.hdr.src_port = match->flow.tp_src;
+        specs->udp.hdr.dst_port = match->flow.tp_dst;
+
+        specs->udp.hdr.src_port = match->wc.masks.tp_src;
+        specs->udp.hdr.dst_port = match->wc.masks.tp_dst;
+
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_UDP,
+                         &specs->udp, &masks->udp);
+
+    } else if (proto == IPPROTO_SCTP) {
+        memset(&specs->sctp, 0, sizeof(specs->sctp));
+        memset(&masks->sctp, 0, sizeof(masks->sctp));
+        specs->sctp.hdr.src_port = match->flow.tp_src;
+        specs->sctp.hdr.dst_port = match->flow.tp_dst;
+
+        specs->sctp.hdr.src_port = match->wc.masks.tp_src;
+        specs->sctp.hdr.dst_port = match->wc.masks.tp_dst;
+
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_SCTP,
+                         &specs->sctp, &masks->sctp);
+
+    } else if (proto == IPPROTO_ICMP) {
+        memset(&specs->icmp, 0, sizeof(specs->icmp));
+        memset(&masks->icmp, 0, sizeof(masks->icmp));
+        specs->icmp.hdr.icmp_type = (uint8_t)ntohs(match->flow.tp_src);
+        specs->icmp.hdr.icmp_code = (uint8_t)ntohs(match->flow.tp_dst);
+
+        masks->icmp.hdr.icmp_type = (uint8_t)ntohs(match->wc.masks.tp_src);
+        masks->icmp.hdr.icmp_code = (uint8_t)ntohs(match->wc.masks.tp_dst);
+
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_ICMP,
+                         &specs->icmp, &masks->icmp);
+    }
+
+    return 0;
+}
+
 static struct rte_flow *
 netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
                                  struct netdev *netdev,
@@ -1185,6 +1258,13 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
                                  size_t actions_len,
                                  const ovs_u128 *ufid OVS_UNUSED,
                                  struct offload_info *info) {
+
+    if (!actions_len || !nl_actions) {
+        VLOG_DBG("%s: skip flow offload without actions\n",
+            netdev_get_name(netdev));
+        return NULL;
+    }
+
     const struct rte_flow_attr flow_attr = {
         .group = 0,
         .priority = 0,
@@ -1195,203 +1275,21 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
     struct flow_actions actions = { .actions = NULL, .cnt = 0 };
     struct rte_flow *flow = NULL;
     struct rte_flow_error error;
-    uint8_t *ipv4_next_proto_mask = NULL;
+    struct rte_flow_items specs;
+    struct rte_flow_items masks;
+    int result = -1;
 
-    /* Eth */
-    struct rte_flow_item_eth eth_spec;
-    struct rte_flow_item_eth eth_mask;
-    memset(&eth_spec, 0, sizeof(eth_spec));
-    memset(&eth_mask, 0, sizeof(eth_mask));
-    if (!eth_addr_is_zero(match->wc.masks.dl_src) ||
-        !eth_addr_is_zero(match->wc.masks.dl_dst)) {
-        rte_memcpy(&eth_spec.dst, &match->flow.dl_dst, sizeof(eth_spec.dst));
-        rte_memcpy(&eth_spec.src, &match->flow.dl_src, sizeof(eth_spec.src));
-        eth_spec.type = match->flow.dl_type;
-
-        rte_memcpy(&eth_mask.dst, &match->wc.masks.dl_dst,
-                   sizeof(eth_mask.dst));
-        rte_memcpy(&eth_mask.src, &match->wc.masks.dl_src,
-                   sizeof(eth_mask.src));
-        eth_mask.type = match->wc.masks.dl_type;
-
-        add_flow_pattern(&patterns, RTE_FLOW_ITEM_TYPE_ETH,
-                         &eth_spec, &eth_mask);
-    } else {
-        /*
-         * If user specifies a flow (like UDP flow) without L2 patterns,
-         * OVS will at least set the dl_type. Normally, it's enough to
-         * create an eth pattern just with it. Unluckily, some Intel's
-         * NIC (such as XL710) doesn't support that. Below is a workaround,
-         * which simply matches any L2 pkts.
-         */
-        add_flow_pattern(&patterns, RTE_FLOW_ITEM_TYPE_ETH, NULL, NULL);
-    }
-
-    /* VLAN */
-    struct rte_flow_item_vlan vlan_spec;
-    struct rte_flow_item_vlan vlan_mask;
-    memset(&vlan_spec, 0, sizeof(vlan_spec));
-    memset(&vlan_mask, 0, sizeof(vlan_mask));
-    if (match->wc.masks.vlans[0].tci && match->flow.vlans[0].tci) {
-        vlan_spec.tci  = match->flow.vlans[0].tci & ~htons(VLAN_CFI);
-        vlan_mask.tci  = match->wc.masks.vlans[0].tci & ~htons(VLAN_CFI);
-
-        /* match any protocols */
-        vlan_mask.tpid = 0;
-
-        add_flow_pattern(&patterns, RTE_FLOW_ITEM_TYPE_VLAN,
-                         &vlan_spec, &vlan_mask);
-    }
-
-    /* IP v4 */
-    uint8_t proto = 0;
-    struct rte_flow_item_ipv4 ipv4_spec;
-    struct rte_flow_item_ipv4 ipv4_mask;
-    memset(&ipv4_spec, 0, sizeof(ipv4_spec));
-    memset(&ipv4_mask, 0, sizeof(ipv4_mask));
-    if (match->flow.dl_type == htons(ETH_TYPE_IP)) {
-
-        ipv4_spec.hdr.type_of_service = match->flow.nw_tos;
-        ipv4_spec.hdr.time_to_live    = match->flow.nw_ttl;
-        ipv4_spec.hdr.next_proto_id   = match->flow.nw_proto;
-        ipv4_spec.hdr.src_addr        = match->flow.nw_src;
-        ipv4_spec.hdr.dst_addr        = match->flow.nw_dst;
-
-        ipv4_mask.hdr.type_of_service = match->wc.masks.nw_tos;
-        ipv4_mask.hdr.time_to_live    = match->wc.masks.nw_ttl;
-        ipv4_mask.hdr.next_proto_id   = match->wc.masks.nw_proto;
-        ipv4_mask.hdr.src_addr        = match->wc.masks.nw_src;
-        ipv4_mask.hdr.dst_addr        = match->wc.masks.nw_dst;
-
-        add_flow_pattern(&patterns, RTE_FLOW_ITEM_TYPE_IPV4,
-                         &ipv4_spec, &ipv4_mask);
-
-        /* Save proto for L4 protocol setup */
-        proto = ipv4_spec.hdr.next_proto_id &
-                ipv4_mask.hdr.next_proto_id;
-
-        /* Remember proto mask address for later modification */
-        ipv4_next_proto_mask = &ipv4_mask.hdr.next_proto_id;
-    }
-
-    if (proto != IPPROTO_ICMP && proto != IPPROTO_UDP  &&
-        proto != IPPROTO_SCTP && proto != IPPROTO_TCP  &&
-        (match->wc.masks.tp_src ||
-         match->wc.masks.tp_dst ||
-         match->wc.masks.tcp_flags)) {
-        VLOG_DBG("L4 Protocol (%u) not supported", proto);
+    result = add_dpdk_flow_patterns(&patterns, &specs, &masks, match);
+    if (!result) {
         flow = NULL;
         goto out;
     }
-
-    if ((match->wc.masks.tp_src && match->wc.masks.tp_src != OVS_BE16_MAX) ||
-        (match->wc.masks.tp_dst && match->wc.masks.tp_dst != OVS_BE16_MAX)) {
-        flow = NULL;
-        goto out;
-    }
-
-    struct rte_flow_item_tcp tcp_spec;
-    struct rte_flow_item_tcp tcp_mask;
-    memset(&tcp_spec, 0, sizeof(tcp_spec));
-    memset(&tcp_mask, 0, sizeof(tcp_mask));
-    if (proto == IPPROTO_TCP) {
-        tcp_spec.hdr.src_port  = match->flow.tp_src;
-        tcp_spec.hdr.dst_port  = match->flow.tp_dst;
-        tcp_spec.hdr.data_off  = ntohs(match->flow.tcp_flags) >> 8;
-        tcp_spec.hdr.tcp_flags = ntohs(match->flow.tcp_flags) & 0xff;
-
-        tcp_mask.hdr.src_port  = match->wc.masks.tp_src;
-        tcp_mask.hdr.dst_port  = match->wc.masks.tp_dst;
-        tcp_mask.hdr.data_off  = ntohs(match->wc.masks.tcp_flags) >> 8;
-        tcp_mask.hdr.tcp_flags = ntohs(match->wc.masks.tcp_flags) & 0xff;
-
-        add_flow_pattern(&patterns, RTE_FLOW_ITEM_TYPE_TCP,
-                         &tcp_spec, &tcp_mask);
-
-        /* proto == TCP and ITEM_TYPE_TCP, thus no need for proto match */
-        if (ipv4_next_proto_mask) {
-            *ipv4_next_proto_mask = 0;
-        }
-        goto end_proto_check;
-    }
-
-    struct rte_flow_item_udp udp_spec;
-    struct rte_flow_item_udp udp_mask;
-    memset(&udp_spec, 0, sizeof(udp_spec));
-    memset(&udp_mask, 0, sizeof(udp_mask));
-    if (proto == IPPROTO_UDP) {
-        udp_spec.hdr.src_port = match->flow.tp_src;
-        udp_spec.hdr.dst_port = match->flow.tp_dst;
-
-        udp_mask.hdr.src_port = match->wc.masks.tp_src;
-        udp_mask.hdr.dst_port = match->wc.masks.tp_dst;
-
-        add_flow_pattern(&patterns, RTE_FLOW_ITEM_TYPE_UDP,
-                         &udp_spec, &udp_mask);
-
-        /* proto == UDP and ITEM_TYPE_UDP, thus no need for proto match */
-        if (ipv4_next_proto_mask) {
-            *ipv4_next_proto_mask = 0;
-        }
-        goto end_proto_check;
-    }
-
-    struct rte_flow_item_sctp sctp_spec;
-    struct rte_flow_item_sctp sctp_mask;
-    memset(&sctp_spec, 0, sizeof(sctp_spec));
-    memset(&sctp_mask, 0, sizeof(sctp_mask));
-    if (proto == IPPROTO_SCTP) {
-        sctp_spec.hdr.src_port = match->flow.tp_src;
-        sctp_spec.hdr.dst_port = match->flow.tp_dst;
-
-        sctp_mask.hdr.src_port = match->wc.masks.tp_src;
-        sctp_mask.hdr.dst_port = match->wc.masks.tp_dst;
-
-        add_flow_pattern(&patterns, RTE_FLOW_ITEM_TYPE_SCTP,
-                         &sctp_spec, &sctp_mask);
-
-        /* proto == SCTP and ITEM_TYPE_SCTP, thus no need for proto match */
-        if (ipv4_next_proto_mask) {
-            *ipv4_next_proto_mask = 0;
-        }
-        goto end_proto_check;
-    }
-
-    struct rte_flow_item_icmp icmp_spec;
-    struct rte_flow_item_icmp icmp_mask;
-    memset(&icmp_spec, 0, sizeof(icmp_spec));
-    memset(&icmp_mask, 0, sizeof(icmp_mask));
-    if (proto == IPPROTO_ICMP) {
-        icmp_spec.hdr.icmp_type = (uint8_t)ntohs(match->flow.tp_src);
-        icmp_spec.hdr.icmp_code = (uint8_t)ntohs(match->flow.tp_dst);
-
-        icmp_mask.hdr.icmp_type = (uint8_t)ntohs(match->wc.masks.tp_src);
-        icmp_mask.hdr.icmp_code = (uint8_t)ntohs(match->wc.masks.tp_dst);
-
-        add_flow_pattern(&patterns, RTE_FLOW_ITEM_TYPE_ICMP,
-                         &icmp_spec, &icmp_mask);
-
-        /* proto == ICMP and ITEM_TYPE_ICMP, thus no need for proto match */
-        if (ipv4_next_proto_mask) {
-            *ipv4_next_proto_mask = 0;
-        }
-        goto end_proto_check;
-    }
-
-end_proto_check:
 
     add_flow_pattern(&patterns, RTE_FLOW_ITEM_TYPE_END, NULL, NULL);
 
-    if (!actions_len || !nl_actions) {
-        VLOG_DBG("%s: skip flow offload without actions\n",
-                        netdev_get_name(netdev));
-        flow = NULL;
-        goto out;
-    }
-
     const struct nlattr *a;
     unsigned int left;
-    int ret = -1;
+
     bool is_tunnel_pop_action = false;
     struct rte_flow_action_jump jump;
     struct rte_flow_action_count count;
@@ -1399,9 +1297,9 @@ end_proto_check:
     NL_ATTR_FOR_EACH_UNSAFE (a, left, nl_actions, actions_len) {
         int type = nl_attr_type(a);
         if ((enum ovs_action_attr) type == OVS_ACTION_ATTR_TUNNEL_POP) {
-            ret = prepare_and_add_jump_count_flow_action(a, &jump, &count,
+            result = prepare_and_add_jump_count_flow_action(a, &jump, &count,
                     &actions);
-            if (ret) {
+            if (result) {
                 break;
             }
             //rte_port->per_rte_flow = count.id; TODO: Roni, add count per flow
@@ -1409,7 +1307,7 @@ end_proto_check:
         } else {
             VLOG_DBG("Unsupported action for offload, "
                     "trying to offload mark and rss actions");
-            ret = -1;
+            result = -1;
             break;
         }
     }
@@ -1417,17 +1315,15 @@ end_proto_check:
     add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_END, NULL);
 
     /* If actions can be offloaded to hw then create an rte_flow */
-    if (!ret) {
+    if (!result) {
         flow = rte_flow_create(rte_port->port_no, &flow_attr, patterns.items,
                                actions.actions, &error);
 
-        /* If flow is offloaded successfully, associate with the ufid */
         if (!flow) {
             VLOG_ERR("%s: rte flow create offload error: %u : message : %s\n",
                      netdev_get_name(netdev), error.type, error.message);
             goto out;
         }
-
 
         /* If action is tunnel pop, create another table with a default flow.
          * Do it only once, if default rte flow doesn't exist */
@@ -1461,8 +1357,8 @@ end_proto_check:
                         error.message);
                 free(def_patterns.items);
                 free(def_actions.actions);
-                ret = rte_flow_destroy(rte_port->port_no, flow, &error);
-                if (ret != 0) {
+                result = rte_flow_destroy(rte_port->port_no, flow, &error);
+                if (result != 0) {
                     VLOG_ERR("rte flow destroy error: %u : message : %s\n",
                          error.type, error.message);
                 }
@@ -1470,7 +1366,7 @@ end_proto_check:
             }
 
             rte_port->default_rte_flow = def_flow;
-            // TODO: ASAF: save flow per each vport/dpdk?
+            // TODO: Roni: save flow per each vport/dpdk?
         }
     } else { /* Previous actions cannot be offloaded to hw,
                 try offloading Mark and RSS actions */
@@ -1609,8 +1505,6 @@ netdev_dpdk_flow_del(struct netdev *netdev OVS_UNUSED, const ovs_u128 *ufid,
     return -1;
 }
 
-
-
 static void netdev_rte_port_preprocess(struct netdev_rte_port * rte_port,
                                        struct dp_packet *packet)
 {
@@ -1619,7 +1513,7 @@ static void netdev_rte_port_preprocess(struct netdev_rte_port * rte_port,
             {
                 // VXLAN table failed to match on HW. we do however
                 // know the port-id so we just pop it here.
-                if (rte_port->netdev->netdev_class->pop_header) { 
+                if (rte_port->netdev->netdev_class->pop_header) {
                     rte_port->netdev->netdev_class->pop_header(packet);
                     packet->md.in_port.odp_port = rte_port->port_no;
                     reset_dp_packet_checksum_ol_flags(packet);
@@ -1634,7 +1528,6 @@ static void netdev_rte_port_preprocess(struct netdev_rte_port * rte_port,
     }
     return;
 }
-
 
 /**
  * @brief - we got a packet with special mark, means we need to run 
@@ -1661,4 +1554,198 @@ void netdev_rte_offload_preprocess(struct dp_packet *packet, uint32_t mark)
     }
     VLOG_WARN("special mark %u with no port", mark);
     return;
+}
+
+static int
+add_vport_vxlan_flow_patterns(struct flow_patterns *patterns,
+                              struct rte_flow_items *specs,
+                              struct rte_flow_items *masks,
+                              const struct match *match) {
+    /* IP v4 */
+    uint8_t proto = 0;
+    if (match->flow.dl_type == htons(ETH_TYPE_IP)) {
+        memset(&specs->ipv4, 0, sizeof(specs->ipv4));
+        memset(&masks->ipv4, 0, sizeof(masks->ipv4));
+
+        specs->ipv4.hdr.type_of_service = match->flow.tunnel.ip_tos;
+        specs->ipv4.hdr.time_to_live    = match->flow.tunnel.ip_ttl;
+        specs->ipv4.hdr.next_proto_id   = IPPROTO_UDP;
+        specs->ipv4.hdr.src_addr        = match->flow.tunnel.ip_src;
+        specs->ipv4.hdr.dst_addr        = match->flow.tunnel.ip_dst;
+
+        masks->ipv4.hdr.type_of_service = match->wc.masks.nw_tos;
+        masks->ipv4.hdr.time_to_live    = match->wc.masks.nw_ttl;
+        masks->ipv4.hdr.next_proto_id   = match->wc.masks.nw_proto;
+        masks->ipv4.hdr.src_addr        = match->wc.masks.nw_src;
+        masks->ipv4.hdr.dst_addr        = match->wc.masks.nw_dst;
+
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV4,
+                         &specs->ipv4, &masks->ipv4);
+
+        /* Save proto for L4 protocol setup */
+        proto = specs->ipv4.hdr.next_proto_id &
+                masks->ipv4.hdr.next_proto_id;
+    }
+
+    if (proto == IPPROTO_UDP) {
+        memset(&specs->udp, 0, sizeof(specs->udp));
+        memset(&masks->udp, 0, sizeof(masks->udp));
+        specs->udp.hdr.src_port = match->flow.tunnel.tp_src;
+        specs->udp.hdr.dst_port = match->flow.tunnel.tp_dst;
+
+        specs->udp.hdr.src_port = match->wc.masks.tp_src;
+        specs->udp.hdr.dst_port = match->wc.masks.tp_dst;
+
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_UDP,
+                         &specs->udp, &masks->udp);
+    } else {
+        VLOG_ERR("flow arrived from vxlan port, but protocol is %d "
+                "and not UDP", proto);
+        return -1;
+    }
+
+    return 0;
+}
+
+static int
+netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port * rte_port,
+                                        struct netdev * netdev OVS_UNUSED,
+                                        struct match * match,
+                                        struct nlattr *nl_actions,
+                                        size_t actions_len,
+                                        const ovs_u128 * ufid ,
+                                        struct offload_info * info OVS_UNUSED,
+                              struct dpif_flow_stats * flow_stats  OVS_UNUSED)
+{
+    if (!actions_len || !nl_actions) {
+        VLOG_DBG("%s: skip flow offload without actions\n",
+            netdev_get_name(netdev));
+        return 0;
+    }
+
+    int n_phy = (int) cmap_count(&dpdk_map);
+    struct ufid_hw_offload * ufid_hw_offload = ufid_hw_offload_find(ufid,
+                                                     &rte_port->ufid_to_rte);
+
+    if (ufid_hw_offload != NULL) {
+        //TODO: what to do on modification
+        VLOG_WARN("got modification. not supported");
+        return 0; // return success because we don't remove the flow yet.
+    }
+
+    if (n_phy < 1 || n_phy > HW_OFFLOAD_MAX_PHY) {
+        VLOG_WARN("offload while no phy ports %d",(int)n_phy);
+        return -1;
+    }
+
+    ufid_hw_offload = netdev_rte_port_ufid_hw_offload_alloc(n_phy, ufid);
+    if (ufid_hw_offload == NULL) {
+        VLOG_WARN("failed to allocate ufid_hw_offlaod, OOM");
+        return -1;
+    }
+
+    const struct rte_flow_attr flow_attr = {
+        .group = 0,
+        .priority = 0,
+        .ingress = 1,
+        .egress = 0
+    };
+
+    struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
+    struct flow_actions actions = { .actions = NULL, .cnt = 0 };
+    struct rte_flow *flow = NULL;
+    struct rte_flow_error error;
+    struct rte_flow_items specs;
+    struct rte_flow_items masks;
+    struct rte_flow_action_mark mark;
+    struct rte_flow_action_rss *rss = NULL;
+    int ret = -1;
+
+    /* Add patterns from outer header */
+    ret = add_vport_vxlan_flow_patterns(&patterns, &specs, &masks, match);
+    if (!ret) {
+        goto out;
+    }
+
+    /* Add patterns from inner header */
+    ret = add_dpdk_flow_patterns(&patterns, &specs, &masks, match);
+    if (!ret) {
+        goto out;
+    }
+
+    add_flow_pattern(&patterns, RTE_FLOW_ITEM_TYPE_END, NULL, NULL);
+
+
+    add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_VXLAN_DECAP, NULL);
+
+    mark.id = info->flow_mark;
+    add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_MARK, &mark);
+
+    rss = add_flow_rss_action(&actions, netdev);
+
+    add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_END, NULL);
+
+    // Roni: handle per each phy
+    for (int i = 0 ; i < n_phy ; i++) {
+
+        flow = rte_flow_create(rte_port->port_no, &flow_attr, patterns.items,
+                               actions.actions, &error);
+
+        if (!flow) {
+            VLOG_ERR("%s: rte flow create offload error: %u : message : %s\n",
+                     netdev_get_name(netdev), error.type, error.message);
+            ret = -1;
+            goto out;
+        }
+
+        // Roni: TODO, no such function
+        //ufid_hw_offload_insert(ufid_hw_offload, flow);
+    }
+
+    ufid_hw_offload_add(ufid_hw_offload, &rte_port->ufid_to_rte);
+    ufid_to_portid_add(ufid, rte_port->port_no);
+
+out:
+    free(rss);
+    free(patterns.items);
+    free(actions.actions);
+    return ret;
+}
+
+
+int netdev_vport_flow_put(struct netdev * netdev , struct match * match,
+              struct nlattr *actions OVS_UNUSED, size_t actions_len OVS_UNUSED,
+              const ovs_u128 * ufid , struct offload_info * info OVS_UNUSED,
+              struct dpif_flow_stats * flow_stats  OVS_UNUSED)
+{
+    odp_port_t in_port = match->flow.in_port.odp_port;
+    struct netdev_rte_port * rte_port = netdev_rte_port_search(in_port,
+                                                            &vport_map);
+
+    if (netdev_dpdk_validate_flow(match)) {
+        return -1;
+    }
+
+    if (rte_port != NULL) {
+         switch (rte_port->rte_port_type) {
+             case RTE_PORT_TYPE_VXLAN:
+                   VLOG_DBG("vxlan offload ufid"UUID_FMT" \n",
+                                      UUID_ARGS((struct uuid *)ufid));
+                   if (netdev_vport_vxlan_add_rte_flow_offload(rte_port,
+                           netdev, match, actions, actions_len, ufid, info,
+                           flow_stats)) {
+                       return -1;
+                   }
+                   break;
+             case RTE_PORT_TYPE_DPDK:
+                   VLOG_WARN("offload of vport could on dpdk port");
+                   return -1;
+             case RTE_PORT_TYPE_NONE:
+             default:
+                  VLOG_DBG("unsupported tunnel type");
+                  return -1;
+         }
+    }
+
+    return 0;
 }
