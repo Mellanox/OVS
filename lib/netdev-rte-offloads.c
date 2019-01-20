@@ -42,9 +42,16 @@ VLOG_DEFINE_THIS_MODULE(netdev_rte_offload);
 #define RTE_FLOW_MAX_TABLES (31)
 #define HW_OFFLOAD_MAX_PHY (128)
 #define INVALID_ODP_PORT (-1)
+#define MAX_PHY_RTE_PORTS (128)
 
 struct rte_flow;
 struct netdev_rte_port ;
+
+
+//-------------------------------------------------------
+
+
+//-------------------------------------
 
 static int netdev_dpdk_validate_flow(const struct match *match);
 
@@ -55,7 +62,8 @@ static struct rte_flow * netdev_dpdk_add_rte_flow_offload(
                                  struct nlattr *nl_actions,
                                  size_t actions_len,
                                  const ovs_u128 *ufid OVS_UNUSED,
-                                 struct offload_info *info);
+                                 struct offload_info *info, 
+                                 uint64_t * counter_id);
 
 
 struct netdev_rte_offload_table_ids {
@@ -102,6 +110,7 @@ struct netdev_rte_port {
 struct rte_flow_data {
      struct rte_flow * flow;
      uint16_t          port_id;
+     uint64_t          counter_id;
 };
 
 struct ufid_hw_offload {
@@ -119,6 +128,11 @@ static struct cmap dpdk_map = CMAP_INITIALIZER;
 static struct cmap rte_port_by_netdev = CMAP_INITIALIZER;
 
 static struct cmap mark_to_rte_port = CMAP_INITIALIZER;
+
+//TODO: init it some how.
+static struct netdev_rte_port * rte_port_phy_arr[MAX_PHY_RTE_PORTS];
+static struct netdev_rte_port * rte_port_vir_arr[MAX_PHY_RTE_PORTS];
+
 struct ufid_to_odp {
     struct cmap_node node;
     ovs_u128 ufid;
@@ -400,6 +414,19 @@ static void netdev_rte_port_clean_all(struct netdev_rte_port * rte_vport)
     return;
 }
 
+static void netdev_rte_port_del_arr(struct netdev_rte_port * rte_port, 
+                                    struct netdev_rte_port * arr[],
+                                    int arr_len)
+{
+    for(int i = 0 ; i < arr_len; i++){
+        if(arr[i] == rte_port){
+            arr[i] = arr[arr_len -1]; // switch with last 
+            return;
+        }
+    }
+
+}
+
 /**
  * @brief - release the rte_port.
  *   rte_port might contain refrences to offloaded rte_flow's
@@ -411,6 +438,7 @@ static void netdev_rte_port_free(struct netdev_rte_port * rte_port)
 {
     size_t hash     = hash_bytes(&rte_port->port_no, sizeof(odp_port_t), 0);
     size_t hash_all = hash_bytes(&rte_port->netdev, sizeof(struct netdev *),0);
+    int count;
 
     netdev_rte_port_clean_all(rte_port);
     cmap_remove(&rte_port_by_netdev,
@@ -420,6 +448,7 @@ static void netdev_rte_port_free(struct netdev_rte_port * rte_port)
     switch (rte_port->rte_port_type) {
         case RTE_PORT_TYPE_VXLAN:
             VLOG_DBG("remove vlxan port %d",rte_port->port_no);
+            count = (int) cmap_count(&vport_map);
             cmap_remove(&vport_map,
                         CONST_CAST(struct cmap_node *, &rte_port->node), hash);
             netdev_rte_free_table_id(rte_port->table_id);
@@ -429,12 +458,15 @@ static void netdev_rte_port_free(struct netdev_rte_port * rte_port)
                         &rte_port->mark_node),
                         hash_bytes(&rte_port->special_mark,
                         sizeof(rte_port->special_mark),0));
+            netdev_rte_port_del_arr(rte_port, &rte_port_vir_arr[0],count);
             //TODO - release special mark
             break;
         case RTE_PORT_TYPE_DPDK:
             VLOG_DBG("remove dpdk port %d",rte_port->port_no);
+            count = (int) cmap_count(&dpdk_map);
             cmap_remove(&dpdk_map,
                         CONST_CAST(struct cmap_node *, &rte_port->node), hash);
+            netdev_rte_port_del_arr(rte_port, &rte_port_phy_arr[0],count);
             break;
         case RTE_PORT_TYPE_NONE:
             // nothig
@@ -460,9 +492,11 @@ static void netdev_rte_port_free(struct netdev_rte_port * rte_port)
  * @return the new allocated port. already initialized for common params.
  */
 static struct netdev_rte_port * netdev_rte_port_alloc(odp_port_t port_no,
-                                                  struct netdev * netdev,
-                                                  struct cmap * map)
+                                              struct netdev * netdev,
+                                              struct cmap * map,
+                                              struct netdev_rte_port * port_arr[])
 {
+    int count = (int) cmap_count(map);
     size_t hash = hash_bytes(&port_no, sizeof(odp_port_t), 0);
     size_t hash_all = hash_bytes(&netdev, sizeof(struct netdev *), 0);
     struct netdev_rte_port *ret_port = xzalloc(sizeof(struct netdev_rte_port));
@@ -482,6 +516,7 @@ static struct netdev_rte_port * netdev_rte_port_alloc(odp_port_t port_no,
                 CONST_CAST(struct cmap_node *, &ret_port->node), hash);
    cmap_insert(&rte_port_by_netdev,
                 CONST_CAST(struct cmap_node *, &ret_port->all_node), hash_all);
+   port_arr[count] = ret_port; // for quick access
 
 
    return ret_port;
@@ -560,11 +595,13 @@ static void ufid_hw_offload_add(struct ufid_hw_offload * hw_offload,
 
 static void ufid_hw_offload_add_rte_flow(struct ufid_hw_offload * hw_offload,
                                          struct rte_flow * rte_flow,
-                                         int dpdk_port_id)
+                                         int dpdk_port_id, 
+                                         uint64_t ctr_id)
 {
     if (hw_offload->curr_idx < hw_offload->max_flows) {
         hw_offload->rte_flow_data[hw_offload->curr_idx].flow = rte_flow;
         hw_offload->rte_flow_data[hw_offload->curr_idx].port_id = dpdk_port_id;
+        hw_offload->rte_flow_data[hw_offload->curr_idx].counter_id = ctr_id;
         hw_offload->curr_idx++;
     } else {
         struct rte_flow_error error;
@@ -648,7 +685,8 @@ int netdev_rte_offload_add_port(odp_port_t dp_port, struct netdev * netdev)
 
             }
 
-            rte_vport = netdev_rte_port_alloc(dp_port, netdev, &vport_map);
+            rte_vport = netdev_rte_port_alloc(dp_port, netdev, &vport_map, 
+                                                    &rte_port_phy_arr[0]);
             rte_vport->rte_port_type = rte_port_type;
             rte_vport->table_id      = table_id;
             rte_vport->special_mark  = mark;
@@ -678,7 +716,8 @@ int netdev_rte_offload_add_port(odp_port_t dp_port, struct netdev * netdev)
                 return -1;
             }
 
-            rte_vport = netdev_rte_port_alloc(dp_port, netdev, &dpdk_map);
+            rte_vport = netdev_rte_port_alloc(dp_port, netdev, &dpdk_map,
+                                                         &rte_port_vir_arr[0]);
             rte_vport->rte_port_type = rte_port_type;
             rte_vport->dpdk_port_id = netdev_dpdk_get_port_id(netdev);
 
@@ -1256,7 +1295,8 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
                                  struct nlattr *nl_actions,
                                  size_t actions_len,
                                  const ovs_u128 *ufid OVS_UNUSED,
-                                 struct offload_info *info) {
+                                 struct offload_info *info,
+                                 uint64_t * counter_id) {
 
     if (!actions_len || !nl_actions) {
         VLOG_DBG("%s: skip flow offload without actions\n",
@@ -1302,7 +1342,6 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
             if (!vport) {
                 break;
             }
-            //rte_port->per_rte_flow = count.id; TODO: Roni, add count per flow
             is_tunnel_pop_action = true;
             *counter_id = count.id;
             result = 0;
@@ -1421,6 +1460,7 @@ netdev_dpdk_flow_put(struct netdev *netdev , struct match *match ,
 {
     struct rte_flow *rte_flow;
     int ret;
+    uint64_t counter_id = 0;
     odp_port_t in_port = match->flow.in_port.odp_port;
     struct netdev_rte_port * rte_port = netdev_rte_port_search(in_port,
                                                             &dpdk_map);
@@ -1460,21 +1500,21 @@ netdev_dpdk_flow_put(struct netdev *netdev , struct match *match ,
     // generate HW offload.
     ret = netdev_dpdk_validate_flow(match);
     if (ret < 0) {
+        VLOG_ERR("not supported");
         return ret;
     }
 
-    info->flow_mark = 1;
     rte_flow = netdev_dpdk_add_rte_flow_offload(rte_port, netdev, match,
-                                   actions,actions_len, ufid, info);
+                                   actions,actions_len, ufid, info, &counter_id);
 
     if (rte_flow) {
         ufid_hw_offload_add_rte_flow(ufid_hw_offload, rte_flow,
-                                               rte_port->dpdk_port_id);
+                                               rte_port->dpdk_port_id,
+                                               counter_id);
     }
     return ret;
 }
 
-int
 /**
  * @brief - del HW offlaod for ufid if exists.
  *
@@ -1482,6 +1522,7 @@ int
  * @param ufid
  * @param OVS_UNUSED
  */
+int
 netdev_dpdk_flow_del(struct netdev *netdev OVS_UNUSED, const ovs_u128 *ufid,
                      struct dpif_flow_stats *stats OVS_UNUSED) {
 
@@ -1581,7 +1622,7 @@ add_vport_vxlan_flow_patterns(struct flow_patterns *patterns,
 
         masks->ipv4.hdr.type_of_service = match->wc.masks.tunnel.ip_tos;
         masks->ipv4.hdr.time_to_live    = match->wc.masks.tunnel.ip_ttl;
-        masks->ipv4.hdr.next_proto_id   = 0xffff;
+        masks->ipv4.hdr.next_proto_id   = 0xffu;
         masks->ipv4.hdr.src_addr        = match->wc.masks.tunnel.ip_src;
         masks->ipv4.hdr.dst_addr        = match->wc.masks.tunnel.ip_dst;
         add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV4,
@@ -1651,6 +1692,9 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port * rte_port,
         return -1;
     }
 
+    ufid_hw_offload_add(ufid_hw_offload, &rte_port->ufid_to_rte);
+    ufid_to_portid_add(ufid, rte_port->port_no);
+
     const struct rte_flow_attr flow_attr = {
         .group = rte_port->table_id,
         .priority = 1,
@@ -1694,7 +1738,6 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port * rte_port,
 
     add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_END, NULL);
 
-    // Roni: handle per each phy
     for (int i = 0 ; i < n_phy ; i++) {
 
         flow = rte_flow_create(rte_port->port_no, &flow_attr, patterns.items,
@@ -1708,13 +1751,11 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port * rte_port,
             ret = -1;
             goto out;
         }
-
-        // Roni: TODO, no such function
-        //ufid_hw_offload_insert(ufid_hw_offload, flow);
+        ufid_hw_offload_add_rte_flow(ufid_hw_offload, flow,
+                                             rte_port_phy_arr[i]->dpdk_port_id,
+                                             0);
     }
 
-    ufid_hw_offload_add(ufid_hw_offload, &rte_port->ufid_to_rte);
-    ufid_to_portid_add(ufid, rte_port->port_no);
 
 out:
     free(rss);
