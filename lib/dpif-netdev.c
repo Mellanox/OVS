@@ -310,6 +310,7 @@ struct dp_netdev {
      * Any lookup into 'ports' or any access to the dp_netdev_ports found
      * through 'ports' requires taking 'port_mutex'. */
     struct ovs_mutex port_mutex;
+    struct ovs_mutex hw_offload_mutex;
     struct hmap ports;
     struct seq *port_seq;       /* Incremented whenever a port changes. */
 
@@ -1472,6 +1473,7 @@ create_dp_netdev(const char *name, const struct dpif_class *class,
     atomic_flag_clear(&dp->destroyed);
 
     ovs_mutex_init(&dp->port_mutex);
+    ovs_mutex_init(&dp->hw_offload_mutex);
     hmap_init(&dp->ports);
     dp->port_seq = seq_create();
     fat_rwlock_init(&dp->upcall_rwlock);
@@ -1503,6 +1505,7 @@ create_dp_netdev(const char *name, const struct dpif_class *class,
     ovsthread_key_create(&dp->per_pmd_key, NULL);
 
     ovs_mutex_lock(&dp->port_mutex);
+    ovs_mutex_lock(&dp->hw_offload_mutex);
     /* non-PMD will be created before all other threads and will
      * allocate static_tx_qid = 0. */
     dp_netdev_set_nonpmd(dp);
@@ -1510,6 +1513,7 @@ create_dp_netdev(const char *name, const struct dpif_class *class,
     error = do_add_port(dp, name, dpif_netdev_port_open_type(dp->class,
                                                              "internal"),
                         ODPP_LOCAL);
+    ovs_mutex_unlock(&dp->hw_offload_mutex);
     ovs_mutex_unlock(&dp->port_mutex);
     if (error) {
         dp_netdev_free(dp);
@@ -1591,9 +1595,12 @@ dp_netdev_free(struct dp_netdev *dp)
     shash_find_and_delete(&dp_netdevs, dp->name);
 
     ovs_mutex_lock(&dp->port_mutex);
+    ovs_mutex_lock(&dp->hw_offload_mutex);
+
     HMAP_FOR_EACH_SAFE (port, next, node, &dp->ports) {
         do_del_port(dp, port);
     }
+    ovs_mutex_unlock(&dp->hw_offload_mutex);
     ovs_mutex_unlock(&dp->port_mutex);
 
     dp_netdev_destroy_all_pmds(dp, true);
@@ -1613,6 +1620,7 @@ dp_netdev_free(struct dp_netdev *dp)
     seq_destroy(dp->port_seq);
     hmap_destroy(&dp->ports);
     ovs_mutex_destroy(&dp->port_mutex);
+    ovs_mutex_destroy(&dp->hw_offload_mutex);
 
     /* Upcalls must be disabled at this point */
     dp_netdev_destroy_upcall_lock(dp);
@@ -1820,6 +1828,7 @@ dpif_netdev_port_add(struct dpif *dpif, struct netdev *netdev,
     int error;
 
     ovs_mutex_lock(&dp->port_mutex);
+    ovs_mutex_lock(&dp->hw_offload_mutex);
     dpif_port = netdev_vport_get_dpif_port(netdev, namebuf, sizeof namebuf);
     if (*port_nop != ODPP_NONE) {
         port_no = *port_nop;
@@ -1834,6 +1843,7 @@ dpif_netdev_port_add(struct dpif *dpif, struct netdev *netdev,
         NETDEV_OFFLOAD_ADD_PORT(port_no, netdev);
     }
 
+    ovs_mutex_unlock(&dp->hw_offload_mutex);
     ovs_mutex_unlock(&dp->port_mutex);
 
     return error;
@@ -1846,6 +1856,7 @@ dpif_netdev_port_del(struct dpif *dpif, odp_port_t port_no)
     int error;
 
     ovs_mutex_lock(&dp->port_mutex);
+    ovs_mutex_lock(&dp->hw_offload_mutex);
     if (port_no == ODPP_LOCAL) {
         error = EINVAL;
     } else {
@@ -1857,6 +1868,7 @@ dpif_netdev_port_del(struct dpif *dpif, odp_port_t port_no)
             NETDEV_OFFLOAD_DEL_PORT(port_no);
         }
     }
+    ovs_mutex_unlock(&dp->hw_offload_mutex);
     ovs_mutex_unlock(&dp->port_mutex);
 
     return error;
@@ -2206,12 +2218,12 @@ mark_to_flow_disassociate(struct dp_netdev_pmd_thread *pmd,
         struct dp_netdev_port *port;
         odp_port_t in_port = flow->flow.in_port.odp_port;
 
-        ovs_mutex_lock(&pmd->dp->port_mutex);
+        ovs_mutex_lock(&pmd->dp->hw_offload_mutex);
         port = dp_netdev_lookup_port(pmd->dp, in_port);
         if (port) {
             ret = netdev_flow_del(port->netdev, &flow->mega_ufid, NULL);
         }
-        ovs_mutex_unlock(&pmd->dp->port_mutex);
+        ovs_mutex_unlock(&pmd->dp->hw_offload_mutex);
 
         flow_mark_free(mark);
         VLOG_DBG("Freed flow mark %u\n", mark);
@@ -2348,17 +2360,17 @@ dp_netdev_flow_offload_put(struct dp_flow_offload_item *offload)
     }
     info.flow_mark = mark;
 
-    ovs_mutex_lock(&pmd->dp->port_mutex);
+    ovs_mutex_lock(&pmd->dp->hw_offload_mutex);
     port = dp_netdev_lookup_port(pmd->dp, in_port);
     if (!port) {
-        ovs_mutex_unlock(&pmd->dp->port_mutex);
+        ovs_mutex_unlock(&pmd->dp->hw_offload_mutex);
         return -1;
     }
     ret = netdev_flow_put(port->netdev, &offload->match,
                           CONST_CAST(struct nlattr *, offload->actions),
                           offload->actions_len, &flow->mega_ufid, &info,
                           NULL);
-    ovs_mutex_unlock(&pmd->dp->port_mutex);
+    ovs_mutex_unlock(&pmd->dp->hw_offload_mutex);
 
     if (ret) {
         if (!modification) {
@@ -3867,6 +3879,7 @@ dpif_netdev_port_set_config(struct dpif *dpif, odp_port_t port_no,
     const char *affinity_list = smap_get(cfg, "pmd-rxq-affinity");
 
     ovs_mutex_lock(&dp->port_mutex);
+    ovs_mutex_lock(&dp->hw_offload_mutex);
     error = get_port_by_number(dp, port_no, &port);
     if (error || !netdev_is_pmd(port->netdev)
         || nullable_string_is_equal(affinity_list, port->rxq_affinity_list)) {
@@ -3882,6 +3895,7 @@ dpif_netdev_port_set_config(struct dpif *dpif, odp_port_t port_no,
 
     dp_netdev_request_reconfigure(dp);
 unlock:
+    ovs_mutex_unlock(&dp->hw_offload_mutex);
     ovs_mutex_unlock(&dp->port_mutex);
     return error;
 }
@@ -4774,7 +4788,9 @@ dpif_netdev_run(struct dpif *dpif)
     }
 
     if (dp_netdev_is_reconf_required(dp) || ports_require_restart(dp)) {
+        ovs_mutex_lock(&dp->hw_offload_mutex);
         reconfigure_datapath(dp);
+        ovs_mutex_unlock(&dp->hw_offload_mutex);
     }
     ovs_mutex_unlock(&dp->port_mutex);
 
@@ -4797,6 +4813,7 @@ dpif_netdev_wait(struct dpif *dpif)
 
     ovs_mutex_lock(&dp_netdev_mutex);
     ovs_mutex_lock(&dp->port_mutex);
+    ovs_mutex_lock(&dp->hw_offload_mutex);
     HMAP_FOR_EACH (port, node, &dp->ports) {
         netdev_wait_reconf_required(port->netdev);
         if (!netdev_is_pmd(port->netdev)) {
@@ -4807,6 +4824,7 @@ dpif_netdev_wait(struct dpif *dpif)
             }
         }
     }
+    ovs_mutex_unlock(&dp->hw_offload_mutex);
     ovs_mutex_unlock(&dp->port_mutex);
     ovs_mutex_unlock(&dp_netdev_mutex);
     seq_wait(tnl_conf_seq, dp->last_tnl_conf_seq);
@@ -6876,6 +6894,7 @@ dpif_dummy_change_port_number(struct unixctl_conn *conn, int argc OVS_UNUSED,
     ovs_mutex_unlock(&dp_netdev_mutex);
 
     ovs_mutex_lock(&dp->port_mutex);
+    ovs_mutex_lock(&dp->hw_offload_mutex);
     if (get_port_by_name(dp, argv[2], &port)) {
         unixctl_command_reply_error(conn, "unknown port");
         goto exit;
@@ -6904,6 +6923,7 @@ dpif_dummy_change_port_number(struct unixctl_conn *conn, int argc OVS_UNUSED,
     unixctl_command_reply(conn, NULL);
 
 exit:
+    ovs_mutex_unlock(&dp->hw_offload_mutex);
     ovs_mutex_unlock(&dp->port_mutex);
     dp_netdev_unref(dp);
 }
