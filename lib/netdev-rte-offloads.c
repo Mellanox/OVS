@@ -85,7 +85,7 @@ static struct rte_flow * netdev_dpdk_add_rte_flow_offload(
                                  struct nlattr *nl_actions,
                                  size_t actions_len,
                                  const ovs_u128 *ufid OVS_UNUSED,
-                                 struct offload_info *info, 
+                                 struct offload_info *info,
                                  uint64_t * counter_id);
 
 
@@ -123,9 +123,10 @@ struct netdev_rte_port {
   enum rte_port_type rte_port_type;
   uint32_t    table_id;
   uint16_t    dpdk_port_id;
+  uint16_t    dpdk_num_queues;
 
   uint32_t    special_mark;
-  struct rte_flow * default_rte_flow; // per odp
+  struct rte_flow * default_rte_flow[RTE_FLOW_MAX_TABLES]; // per odp
 
   struct cmap ufid_to_rte;   // map of fuid to all the matching rte_flows
 };
@@ -380,6 +381,22 @@ static struct ufid_hw_offload * netdev_rte_port_ufid_hw_offload_alloc(int size,
     return ret;
 }
 
+static int netdev_rte_port_destory_rte_flow(uint16_t port_id,
+                                            struct rte_flow * flow)
+{
+    struct rte_flow_error error;
+    int ret = 0;
+    ret = rte_flow_destroy(port_id, flow, &error);
+
+    // TODO: think better what we do here.
+    if (ret != 0) {
+        VLOG_ERR("rte flow destroy error: %u : message : %s\n",
+             error.type, error.message);
+
+    }
+    return ret;
+}
+
 /**
  * @brief - if hw rules were interducedm we make sure we clean them before
  * we free the struct.
@@ -395,22 +412,13 @@ static int netdev_rte_port_ufid_hw_offload_free(
     for (int i = 0 ; i < hw_offload->curr_idx ; i++) {
     // TODO: free RTE object
         if (hw_offload->rte_flow_data[i].flow != NULL) {
-            struct rte_flow_error error;
-            int ret = 0;
-            ret = rte_flow_destroy(hw_offload->rte_flow_data[i].port_id,
-                       hw_offload->rte_flow_data[i].flow, &error);
+            netdev_rte_port_destory_rte_flow(
+                          hw_offload->rte_flow_data[i].port_id,
+                          hw_offload->rte_flow_data[i].flow);
 
             VLOG_DBG("rte_destory for flow "UUID_FMT" on port %d, was called"
                     ,UUID_ARGS((struct uuid *)&hw_offload->ufid)
                     ,hw_offload->rte_flow_data[i].port_id );
-
-            // TODO: think better what we do here.
-            if (ret != 0) {
-                VLOG_ERR("rte flow destroy error: %u : message : %s\n",
-                     error.type, error.message);
-                return ret;
-
-            }
         }
 
         hw_offload->rte_flow_data[i].flow = NULL;
@@ -418,6 +426,25 @@ static int netdev_rte_port_ufid_hw_offload_free(
 
     free(hw_offload);
     return 0;
+}
+
+
+/**
+ * @brief - run all default rules and free if exists.
+ *
+ * @param rte_port
+ */
+static void netdev_rte_port_del_default_rules(
+                                   struct netdev_rte_port * rte_port)
+{
+    for (int i = 0 ; i < RTE_FLOW_MAX_TABLES ; i++) {
+        if (rte_port->default_rte_flow[i]) {
+            netdev_rte_port_destory_rte_flow(rte_port->dpdk_port_id,
+                                        rte_port->default_rte_flow[i]);
+            rte_port->default_rte_flow[i] = NULL;
+
+        }
+    }
 }
 
 
@@ -438,13 +465,13 @@ static void netdev_rte_port_clean_all(struct netdev_rte_port * rte_vport)
     return;
 }
 
-static void netdev_rte_port_del_arr(struct netdev_rte_port * rte_port, 
+static void netdev_rte_port_del_arr(struct netdev_rte_port * rte_port,
                                     struct netdev_rte_port * arr[],
                                     int arr_len)
 {
-    for(int i = 0 ; i < arr_len; i++){
-        if(arr[i] == rte_port){
-            arr[i] = arr[arr_len -1]; // switch with last 
+    for (int i = 0 ; i < arr_len; i++) {
+        if (arr[i] == rte_port) {
+            arr[i] = arr[arr_len -1]; /* switch with last*/
             return;
         }
     }
@@ -477,7 +504,7 @@ static void netdev_rte_port_free(struct netdev_rte_port * rte_port)
                         CONST_CAST(struct cmap_node *, &rte_port->node), hash);
             netdev_rte_free_table_id(rte_port->table_id);
             netdev_rte_reserved_mark_free(rte_port->special_mark);
-            cmap_remove(&mark_to_rte_port, 
+            cmap_remove(&mark_to_rte_port,
                         CONST_CAST(struct cmap_node *,
                         &rte_port->mark_node),
                         hash_bytes(&rte_port->special_mark,
@@ -490,6 +517,7 @@ static void netdev_rte_port_free(struct netdev_rte_port * rte_port)
             count = (int) cmap_count(&dpdk_map);
             cmap_remove(&dpdk_map,
                         CONST_CAST(struct cmap_node *, &rte_port->node), hash);
+            netdev_rte_port_del_default_rules(rte_port);
             netdev_rte_port_del_arr(rte_port, &rte_port_phy_arr[0],count);
             break;
         case RTE_PORT_TYPE_NONE:
@@ -516,9 +544,9 @@ static void netdev_rte_port_free(struct netdev_rte_port * rte_port)
  * @return the new allocated port. already initialized for common params.
  */
 static struct netdev_rte_port * netdev_rte_port_alloc(odp_port_t port_no,
-                                              struct netdev * netdev,
-                                              struct cmap * map,
-                                              struct netdev_rte_port * port_arr[])
+                                           struct netdev * netdev,
+                                           struct cmap * map,
+                                           struct netdev_rte_port * port_arr[])
 {
     int count = (int) cmap_count(map);
     size_t hash = hash_bytes(&port_no, sizeof(odp_port_t), 0);
@@ -533,7 +561,6 @@ static struct netdev_rte_port * netdev_rte_port_alloc(odp_port_t port_no,
    memset(ret_port,0,sizeof(*ret_port));
    ret_port->port_no = port_no;
    ret_port->netdev  = netdev;
-   ret_port->default_rte_flow = NULL;
    cmap_init(&ret_port->ufid_to_rte);
 
    cmap_insert(map,
@@ -619,7 +646,7 @@ static void ufid_hw_offload_add(struct ufid_hw_offload * hw_offload,
 
 static void ufid_hw_offload_add_rte_flow(struct ufid_hw_offload * hw_offload,
                                          struct rte_flow * rte_flow,
-                                         int dpdk_port_id, 
+                                         int dpdk_port_id,
                                          uint64_t ctr_id)
 {
     if (hw_offload->curr_idx < hw_offload->max_flows) {
@@ -709,7 +736,7 @@ int netdev_rte_offload_add_port(odp_port_t dp_port, struct netdev * netdev)
                 return -1;
             }
 
-            rte_vport = netdev_rte_port_alloc(dp_port, netdev, &vport_map, 
+            rte_vport = netdev_rte_port_alloc(dp_port, netdev, &vport_map,
                                                     &rte_port_phy_arr[0]);
             rte_vport->rte_port_type = rte_port_type;
             rte_vport->table_id      = table_id;
@@ -744,6 +771,7 @@ int netdev_rte_offload_add_port(odp_port_t dp_port, struct netdev * netdev)
                                                          &rte_port_vir_arr[0]);
             rte_vport->rte_port_type = rte_port_type;
             rte_vport->dpdk_port_id = netdev_dpdk_get_port_id(netdev);
+            rte_vport->dpdk_num_queues = netdev->n_rxq;
 
             VLOG_INFO("rte_port allocated dpdk port %d, dpdk port id %d",
                                     dp_port, netdev_dpdk_get_port_id(netdev));
@@ -1022,6 +1050,11 @@ add_flow_rss_action(struct flow_actions *actions,
     int i;
     struct rte_flow_action_rss *rss;
 
+    if(netdev->n_rxq <= 0){
+        VLOG_WARN("failed to add rss, num of queues <= 0");
+        return NULL;
+    }
+
     rss = xmalloc(sizeof(*rss) + sizeof(uint16_t) * netdev->n_rxq);
     /*
      * Setting it to NULL will let the driver use the default RSS
@@ -1139,7 +1172,7 @@ err:
     return -1;
 }
 
-static struct netdev_rte_port * 
+static struct netdev_rte_port *
 prepare_and_add_jump_count_flow_action(
         const struct nlattr *nlattr,
         struct rte_flow_action_jump *jump,
@@ -1408,11 +1441,12 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
 
         /* If action is tunnel pop, create another table with a default flow.
          * Do it only once, if default rte flow doesn't exist */
-        if (is_tunnel_pop_action && !rte_port->default_rte_flow) {
+        if (is_tunnel_pop_action &&
+                          !rte_port->default_rte_flow[vport->table_id]) {
             /* The default flow has the lowest priority, no pattern
              * (match all) and Mark action */
             const struct rte_flow_attr def_flow_attr = {
-                .group = vport->table_id, 
+                .group = vport->table_id,
                 .priority = 0, /* lowest priority */
                 .ingress = 1,
                 .egress = 0,
@@ -1438,9 +1472,11 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
                 VLOG_ERR("%s: rte flow create for default flow error: %u : "
                         "message : %s\n", netdev_get_name(netdev), error.type,
                         error.message);
+
                 free_flow_patterns(&def_patterns);
                 free_flow_actions(&def_actions);
                 result = rte_flow_destroy(rte_port->port_no, flow, &error);
+
                 if (result != 0) {
                     VLOG_ERR("rte flow destroy error: %u : message : %s\n",
                          error.type, error.message);
@@ -1448,8 +1484,7 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
                 goto out;
             }
 
-            rte_port->default_rte_flow = def_flow;
-            // TODO: Roni: save flow per each vport/dpdk?
+            rte_port->default_rte_flow[vport->table_id] = def_flow;
         }
     } else { /* Previous actions cannot be offloaded to hw,
                 try offloading Mark and RSS actions */
@@ -1544,7 +1579,7 @@ netdev_dpdk_flow_put(struct netdev *netdev , struct match *match ,
     }
 
     rte_flow = netdev_dpdk_add_rte_flow_offload(rte_port, netdev, match,
-                                   actions,actions_len, ufid, info, &counter_id);
+                                 actions,actions_len, ufid, info, &counter_id);
 
     if (rte_flow) {
         ufid_hw_offload_add_rte_flow(ufid_hw_offload, rte_flow,
@@ -1608,7 +1643,8 @@ static void netdev_rte_port_preprocess(struct netdev_rte_port * rte_port,
             break;
         case RTE_PORT_TYPE_NONE:
         case RTE_PORT_TYPE_DPDK:
-            VLOG_WARN("port type %d has no pre-process",rte_port->rte_port_type);
+            VLOG_WARN("port type %d has no pre-process",
+                                            rte_port->rte_port_type);
             break;
 
     }
@@ -1616,7 +1652,7 @@ static void netdev_rte_port_preprocess(struct netdev_rte_port * rte_port,
 }
 
 /**
- * @brief - we got a packet with special mark, means we need to run 
+ * @brief - we got a packet with special mark, means we need to run
  *  pre-processing on the packet so it could be processed by the OVS SW.
  *  example for such case in vxlan is where we get match on outer
  *  vxlan so we jump to vxlan table, but then we fail on inner match.
@@ -1778,7 +1814,8 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port * rte_port,
     int ret = -1;
 
     /* Add patterns from outer header */
-    ret = add_vport_vxlan_flow_patterns(&patterns, &specs_inner, &masks_inner, match);
+    ret = add_vport_vxlan_flow_patterns(&patterns, &specs_inner,
+                                        &masks_inner, match);
     if (ret) {
         goto out;
     }
