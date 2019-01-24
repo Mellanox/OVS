@@ -36,8 +36,31 @@
 #include "netdev.h"
 #include <rte_flow.h>
 #include "dp-packet.h"
+#include <rte_ethdev.h>
 
 VLOG_DEFINE_THIS_MODULE(netdev_rte_offload);
+
+static struct rte_eth_conf port_conf = {
+    .rxmode = {
+        .mq_mode = ETH_MQ_RX_RSS,
+        .split_hdr_size = 0,
+        .header_split   = 0, /* Header Split disabled */
+        .hw_ip_checksum = 0, /* IP checksum offload disabled */
+        .hw_vlan_filter = 0, /* VLAN filtering disabled */
+        .jumbo_frame    = 0, /* Jumbo Frame Support disabled */
+        .hw_strip_crc   = 0,
+    },
+    .rx_adv_conf = {
+        .rss_conf = {
+            .rss_key = NULL,
+            .rss_hf = ETH_RSS_IP | ETH_RSS_UDP | ETH_RSS_TCP,
+        },
+    },
+    .txmode = {
+        .mq_mode = ETH_MQ_TX_NONE,
+    },
+};
+
 
 #define RTE_FLOW_MAX_TABLES (31)
 #define HW_OFFLOAD_MAX_PHY (128)
@@ -1004,14 +1027,14 @@ add_flow_rss_action(struct flow_actions *actions,
      * Setting it to NULL will let the driver use the default RSS
      * configuration we have set: &port_conf.rx_adv_conf.rss_conf.
      */
-    rss->rss_conf = NULL;
+    rss->rss_conf = &port_conf.rx_adv_conf.rss_conf;
     rss->num = netdev->n_rxq;
 
     for (i = 0; i < rss->num; i++) {
         rss->queue[i] = i;
     }
 
-    //add_flow_action(actions, RTE_FLOW_ACTION_TYPE_RSS, rss);
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_RSS, rss);
 
     return rss;
 }
