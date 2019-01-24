@@ -1624,6 +1624,13 @@ add_vport_vxlan_flow_patterns(struct flow_patterns *patterns,
                               struct rte_flow_items *specs,
                               struct rte_flow_items *masks,
                               const struct match *match) {
+    struct vni { 
+        union  {
+            uint32_t val;
+            uint8_t  vni[4];
+        };
+    };
+
     /* IP v4 */
     uint8_t proto = 0;
     if (match->flow.dl_type == htons(ETH_TYPE_IP)) {
@@ -1668,13 +1675,15 @@ add_vport_vxlan_flow_patterns(struct flow_patterns *patterns,
         return -1;
     }
 
+    struct vni vni = { .val = (uint32_t) (match->flow.tunnel.tun_id >> 32)};
+
     /* VXLAN */
     memset(&specs->vxlan, 0, sizeof(specs->vxlan));
     memset(&masks->vxlan, 0, sizeof(masks->vxlan));
     specs->vxlan.flags  = match->flow.tunnel.flags;
-    specs->vxlan.vni[0] = match->flow.tunnel.tun_id  & 0xFF;
-    specs->vxlan.vni[1] = (match->flow.tunnel.tun_id >> 8) & 0xFF;
-    specs->vxlan.vni[2] = (match->flow.tunnel.tun_id >> 16) & 0xFF;
+    specs->vxlan.vni[0] = vni.vni[1];
+    specs->vxlan.vni[1] = vni.vni[2];
+    specs->vxlan.vni[2] = vni.vni[3];
 
     masks->vxlan.vni[0] = 0xFF; //match->wc.masks.tunnel.tun_id & 0xFF;
     masks->vxlan.vni[1] = 0xFF; //(match->wc.masks.tunnel.tun_id >> 8) & 0xFF;
