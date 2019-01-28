@@ -692,6 +692,29 @@ int netdev_vport_flow_del(struct netdev * netdev OVS_UNUSED,
     return 0;
 }
 
+struct rte_flow *
+ufid_to_dpdk_rte_flow(const ovs_u128 *ufid) {
+    struct netdev_rte_port * rte_port;
+    odp_port_t port_no = ufid_to_portid_search(ufid);
+
+    if (port_no == INVALID_ODP_PORT) {
+        return NULL;
+    }
+
+    rte_port = netdev_rte_port_search(port_no, &dpdk_map);
+
+    if (rte_port == NULL) {
+        VLOG_ERR("failed to find dpdk port for port %d",port_no);
+        return NULL;
+    }
+
+    struct ufid_hw_offload *ufid_hwol = ufid_hw_offload_find(ufid, &rte_port->ufid_to_rte);
+    if (ufid_hwol) {
+        return ufid_hwol->rte_flow_data[0].flow;
+    }
+    return NULL;
+}
+
 int netdev_vport_init_flow_api(struct netdev * netdev OVS_UNUSED)
 {
     return 0;

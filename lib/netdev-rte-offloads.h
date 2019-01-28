@@ -53,4 +53,6 @@ int netdev_dpdk_flow_put(struct netdev *netdev, struct match *match,
 int netdev_dpdk_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
                      struct dpif_flow_stats *stats OVS_UNUSED);
 
+struct rte_flow *
+ufid_to_dpdk_rte_flow(const ovs_u128 *ufid);
 #endif /* netdev-vport-offloads.h */
