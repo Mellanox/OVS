@@ -692,6 +692,15 @@ int netdev_vport_flow_del(struct netdev * netdev OVS_UNUSED,
     return 0;
 }
 
+struct rte_flow *
+ufid_to_dpdk_rte_flow(const ovs_u128 *ufid) {
+    struct ufid_hw_offload *ufid_hwol = ufid_hw_offload_find(ufid, &dpdk_map);
+    if (ufid_hwol) {
+        return ufid_hwol->rte_flow_data[0].flow;
+    }
+    return NULL;
+}
+
 int netdev_vport_init_flow_api(struct netdev * netdev OVS_UNUSED)
 {
     return 0;
