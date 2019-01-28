@@ -1387,7 +1387,7 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
             *counter_id = count.id;
             result = 0;
         } else {
-            VLOG_DBG("Unsupported action %d for offload, "
+            VLOG_DBG("unsupported action %d for offload, "
                     "trying to offload mark and rss actions", type);
             result = -1;
             break;
@@ -1404,6 +1404,8 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
             VLOG_ERR("%s: rte flow create offload error: %u : message : %s\n",
                      netdev_get_name(netdev), error.type, error.message);
             goto out;
+        } else {
+            VLOG_DBG("first flow of decap created");
         }
 
         /* If action is tunnel pop, create another table with a default flow.
@@ -1424,6 +1426,9 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
             add_flow_pattern(&def_patterns, RTE_FLOW_ITEM_TYPE_END, NULL,
                     NULL);
 
+            struct rte_flow_action_rss *rss;
+            rss = add_flow_rss_action(&def_actions, netdev);
+
             struct rte_flow_action_mark mark;
             mark.id = vport->special_mark;
             add_flow_action(&def_actions, RTE_FLOW_ACTION_TYPE_MARK, &mark);
@@ -1433,6 +1438,7 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
             def_flow = rte_flow_create(rte_port->dpdk_port_id, &def_flow_attr,
                     def_patterns.items, def_actions.actions, &error);
 
+            free(rss);
 
             if (!def_flow) {
                 VLOG_ERR("%s: rte flow create for default flow error: %u : "
@@ -1440,12 +1446,15 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
                         error.message);
                 free_flow_patterns(&def_patterns);
                 free_flow_actions(&def_actions);
-                result = rte_flow_destroy(rte_port->port_no, flow, &error);
+                result = rte_flow_destroy(rte_port->dpdk_port_id, flow,
+                        &error);
                 if (result != 0) {
                     VLOG_ERR("rte flow destroy error: %u : message : %s\n",
                          error.type, error.message);
                 }
                 goto out;
+            } else {
+                VLOG_DBG("decap default flow created");
             }
 
             rte_port->default_rte_flow = def_flow;
@@ -1472,6 +1481,8 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
             VLOG_ERR("%s: rte flow create offload error: %u : message : %s\n",
                      netdev_get_name(netdev), error.type, error.message);
             goto out;
+        } else {
+            VLOG_DBG("flow mark & rss created");
         }
     }
 
@@ -1791,7 +1802,6 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port * rte_port,
 
     add_flow_pattern(&patterns, RTE_FLOW_ITEM_TYPE_END, NULL, NULL);
 
-
     add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_VXLAN_DECAP, NULL);
 
     mark.id = info->flow_mark;
@@ -1806,19 +1816,19 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port * rte_port,
         flow = rte_flow_create(rte_port->dpdk_port_id, &flow_attr, patterns.items,
                                actions.actions, &error);
 
-
-
         if (!flow) {
             VLOG_ERR("%s: rte flow create offload error: %u : message : %s\n",
                      netdev_get_name(netdev), error.type, error.message);
             ret = -1;
             goto out;
+        } else {
+            VLOG_DBG("second flow of decap created");
         }
+
         ufid_hw_offload_add_rte_flow(ufid_hw_offload, flow,
                                              rte_port_phy_arr[i]->dpdk_port_id,
                                              0);
     }
-
 
 out:
     free(rss);
