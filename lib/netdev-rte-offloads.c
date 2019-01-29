@@ -398,7 +398,7 @@ static int netdev_rte_port_destory_rte_flow(uint16_t port_id,
 }
 
 /**
- * @brief - if hw rules were interducedm we make sure we clean them before
+ * @brief - if hw rules were introduced we make sure we clean them before
  * we free the struct.
  *
  * @param hw_offload
@@ -768,7 +768,7 @@ int netdev_rte_offload_add_port(odp_port_t dp_port, struct netdev * netdev)
             }
 
             rte_vport = netdev_rte_port_alloc(dp_port, netdev, &dpdk_map,
-                                                         &rte_port_vir_arr[0]);
+                                                         &rte_port_phy_arr[0]);
             rte_vport->rte_port_type = rte_port_type;
             rte_vport->dpdk_port_id = netdev_dpdk_get_port_id(netdev);
             rte_vport->dpdk_num_queues = netdev->n_rxq;
@@ -1046,22 +1046,17 @@ add_flow_action(struct flow_actions *actions, enum rte_flow_action_type type,
 
 static struct rte_flow_action_rss *
 add_flow_rss_action(struct flow_actions *actions,
-                    struct netdev *netdev) {
+                    uint16_t num_queues) {
     int i;
     struct rte_flow_action_rss *rss;
 
-    if(netdev->n_rxq <= 0){
-        VLOG_WARN("failed to add rss, num of queues <= 0");
-        return NULL;
-    }
-
-    rss = xmalloc(sizeof(*rss) + sizeof(uint16_t) * netdev->n_rxq);
+    rss = xmalloc(sizeof(*rss) + sizeof(uint16_t) * num_queues);
     /*
      * Setting it to NULL will let the driver use the default RSS
      * configuration we have set: &port_conf.rx_adv_conf.rss_conf.
      */
     rss->rss_conf = &port_conf.rx_adv_conf.rss_conf;
-    rss->num = netdev->n_rxq;
+    rss->num = num_queues;
 
     for (i = 0; i < rss->num; i++) {
         rss->queue[i] = i;
@@ -1420,7 +1415,7 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
             *counter_id = count.id;
             result = 0;
         } else {
-            VLOG_DBG("Unsupported action %d for offload, "
+            VLOG_DBG("unsupported action %d for offload, "
                     "trying to offload mark and rss actions", type);
             result = -1;
             break;
@@ -1437,6 +1432,8 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
             VLOG_ERR("%s: rte flow create offload error: %u : message : %s\n",
                      netdev_get_name(netdev), error.type, error.message);
             goto out;
+        } else {
+            VLOG_DBG("first flow of decap created");
         }
 
         /* If action is tunnel pop, create another table with a default flow.
@@ -1458,6 +1455,9 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
             add_flow_pattern(&def_patterns, RTE_FLOW_ITEM_TYPE_END, NULL,
                     NULL);
 
+            struct rte_flow_action_rss *rss;
+            rss = add_flow_rss_action(&def_actions, rte_port->dpdk_num_queues);
+
             struct rte_flow_action_mark mark;
             mark.id = vport->special_mark;
             add_flow_action(&def_actions, RTE_FLOW_ACTION_TYPE_MARK, &mark);
@@ -1467,6 +1467,7 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
             def_flow = rte_flow_create(rte_port->dpdk_port_id, &def_flow_attr,
                     def_patterns.items, def_actions.actions, &error);
 
+            free(rss);
 
             if (!def_flow) {
                 VLOG_ERR("%s: rte flow create for default flow error: %u : "
@@ -1475,13 +1476,15 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
 
                 free_flow_patterns(&def_patterns);
                 free_flow_actions(&def_actions);
-                result = rte_flow_destroy(rte_port->port_no, flow, &error);
-
+                result = rte_flow_destroy(rte_port->dpdk_port_id, flow,
+                        &error);
                 if (result != 0) {
                     VLOG_ERR("rte flow destroy error: %u : message : %s\n",
                          error.type, error.message);
                 }
                 goto out;
+            } else {
+                VLOG_DBG("decap default flow created");
             }
 
             rte_port->default_rte_flow[vport->table_id] = def_flow;
@@ -1495,7 +1498,7 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
         add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_MARK, &mark);
 
         struct rte_flow_action_rss *rss;
-        rss = add_flow_rss_action(&actions, netdev);
+        rss = add_flow_rss_action(&actions, rte_port->dpdk_num_queues);
 
         add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_END, NULL);
 
@@ -1507,6 +1510,8 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
             VLOG_ERR("%s: rte flow create offload error: %u : message : %s\n",
                      netdev_get_name(netdev), error.type, error.message);
             goto out;
+        } else {
+            VLOG_DBG("flow mark & rss created");
         }
     }
 
@@ -1744,6 +1749,7 @@ add_vport_vxlan_flow_patterns(struct flow_patterns *patterns,
     specs->vxlan.vni[1] = vni.vni[2];
     specs->vxlan.vni[2] = vni.vni[3];
 
+    // TODO: check the masks
     masks->vxlan.vni[0] = 0xFF; //match->wc.masks.tunnel.tun_id & 0xFF;
     masks->vxlan.vni[1] = 0xFF; //(match->wc.masks.tunnel.tun_id >> 8) & 0xFF;
     masks->vxlan.vni[2] = 0xFF; //(match->wc.masks.tunnel.tun_id >> 16) & 0xFF;
@@ -1828,37 +1834,38 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port * rte_port,
 
     add_flow_pattern(&patterns, RTE_FLOW_ITEM_TYPE_END, NULL, NULL);
 
-
-    add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_VXLAN_DECAP, NULL);
-
-    mark.id = info->flow_mark;
-    add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_MARK, &mark);
-
-    rss = add_flow_rss_action(&actions, netdev);
-
-    add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_END, NULL);
-
     for (int i = 0 ; i < n_phy ; i++) {
 
-        flow = rte_flow_create(rte_port->dpdk_port_id, &flow_attr, patterns.items,
-                               actions.actions, &error);
+        add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_VXLAN_DECAP, NULL);
 
+        mark.id = info->flow_mark;
+        add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_MARK, &mark);
 
+        rss = add_flow_rss_action(&actions,
+                rte_port_phy_arr[i]->dpdk_num_queues);
+
+        add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_END, NULL);
+
+        flow = rte_flow_create(rte_port_phy_arr[i]->dpdk_port_id, &flow_attr,
+                patterns.items, actions.actions, &error);
 
         if (!flow) {
             VLOG_ERR("%s: rte flow create offload error: %u : message : %s\n",
                      netdev_get_name(netdev), error.type, error.message);
             ret = -1;
             goto out;
+        } else {
+            VLOG_DBG("second flow of decap created");
         }
+
         ufid_hw_offload_add_rte_flow(ufid_hw_offload, flow,
                                              rte_port_phy_arr[i]->dpdk_port_id,
                                              0);
+        free(rss);
+        free_flow_actions(&actions);
     }
 
-
 out:
-    free(rss);
     free_flow_patterns(&patterns);
     free_flow_actions(&actions);
     return ret;
