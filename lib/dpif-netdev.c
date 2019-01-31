@@ -3587,7 +3587,6 @@ dp_netdev_offload_used(struct dp_netdev_flow *netdev_flow,
             ovs_mutex_unlock(&pmd->dp->port_mutex);
             return -1;
     }
-    /* get offloaded stats */
     ret = netdev_flow_stats_get(port->netdev,
                     &netdev_flow->mega_ufid, &stats);
     ovs_mutex_unlock(&pmd->dp->port_mutex);
