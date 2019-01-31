@@ -481,6 +481,10 @@ struct netdev_dpdk {
          * otherwise interrupt mode is used. */
         bool requested_lsc_interrupt_mode;
         bool lsc_interrupt_mode;
+
+        /* hardware counters */
+        uint64_t hw_n_packets;
+        uint64_t hw_n_bytes;
     );
 
     PADDED_MEMBERS(CACHE_LINE_SIZE,
@@ -1159,6 +1163,8 @@ common_construct(struct netdev *netdev, dpdk_port_t port_no,
     dev->requested_n_txq = NR_QUEUE;
     dev->requested_rxq_size = NIC_PORT_DEFAULT_RXQ_SIZE;
     dev->requested_txq_size = NIC_PORT_DEFAULT_TXQ_SIZE;
+    dev->hw_n_packets = 0;
+    dev->hw_n_bytes = 0;
 
     /* Initialize the flow control to NULL */
     memset(&dev->fc_conf, 0, sizeof dev->fc_conf);
@@ -4082,16 +4088,33 @@ netdev_dpdk_flow_stats_get(struct netdev *netdev, const ovs_u128 *ufid,
         return EINVAL;
     }
     memset(&query, 0, sizeof(query));
-    /* reset counters after query */
-    query.reset = 1;
+    /*
+     * Do not reset counters after query. This will require
+     * SW adjustments during stats calculations
+     */
+    query.reset = 0;
     ret = rte_flow_query(dev->port_id, rte_flow, RTE_FLOW_ACTION_TYPE_COUNT,
                          &query, &error);
     if (ret) {
         return -ret;
     }
 
-    stats->n_packets = (query.hits_set) ? query.hits : 0;
-    stats->n_bytes = (query.bytes_set) ? query.bytes : 0;
+    uint64_t hw_n_packets = (query.hits_set) ? query.hits : 0;
+    uint64_t hw_n_bytes = (query.bytes_set) ? query.bytes : 0;
+    if (hw_n_packets > dev->hw_n_packets) {
+        stats->n_packets = hw_n_packets - dev->hw_n_packets;
+        dev->hw_n_packets = hw_n_packets;
+    } else {
+        stats->n_packets = 0;
+    }
+
+    if (hw_n_bytes > dev->hw_n_bytes) {
+        stats->n_bytes = hw_n_bytes - dev->hw_n_bytes;
+        dev->hw_n_bytes = hw_n_bytes;
+    } else {
+        stats->n_bytes = 0;
+    }
+
     stats->used = 0;
     stats->tcp_flags = 0;
     return ret;

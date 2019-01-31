@@ -80,6 +80,8 @@ struct netdev {
     int n_rxq;
     struct shash_node *node;            /* Pointer to element in global map. */
     struct ovs_list saved_flags_list; /* Contains "struct netdev_saved_flags". */
+    uint64_t hw_n_packets; /* saved hw packets */
+    uint64_t hw_n_bytes; /* saved hw bytes */
 };
 
 static inline void
