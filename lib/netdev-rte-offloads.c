@@ -1422,7 +1422,9 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
     const struct nlattr *a;
     unsigned int left;
 
-    bool is_tunnel_pop_action = false;
+    /* actions in nl_actions will be asserted in this bitmap,
+     * according to their values in ovs_action_attr enum */
+    uint64_t is_action_bitmap = false;
     struct rte_flow_action_jump jump;
     struct rte_flow_action_count count;
 
@@ -1434,7 +1436,7 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
             if (!vport) {
                 break;
             }
-            is_tunnel_pop_action = true;
+            is_action_bitmap |= 1 << OVS_ACTION_ATTR_TUNNEL_POP;
             *counter_id = count.id;
             result = 0;
         } else {
@@ -1461,7 +1463,7 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
 
         /* If action is tunnel pop, create another table with a default flow.
          * Do it only once, if default rte flow doesn't exist */
-        if (is_tunnel_pop_action &&
+        if ((is_action_bitmap & (1 << OVS_ACTION_ATTR_TUNNEL_POP)) &&
                           !rte_port->default_rte_flow[vport->table_id]) {
             /* The default flow has the lowest priority, no pattern
              * (match all) and Mark action */
