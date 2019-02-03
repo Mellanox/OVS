@@ -1191,13 +1191,11 @@ err:
 }
 
 static struct netdev_rte_port *
-prepare_and_add_jump_count_flow_action(
+prepare_and_add_jump_flow_action(
         const struct nlattr *nlattr,
         struct rte_flow_action_jump *jump,
-        struct rte_flow_action_count *count,
         struct flow_actions *actions)
 {
-    static uint32_t running_count_ids = 0;
     odp_port_t odp_port;
     struct netdev_rte_port *rte_port;
 
@@ -1212,10 +1210,20 @@ prepare_and_add_jump_count_flow_action(
     jump->group = rte_port->table_id;
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_JUMP, jump);
 
+    return rte_port;
+}
+
+static void
+prepare_and_add_count_flow_action(
+        const struct nlattr *nlattr,
+        struct rte_flow_action_count *count,
+        struct flow_actions *actions)
+{
+    static uint32_t running_count_ids = 0;
+
     count->shared = 0;
     count->id = ++running_count_ids;
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_COUNT, count);
-    return rte_port;
 }
 
 static int
@@ -1431,8 +1439,8 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
     NL_ATTR_FOR_EACH_UNSAFE (a, left, nl_actions, actions_len) {
         int type = nl_attr_type(a);
         if ((enum ovs_action_attr) type == OVS_ACTION_ATTR_TUNNEL_POP) {
-            vport = prepare_and_add_jump_count_flow_action(a, &jump, &count,
-                    &actions);
+            prepare_and_add_count_flow_action(a, &count, &actions);
+            vport = prepare_and_add_jump_flow_action(a, &jump, &actions);
             if (!vport) {
                 break;
             }
