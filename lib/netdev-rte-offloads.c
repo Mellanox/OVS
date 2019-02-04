@@ -1191,7 +1191,7 @@ err:
 }
 
 static struct netdev_rte_port *
-prepare_and_add_jump_flow_action(
+netdev_rte_add_jump_flow_action(
         const struct nlattr *nlattr,
         struct rte_flow_action_jump *jump,
         struct flow_actions *actions)
@@ -1214,7 +1214,7 @@ prepare_and_add_jump_flow_action(
 }
 
 static void
-prepare_and_add_count_flow_action(
+netdev_rte_add_count_flow_action(
         struct rte_flow_action_count *count,
         struct flow_actions *actions)
 {
@@ -1425,19 +1425,19 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
 
     /* actions in nl_actions will be asserted in this bitmap,
      * according to their values in ovs_action_attr enum */
-    uint64_t is_action_bitmap = false;
+    uint64_t is_action_bitmap = 0;
     struct rte_flow_action_jump jump;
     struct rte_flow_action_count count;
 
     NL_ATTR_FOR_EACH_UNSAFE (a, left, nl_actions, actions_len) {
         int type = nl_attr_type(a);
         if ((enum ovs_action_attr) type == OVS_ACTION_ATTR_TUNNEL_POP) {
-            vport = prepare_and_add_jump_flow_action(a, &jump, &actions);
+            vport = netdev_rte_add_jump_flow_action(a, &jump, &actions);
             if (!vport) {
                 result = -1;
                 break;
             }
-            prepare_and_add_count_flow_action(&count, &actions);
+            netdev_rte_add_count_flow_action(&count, &actions);
             is_action_bitmap |= 1 << OVS_ACTION_ATTR_TUNNEL_POP;
             *counter_id = count.id;
             result = 0;
@@ -1452,7 +1452,7 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
     /* If no actions at all, create a flow with drop and count actions */
     if (!result && !is_action_bitmap) {
         add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_DROP, NULL);
-        prepare_and_add_count_flow_action(&count, &actions);
+        netdev_rte_add_count_flow_action(&count, &actions);
         add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_END, NULL);
         flow = rte_flow_create(rte_port->dpdk_port_id, &flow_attr,
                 patterns.items, actions.actions, &error);
