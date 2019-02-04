@@ -70,13 +70,9 @@ static struct rte_eth_conf port_conf = {
 struct rte_flow;
 struct netdev_rte_port ;
 
+static struct vlog_rate_limit error_rl = VLOG_RATE_LIMIT_INIT(100, 5);
 
-//-------------------------------------------------------
-
-
-//-------------------------------------
-
-static int netdev_dpdk_validate_flow(const struct match *match);
+static int netdev_dpdk_validate_flow(const struct match *match,bool is_tun);
 
 static struct rte_flow * netdev_dpdk_add_rte_flow_offload(
                                  struct netdev_rte_port * rte_port,
@@ -153,7 +149,6 @@ static struct cmap rte_port_by_netdev = CMAP_INITIALIZER;
 
 static struct cmap mark_to_rte_port = CMAP_INITIALIZER;
 
-//TODO: init it some how.
 static struct netdev_rte_port * rte_port_phy_arr[MAX_PHY_RTE_PORTS];
 static struct netdev_rte_port * rte_port_vir_arr[MAX_PHY_RTE_PORTS];
 
@@ -388,9 +383,8 @@ static int netdev_rte_port_destory_rte_flow(uint16_t port_id,
     int ret = 0;
     ret = rte_flow_destroy(port_id, flow, &error);
 
-    // TODO: think better what we do here.
     if (ret != 0) {
-        VLOG_ERR("rte flow destroy error: %u : message : %s\n",
+        VLOG_ERR_RL(&error_rl, "rte flow destroy error: %u : message : %s\n",
              error.type, error.message);
 
     }
@@ -410,7 +404,7 @@ static int netdev_rte_port_ufid_hw_offload_free(
                                   UUID_ARGS((struct uuid *)&hw_offload->ufid));
 
     for (int i = 0 ; i < hw_offload->curr_idx ; i++) {
-    // TODO: free RTE object
+
         if (hw_offload->rte_flow_data[i].flow != NULL) {
             netdev_rte_port_destory_rte_flow(
                           hw_offload->rte_flow_data[i].port_id,
@@ -454,7 +448,6 @@ static void netdev_rte_port_del_default_rules(
  **/
 static void netdev_rte_port_clean_all(struct netdev_rte_port * rte_vport)
 {
-     //TODO: CLEAN ALL INSIDE DATA
     struct cmap_cursor cursor;
     struct ufid_hw_offload * data;
 
@@ -510,7 +503,6 @@ static void netdev_rte_port_free(struct netdev_rte_port * rte_port)
                         hash_bytes(&rte_port->special_mark,
                         sizeof(rte_port->special_mark),0));
             netdev_rte_port_del_arr(rte_port, &rte_port_vir_arr[0],count);
-            //TODO - release special mark
             break;
         case RTE_PORT_TYPE_DPDK:
             VLOG_DBG("remove dpdk port %d",rte_port->port_no);
@@ -659,10 +651,9 @@ static void ufid_hw_offload_add_rte_flow(struct ufid_hw_offload * hw_offload,
         int ret = 0;
         ret = rte_flow_destroy(dpdk_port_id, rte_flow, &error);
         if (ret != 0) {
-                VLOG_ERR("rte flow destroy error: %u : message : %s\n",
-                     error.type, error.message);
+                VLOG_ERR_RL(&error_rl, "rte flow destroy error: %u : message :"
+                       " %s\n", error.type, error.message);
         }
-        VLOG_WARN("failed to add rte_flow, releasing");
     }
     return;
 }
@@ -1112,13 +1103,13 @@ is_all_zero(const void *addr, size_t n) {
  * Check if any unsupported flow patterns are specified.
  */
 static int
-netdev_dpdk_validate_flow(const struct match *match) {
+netdev_dpdk_validate_flow(const struct match *match, bool is_tun) {
     struct match match_zero_wc;
 
     /* Create a wc-zeroed version of flow */
     match_init(&match_zero_wc, &match->flow, &match->wc);
 
-    if (!is_all_zero(&match_zero_wc.flow.tunnel,
+    if (!is_tun && !is_all_zero(&match_zero_wc.flow.tunnel,
                      sizeof(match_zero_wc.flow.tunnel))) {
                 goto err;
     }
@@ -1607,7 +1598,6 @@ netdev_dpdk_flow_put(struct netdev *netdev , struct match *match ,
        if (ret < 0) {
            return ret;
        }
-        return 0;
     }
 
     // we create fuid_to_rte map for the fuid.
@@ -1621,9 +1611,9 @@ netdev_dpdk_flow_put(struct netdev *netdev , struct match *match ,
     ufid_to_portid_add(ufid, rte_port->port_no);
 
     // generate HW offload.
-    ret = netdev_dpdk_validate_flow(match);
+    ret = netdev_dpdk_validate_flow(match, false);
     if (ret < 0) {
-        VLOG_ERR("not supported");
+        VLOG_DBG("flow pattern not supported");
         return ret;
     }
 
@@ -1785,7 +1775,9 @@ add_vport_vxlan_flow_patterns(struct flow_patterns *patterns,
         return -1;
     }
 
-    struct vni vni = { .val = (uint32_t) (match->flow.tunnel.tun_id >> 32)};
+    struct vni vni = { .val = (uint32_t)(match->flow.tunnel.tun_id >> 32)};
+    struct vni vni_m = { .val = (uint32_t)
+                                    (match->wc.masks.tunnel.tun_id >> 32)};
 
     /* VXLAN */
     memset(&specs->vxlan, 0, sizeof(specs->vxlan));
@@ -1795,10 +1787,9 @@ add_vport_vxlan_flow_patterns(struct flow_patterns *patterns,
     specs->vxlan.vni[1] = vni.vni[2];
     specs->vxlan.vni[2] = vni.vni[3];
 
-    // TODO: check the masks
-    masks->vxlan.vni[0] = 0xFF; //match->wc.masks.tunnel.tun_id & 0xFF;
-    masks->vxlan.vni[1] = 0xFF; //(match->wc.masks.tunnel.tun_id >> 8) & 0xFF;
-    masks->vxlan.vni[2] = 0xFF; //(match->wc.masks.tunnel.tun_id >> 16) & 0xFF;
+    masks->vxlan.vni[0] = vni_m.vni[1];
+    masks->vxlan.vni[1] = vni_m.vni[2];
+    masks->vxlan.vni[2] = vni_m.vni[3];
 
     add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_VXLAN,
                          &specs->vxlan, &masks->vxlan);
@@ -1822,14 +1813,22 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port * rte_port,
         return 0;
     }
 
+    int ret = -1;
     int n_phy = (int) cmap_count(&dpdk_map);
     struct ufid_hw_offload * ufid_hw_offload = ufid_hw_offload_find(ufid,
                                                      &rte_port->ufid_to_rte);
 
-    if (ufid_hw_offload != NULL) {
-        //TODO: what to do on modification
-        VLOG_WARN("got modification. not supported");
-        return 0; // return success because we don't remove the flow yet.
+    /*
+     * If an old rte_flow exists, it means it's a flow modification.
+     * Here destroy the old rte flow first before adding a new one.
+     */
+    if (ufid_hw_offload) {
+        VLOG_DBG("got modification. destroy previous rte_flow");
+        ufid_hw_offload_remove(ufid, &rte_port->ufid_to_rte);
+        ret = netdev_rte_port_ufid_hw_offload_free(ufid_hw_offload);
+        if (ret < 0) {
+           return ret;
+        }
     }
 
     if (n_phy < 1 || n_phy > HW_OFFLOAD_MAX_PHY) {
@@ -1863,7 +1862,6 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port * rte_port,
     struct rte_flow_items masks_inner;
     struct rte_flow_action_mark mark;
     struct rte_flow_action_rss *rss = NULL;
-    int ret = -1;
 
     /* Add patterns from outer header */
     ret = add_vport_vxlan_flow_patterns(&patterns, &specs_inner,
@@ -1926,10 +1924,10 @@ int netdev_vport_flow_put(struct netdev * netdev , struct match * match,
     odp_port_t in_port = match->flow.in_port.odp_port;
     struct netdev_rte_port * rte_port = netdev_rte_port_search(in_port,
                                                             &vport_map);
-    // TODO: Roni?
-    /*if (netdev_dpdk_validate_flow(match)) {
+    if (netdev_dpdk_validate_flow(match, true)) {
+        VLOG_DBG("flow pattern not supported");
         return -1;
-    }*/
+    }
 
     if (rte_port != NULL) {
          switch (rte_port->rte_port_type) {
