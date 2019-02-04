@@ -1634,8 +1634,10 @@ netdev_dpdk_flow_put(struct netdev *netdev , struct match *match ,
         ufid_hw_offload_add_rte_flow(ufid_hw_offload, rte_flow,
                                                rte_port->dpdk_port_id,
                                                counter_id);
+        return 0;
+    } else {
+        return -1;
     }
-    return ret;
 }
 
 /**
