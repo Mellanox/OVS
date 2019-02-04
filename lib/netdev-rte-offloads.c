@@ -575,7 +575,7 @@ static struct netdev_rte_port * netdev_rte_port_alloc(odp_port_t port_no,
 
 
 /**
- * search for offloaed voprt by odp port no.
+ * search for offloaded voprt by odp port no.
  *
  **/
 static struct netdev_rte_port * netdev_rte_port_search(odp_port_t port_no,
@@ -1191,13 +1191,11 @@ err:
 }
 
 static struct netdev_rte_port *
-prepare_and_add_jump_count_flow_action(
+netdev_rte_add_jump_flow_action(
         const struct nlattr *nlattr,
         struct rte_flow_action_jump *jump,
-        struct rte_flow_action_count *count,
         struct flow_actions *actions)
 {
-    static uint32_t running_count_ids = 0;
     odp_port_t odp_port;
     struct netdev_rte_port *rte_port;
 
@@ -1212,10 +1210,19 @@ prepare_and_add_jump_count_flow_action(
     jump->group = rte_port->table_id;
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_JUMP, jump);
 
+    return rte_port;
+}
+
+static void
+netdev_rte_add_count_flow_action(
+        struct rte_flow_action_count *count,
+        struct flow_actions *actions)
+{
+    static uint32_t running_count_ids = 0;
+
     count->shared = 0;
     count->id = ++running_count_ids;
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_COUNT, count);
-    return rte_port;
 }
 
 static int
@@ -1390,12 +1397,6 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
                                  struct offload_info *info,
                                  uint64_t * counter_id) {
 
-    if (!actions_len || !nl_actions) {
-        VLOG_DBG("%s: skip flow offload without actions\n",
-            netdev_get_name(netdev));
-        return NULL;
-    }
-
     const struct rte_flow_attr flow_attr = {
         .group = 0,
         .priority = 0,
@@ -1422,19 +1423,22 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
     const struct nlattr *a;
     unsigned int left;
 
-    bool is_tunnel_pop_action = false;
+    /* actions in nl_actions will be asserted in this bitmap,
+     * according to their values in ovs_action_attr enum */
+    uint64_t is_action_bitmap = 0;
     struct rte_flow_action_jump jump;
     struct rte_flow_action_count count;
 
     NL_ATTR_FOR_EACH_UNSAFE (a, left, nl_actions, actions_len) {
         int type = nl_attr_type(a);
         if ((enum ovs_action_attr) type == OVS_ACTION_ATTR_TUNNEL_POP) {
-            vport = prepare_and_add_jump_count_flow_action(a, &jump, &count,
-                    &actions);
+            vport = netdev_rte_add_jump_flow_action(a, &jump, &actions);
             if (!vport) {
+                result = -1;
                 break;
             }
-            is_tunnel_pop_action = true;
+            netdev_rte_add_count_flow_action(&count, &actions);
+            is_action_bitmap |= 1 << OVS_ACTION_ATTR_TUNNEL_POP;
             *counter_id = count.id;
             result = 0;
         } else {
@@ -1445,8 +1449,24 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
         }
     }
 
+    /* If no actions at all, create a flow with drop and count actions */
+    if (!result && !is_action_bitmap) {
+        add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_DROP, NULL);
+        netdev_rte_add_count_flow_action(&count, &actions);
+        add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_END, NULL);
+        flow = rte_flow_create(rte_port->dpdk_port_id, &flow_attr,
+                patterns.items, actions.actions, &error);
+
+        if (!flow) {
+            VLOG_ERR("%s: rte flow create offload error: %u : message : %s\n",
+                     netdev_get_name(netdev), error.type, error.message);
+            goto out;
+        } else {
+            VLOG_DBG("flow with drop action created");
+        }
+    }
     /* If actions can be offloaded to hw then create an rte_flow */
-    if (!result) {
+    else if (!result) {
         add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_END, NULL);
         flow = rte_flow_create(rte_port->dpdk_port_id, &flow_attr, patterns.items,
                                actions.actions, &error);
@@ -1461,7 +1481,7 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
 
         /* If action is tunnel pop, create another table with a default flow.
          * Do it only once, if default rte flow doesn't exist */
-        if (is_tunnel_pop_action &&
+        if ((is_action_bitmap & (1 << OVS_ACTION_ATTR_TUNNEL_POP)) &&
                           !rte_port->default_rte_flow[vport->table_id]) {
             /* The default flow has the lowest priority, no pattern
              * (match all) and Mark action */
