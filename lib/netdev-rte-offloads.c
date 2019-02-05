@@ -1458,7 +1458,7 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
                 patterns.items, actions.actions, &error);
 
         if (!flow) {
-            VLOG_ERR("%s: rte flow create offload error: %u : message : %s\n",
+            VLOG_ERR("%s: drop: rte flow create offload error: %u : message : %s\n",
                      netdev_get_name(netdev), error.type, error.message);
             goto out;
         } else {
@@ -1472,7 +1472,7 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
                                actions.actions, &error);
 
         if (!flow) {
-            VLOG_ERR("%s: rte flow create offload error: %u : message : %s\n",
+            VLOG_ERR("%s: first flow of decap: rte flow create offload error: %u : message : %s\n",
                      netdev_get_name(netdev), error.type, error.message);
             goto out;
         } else {
@@ -1551,7 +1551,7 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
         free(rss);
 
         if (!flow) {
-            VLOG_ERR("%s: rte flow create offload error: %u : message : %s\n",
+            VLOG_ERR("%s: mark & rss: rte flow create offload error: %u : message : %s\n",
                      netdev_get_name(netdev), error.type, error.message);
             goto out;
         } else {
@@ -1896,7 +1896,7 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port * rte_port,
                 patterns.items, actions.actions, &error);
 
         if (!flow) {
-            VLOG_ERR("%s: rte flow create offload error: %u : message : %s\n",
+            VLOG_ERR("%s: second flow of decap: rte flow create offload error: %u : message : %s\n",
                      netdev_get_name(netdev), error.type, error.message);
             ret = -1;
             goto out;
