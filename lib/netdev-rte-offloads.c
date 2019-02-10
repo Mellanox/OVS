@@ -1478,7 +1478,7 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
              * (match all) and Mark action */
             const struct rte_flow_attr def_flow_attr = {
                 .group = vport->table_id,
-                .priority = 0, /* lowest priority */
+                .priority = 1,
                 .ingress = 1,
                 .egress = 0,
             };
@@ -1847,7 +1847,7 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port * rte_port,
 
     const struct rte_flow_attr flow_attr = {
         .group = rte_port->table_id,
-        .priority = 1,
+        .priority = 0,
         .ingress = 1,
         .egress = 0
     };
