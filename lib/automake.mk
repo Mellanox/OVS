@@ -136,6 +136,7 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/multipath.h \
 	lib/namemap.c \
 	lib/netdev-dpdk.h \
+	lib/netdev-rte-offloads.h \
 	lib/netdev-dummy.c \
 	lib/netdev-provider.h \
 	lib/netdev-vport.c \
@@ -411,7 +412,8 @@ endif
 if DPDK_NETDEV
 lib_libopenvswitch_la_SOURCES += \
 	lib/dpdk.c \
-	lib/netdev-dpdk.c
+	lib/netdev-dpdk.c \
+	lib/netdev-rte-offloads.c
 else
 lib_libopenvswitch_la_SOURCES += \
 	lib/dpdk-stub.c
