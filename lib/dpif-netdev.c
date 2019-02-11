@@ -3593,6 +3593,11 @@ dp_netdev_offload_used(struct dp_netdev_flow *netdev_flow,
     if (ret) {
             return -1;
     }
+
+    if (stats.n_packets > 0) {
+        atomic_store_relaxed(&netdev_flow->stats.used,
+                        pmd->ctx.now / 1000);
+    }
     non_atomic_ullong_add(&netdev_flow->stats.packet_count, stats.n_packets);
     non_atomic_ullong_add(&netdev_flow->stats.byte_count, stats.n_bytes);
 
