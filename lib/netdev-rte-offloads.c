@@ -40,6 +40,129 @@
 
 VLOG_DEFINE_THIS_MODULE(netdev_rte_offload);
 
+
+/* Temporarily copied from netdev-dpdk.c to reset hw counters on flow delete */
+enum dpdk_dev_type {
+    DPDK_DEV_ETH = 0,
+    DPDK_DEV_VHOST = 1,
+};
+
+
+typedef uint16_t dpdk_port_t;
+
+struct netdev_dpdk {
+    PADDED_MEMBERS_CACHELINE_MARKER(CACHE_LINE_SIZE, cacheline0,
+        dpdk_port_t port_id;
+
+        /* If true, device was attached by rte_eth_dev_attach(). */
+        bool attached;
+        /* If true, rte_eth_dev_start() was successfully called */
+        bool started;
+        struct eth_addr hwaddr;
+        int mtu;
+        int socket_id;
+        int buf_size;
+        int max_packet_len;
+        enum dpdk_dev_type type;
+        enum netdev_flags flags;
+        int link_reset_cnt;
+        char *devargs;  /* Device arguments for dpdk ports */
+        struct dpdk_tx_queue *tx_q;
+        struct rte_eth_link link;
+    );
+
+    PADDED_MEMBERS_CACHELINE_MARKER(CACHE_LINE_SIZE, cacheline1,
+        struct ovs_mutex mutex OVS_ACQ_AFTER(dpdk_mutex);
+        struct dpdk_mp *dpdk_mp;
+
+        /* virtio identifier for vhost devices */
+        ovsrcu_index vid;
+
+        /* True if vHost device is 'up' and has been reconfigured at least once */
+        bool vhost_reconfigured;
+        /* 3 pad bytes here. */
+    );
+
+    PADDED_MEMBERS(CACHE_LINE_SIZE,
+        /* Identifier used to distinguish vhost devices from each other. */
+        char vhost_id[PATH_MAX];
+    );
+
+    PADDED_MEMBERS(CACHE_LINE_SIZE,
+        struct netdev up;
+        /* In dpdk_list. */
+        struct ovs_list list_node OVS_GUARDED_BY(dpdk_mutex);
+
+        /* QoS configuration and lock for the device */
+        OVSRCU_TYPE(struct qos_conf *) qos_conf;
+
+        /* Ingress Policer */
+        OVSRCU_TYPE(struct ingress_policer *) ingress_policer;
+        uint32_t policer_rate;
+        uint32_t policer_burst;
+    );
+
+    PADDED_MEMBERS(CACHE_LINE_SIZE,
+        struct netdev_stats stats;
+        /* Protects stats */
+        rte_spinlock_t stats_lock;
+        /* 44 pad bytes here. */
+    );
+
+    PADDED_MEMBERS(CACHE_LINE_SIZE,
+        /* The following properties cannot be changed when a device is running,
+ *          * so we remember the request and update them next time
+ *                   * netdev_dpdk*_reconfigure() is called */
+        int requested_mtu;
+        int requested_n_txq;
+        int requested_n_rxq;
+        int requested_rxq_size;
+        int requested_txq_size;
+
+        /* Number of rx/tx descriptors for physical devices */
+        int rxq_size;
+        int txq_size;
+
+        /* Socket ID detected when vHost device is brought up */
+        int requested_socket_id;
+
+        /* Denotes whether vHost port is client/server mode */
+        uint64_t vhost_driver_flags;
+
+        /* DPDK-ETH Flow control */
+        struct rte_eth_fc_conf fc_conf;
+
+        /* DPDK-ETH hardware offload features,
+ *          * from the enum set 'dpdk_hw_ol_features' */
+        uint32_t hw_ol_features;
+
+        /* Properties for link state change detection mode.
+ *          * If lsc_interrupt_mode is set to false, poll mode is used,
+ *                   * otherwise interrupt mode is used. */
+        bool requested_lsc_interrupt_mode;
+        bool lsc_interrupt_mode;
+
+        /* hardware counters */
+        uint64_t hw_n_packets;
+        uint64_t hw_n_bytes;
+    );
+
+    PADDED_MEMBERS(CACHE_LINE_SIZE,
+        /* Names of all XSTATS counters */
+        struct rte_eth_xstat_name *rte_xstats_names;
+        int rte_xstats_names_size;
+        int rte_xstats_ids_size;
+        uint64_t *rte_xstats_ids;
+    );
+};
+
+static struct netdev_dpdk *
+netdev_dpdk_cast(const struct netdev *netdev)
+{
+    return CONTAINER_OF(netdev, struct netdev_dpdk, up);
+}
+
+
 static struct rte_eth_conf port_conf = {
     .rxmode = {
         .mq_mode = ETH_MQ_RX_RSS,
@@ -575,8 +698,6 @@ static struct netdev_rte_port * netdev_rte_port_search(odp_port_t port_no,
 {
     size_t hash = hash_bytes(&port_no, sizeof(odp_port_t), 0);
     struct netdev_rte_port * data;
-
-    VLOG_DBG("search for port %d",port_no);
 
     CMAP_FOR_EACH_WITH_HASH (data, node, hash, map) {
         if (port_no ==  data->port_no) {
@@ -1455,6 +1576,8 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
         } else {
             VLOG_DBG("flow with drop action created");
         }
+
+        info->is_hwol = true;
     }
     /* If actions can be offloaded to hw then create an rte_flow */
     else if (!result) {
@@ -1469,6 +1592,8 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
         } else {
             VLOG_DBG("first flow of decap created");
         }
+
+	info->is_hwol = true;
 
         /* If action is tunnel pop, create another table with a default flow.
          * Do it only once, if default rte flow doesn't exist */
@@ -1522,7 +1647,6 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
             }
 
             rte_port->default_rte_flow[vport->table_id] = def_flow;
-            info->is_hwol = true;
         }
     } else { /* Previous actions cannot be offloaded to hw,
                 try offloading Mark and RSS actions */
@@ -1638,12 +1762,13 @@ netdev_dpdk_flow_put(struct netdev *netdev , struct match *match ,
  * @param OVS_UNUSED
  */
 int
-netdev_dpdk_flow_del(struct netdev *netdev OVS_UNUSED, const ovs_u128 *ufid,
+netdev_dpdk_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
                      struct dpif_flow_stats *stats OVS_UNUSED) {
 
     struct netdev_rte_port * rte_port;
     odp_port_t port_no = ufid_to_portid_search(ufid);
     struct ufid_hw_offload * ufid_hw_offload;
+    struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
 
     // no such fuid
     if (port_no == INVALID_ODP_PORT) {
@@ -1664,7 +1789,10 @@ netdev_dpdk_flow_del(struct netdev *netdev OVS_UNUSED, const ovs_u128 *ufid,
         netdev_rte_port_ufid_hw_offload_free(ufid_hw_offload );
     }
 
-    return -1;
+    dev->hw_n_packets = 0;
+    dev->hw_n_bytes = 0;
+
+    return 0;
 }
 
 static void netdev_rte_port_preprocess(struct netdev_rte_port * rte_port,
