@@ -1447,8 +1447,8 @@ add_dpdk_flow_patterns(struct flow_patterns *patterns,
         specs->udp.hdr.src_port = match->flow.tp_src;
         specs->udp.hdr.dst_port = match->flow.tp_dst;
 
-        specs->udp.hdr.src_port = match->wc.masks.tp_src;
-        specs->udp.hdr.dst_port = match->wc.masks.tp_dst;
+        masks->udp.hdr.src_port = match->wc.masks.tp_src;
+        masks->udp.hdr.dst_port = match->wc.masks.tp_dst;
 
         add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_UDP,
                          &specs->udp, &masks->udp);
@@ -1593,7 +1593,7 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
             VLOG_DBG("first flow of decap created");
         }
 
-	info->is_hwol = true;
+        info->is_hwol = true;
 
         /* If action is tunnel pop, create another table with a default flow.
          * Do it only once, if default rte flow doesn't exist */
@@ -1986,14 +1986,14 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port * rte_port,
     struct rte_flow_error error;
     struct rte_flow_items specs;
     struct rte_flow_items masks;
-    struct rte_flow_items specs_inner;
-    struct rte_flow_items masks_inner;
+    struct rte_flow_items specs_outer;
+    struct rte_flow_items masks_outer;
     struct rte_flow_action_mark mark;
     struct rte_flow_action_rss *rss = NULL;
 
     /* Add patterns from outer header */
-    ret = add_vport_vxlan_flow_patterns(&patterns, &specs_inner,
-                                        &masks_inner, match);
+    ret = add_vport_vxlan_flow_patterns(&patterns, &specs_outer,
+                                        &masks_outer, match);
     if (ret) {
         goto out;
     }
