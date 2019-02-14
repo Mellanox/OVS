@@ -39,9 +39,9 @@ int netdev_dpdk_rte_flow_destroy(struct netdev *netdev,
                              struct rte_flow_error *error);
 
 struct rte_flow *netdev_dpdk_rte_flow_create(struct netdev *netdev,
-                            const struct rte_flow_attr * attr,
-                            const struct rte_flow_item * items,
-                            const struct rte_flow_action * actions,
+                            const struct rte_flow_attr *attr,
+                            const struct rte_flow_item *items,
+                            const struct rte_flow_action *actions,
                             struct rte_flow_error *error);
 
 #else
