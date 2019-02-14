@@ -4229,6 +4229,8 @@ netdev_dpdk_rte_flow_create(struct netdev *netdev,
     return flow;
 }
 
+// REVIEW: please move DPDK_FLOW_OFFLOAD_API to netdev-rte-offload.h
+// similar to what the ovs-kernel did with LINUX_FLOW_OFFLOAD_API
 #define DPDK_FLOW_OFFLOAD_API                   \
     .flow_put = netdev_dpdk_flow_put,           \
     .flow_del = netdev_dpdk_flow_del
