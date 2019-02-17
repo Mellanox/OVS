@@ -1867,7 +1867,7 @@ dpif_netdev_port_add(struct dpif *dpif, struct netdev *netdev,
         *port_nop = port_no;
         error = do_add_port(dp, dpif_port, netdev_get_type(netdev), port_no);
 #ifdef DPDK_NETDEV
-        netdev_rte_offloads_port_add(netdev);
+        netdev_rte_offloads_port_add(netdev, port_no);
 #endif
     }
     ovs_mutex_unlock(&dp->port_mutex);
@@ -1889,6 +1889,9 @@ dpif_netdev_port_del(struct dpif *dpif, odp_port_t port_no)
 
         error = get_port_by_number(dp, port_no, &port);
         if (!error) {
+#ifdef DPDK_NETDEV
+            netdev_rte_offloads_port_del(port_no);
+#endif
             do_del_port(dp, port);
         }
     }
@@ -2097,12 +2100,6 @@ dp_netdev_pmd_find_dpcls(struct dp_netdev_pmd_thread *pmd,
     }
     return cls;
 }
-
-#define INVALID_FLOW_MARK        (UINT32_MAX)
-#define MAX_FLOW_MARK            (UINT32_MAX - 1)
-#define RESERVED_FLOW_MARK_SIZE  (64)
-#define MIN_FLOW_MARK            RESERVED_FLOW_MARK_SIZE
-#define AVAILABLE_FLOW_MARK_SIZE (MAX_FLOW_MARK - MIN_FLOW_MARK + 1)
 
 struct megaflow_to_mark_data {
     const struct cmap_node node;
