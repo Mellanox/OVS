@@ -32,4 +32,12 @@ int netdev_dpdk_flow_put(struct netdev *netdev, struct match *match,
 int netdev_dpdk_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
                      struct dpif_flow_stats *stats OVS_UNUSED);
 
+/**
+ * should be called by dpif "netdev" when port is added.
+ **/
+int netdev_rte_offload_add_port(odp_port_t dp_port, 
+                                struct netdev * netdev);
+
+int netdev_rte_offload_del_port(odp_port_t dp_port);
+
 #endif /* netdev-rte-offloads.h */
