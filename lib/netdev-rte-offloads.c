@@ -40,129 +40,6 @@
 
 VLOG_DEFINE_THIS_MODULE(netdev_rte_offload);
 
-
-/* Temporarily copied from netdev-dpdk.c to reset hw counters on flow delete */
-enum dpdk_dev_type {
-    DPDK_DEV_ETH = 0,
-    DPDK_DEV_VHOST = 1,
-};
-
-
-typedef uint16_t dpdk_port_t;
-
-struct netdev_dpdk {
-    PADDED_MEMBERS_CACHELINE_MARKER(CACHE_LINE_SIZE, cacheline0,
-        dpdk_port_t port_id;
-
-        /* If true, device was attached by rte_eth_dev_attach(). */
-        bool attached;
-        /* If true, rte_eth_dev_start() was successfully called */
-        bool started;
-        struct eth_addr hwaddr;
-        int mtu;
-        int socket_id;
-        int buf_size;
-        int max_packet_len;
-        enum dpdk_dev_type type;
-        enum netdev_flags flags;
-        int link_reset_cnt;
-        char *devargs;  /* Device arguments for dpdk ports */
-        struct dpdk_tx_queue *tx_q;
-        struct rte_eth_link link;
-    );
-
-    PADDED_MEMBERS_CACHELINE_MARKER(CACHE_LINE_SIZE, cacheline1,
-        struct ovs_mutex mutex OVS_ACQ_AFTER(dpdk_mutex);
-        struct dpdk_mp *dpdk_mp;
-
-        /* virtio identifier for vhost devices */
-        ovsrcu_index vid;
-
-        /* True if vHost device is 'up' and has been reconfigured at least once */
-        bool vhost_reconfigured;
-        /* 3 pad bytes here. */
-    );
-
-    PADDED_MEMBERS(CACHE_LINE_SIZE,
-        /* Identifier used to distinguish vhost devices from each other. */
-        char vhost_id[PATH_MAX];
-    );
-
-    PADDED_MEMBERS(CACHE_LINE_SIZE,
-        struct netdev up;
-        /* In dpdk_list. */
-        struct ovs_list list_node OVS_GUARDED_BY(dpdk_mutex);
-
-        /* QoS configuration and lock for the device */
-        OVSRCU_TYPE(struct qos_conf *) qos_conf;
-
-        /* Ingress Policer */
-        OVSRCU_TYPE(struct ingress_policer *) ingress_policer;
-        uint32_t policer_rate;
-        uint32_t policer_burst;
-    );
-
-    PADDED_MEMBERS(CACHE_LINE_SIZE,
-        struct netdev_stats stats;
-        /* Protects stats */
-        rte_spinlock_t stats_lock;
-        /* 44 pad bytes here. */
-    );
-
-    PADDED_MEMBERS(CACHE_LINE_SIZE,
-        /* The following properties cannot be changed when a device is running,
- *          * so we remember the request and update them next time
- *                   * netdev_dpdk*_reconfigure() is called */
-        int requested_mtu;
-        int requested_n_txq;
-        int requested_n_rxq;
-        int requested_rxq_size;
-        int requested_txq_size;
-
-        /* Number of rx/tx descriptors for physical devices */
-        int rxq_size;
-        int txq_size;
-
-        /* Socket ID detected when vHost device is brought up */
-        int requested_socket_id;
-
-        /* Denotes whether vHost port is client/server mode */
-        uint64_t vhost_driver_flags;
-
-        /* DPDK-ETH Flow control */
-        struct rte_eth_fc_conf fc_conf;
-
-        /* DPDK-ETH hardware offload features,
- *          * from the enum set 'dpdk_hw_ol_features' */
-        uint32_t hw_ol_features;
-
-        /* Properties for link state change detection mode.
- *          * If lsc_interrupt_mode is set to false, poll mode is used,
- *                   * otherwise interrupt mode is used. */
-        bool requested_lsc_interrupt_mode;
-        bool lsc_interrupt_mode;
-
-        /* hardware counters */
-        uint64_t hw_n_packets;
-        uint64_t hw_n_bytes;
-    );
-
-    PADDED_MEMBERS(CACHE_LINE_SIZE,
-        /* Names of all XSTATS counters */
-        struct rte_eth_xstat_name *rte_xstats_names;
-        int rte_xstats_names_size;
-        int rte_xstats_ids_size;
-        uint64_t *rte_xstats_ids;
-    );
-};
-
-static struct netdev_dpdk *
-netdev_dpdk_cast(const struct netdev *netdev)
-{
-    return CONTAINER_OF(netdev, struct netdev_dpdk, up);
-}
-
-
 static struct rte_eth_conf port_conf = {
     .rxmode = {
         .mq_mode = ETH_MQ_RX_RSS,
@@ -1757,7 +1634,7 @@ netdev_dpdk_flow_put(struct netdev *netdev , struct match *match ,
 /**
  * @brief - del HW offlaod for ufid if exists.
  *
- * @param OVS_UNUSED
+ * @param netdev
  * @param ufid
  * @param OVS_UNUSED
  */
@@ -1768,7 +1645,6 @@ netdev_dpdk_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
     struct netdev_rte_port * rte_port;
     odp_port_t port_no = ufid_to_portid_search(ufid);
     struct ufid_hw_offload * ufid_hw_offload;
-    struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
 
     // no such fuid
     if (port_no == INVALID_ODP_PORT) {
@@ -1789,8 +1665,9 @@ netdev_dpdk_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
         netdev_rte_port_ufid_hw_offload_free(ufid_hw_offload );
     }
 
-    dev->hw_n_packets = 0;
-    dev->hw_n_bytes = 0;
+    if (!netdev_dpdk_reset_hw_counters(netdev)) {
+        return -1;
+    }
 
     return 0;
 }

@@ -58,4 +58,6 @@ bool netdev_dpdk_is_dpdk_class(const struct netdev_class *class);
 
 int  netdev_dpdk_get_port_id(const struct netdev * netdev);
 
+int  netdev_dpdk_reset_hw_counters(struct netdev *netdev);
+
 #endif /* netdev-dpdk.h */

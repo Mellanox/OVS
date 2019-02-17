@@ -1094,6 +1094,16 @@ int  netdev_dpdk_get_port_id(const struct netdev * netdev)
     return CONTAINER_OF(netdev, struct netdev_dpdk, up)->port_id;
 }
 
+int  netdev_dpdk_reset_hw_counters(struct netdev *netdev)
+{
+    struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
+
+    dev->hw_n_packets = 0;
+    dev->hw_n_bytes = 0;
+
+    return 0;
+}
+
 static struct netdev *
 netdev_dpdk_alloc(void)
 {
