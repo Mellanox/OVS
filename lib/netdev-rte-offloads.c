@@ -27,7 +27,84 @@
 #include "packets.h"
 #include "uuid.h"
 
+#define VXLAN_EXCEPTION_MARK (MIN_RESERVED_MARK + 0)
+#define VXLAN_TABLE_ID       1
+
 VLOG_DEFINE_THIS_MODULE(netdev_rte_offloads);
+
+enum rte_port_type {
+    RTE_PORT_TYPE_UNINIT = 0,
+    RTE_PORT_TYPE_DPDK,
+    RTE_PORT_TYPE_VXLAN
+};
+
+/*
+ * A mapping from dp_port to flow parameters.
+ */
+struct netdev_rte_port {
+    struct cmap_node node; /* Map by datapath port number. */
+    odp_port_t dp_port; /* Datapath port number. */
+    struct netdev *netdev; /* struct *netdev of this port. */
+    enum rte_port_type rte_port_type; /* rte ports types. */
+    uint32_t table_id; /* Flow table id per related to this port. */
+    uint16_t dpdk_num_queues; /* Number of dpdk queues of this port. */
+    uint32_t exception_mark; /* Exception SW handling for this port type. */
+};
+
+static struct cmap port_map = CMAP_INITIALIZER;
+
+static uint32_t dpdk_phy_ports_amount = 0;
+/*
+ * Search for offloaded port data by dp_port no.
+ */
+static struct netdev_rte_port *
+netdev_rte_port_search(odp_port_t dp_port, struct cmap *map)
+{
+    size_t hash = hash_bytes(&dp_port, sizeof dp_port, 0);
+    struct netdev_rte_port *data;
+
+    CMAP_FOR_EACH_WITH_HASH (data, node, hash, map) {
+        if (dp_port == data->dp_port) {
+            return data;
+        }
+    }
+
+    return NULL;
+}
+
+/*
+ * Allocate a new entry in port_map for dp_port (if not already allocated)
+ * and set it with netdev, dp_port and port_type parameters.
+ * rte_port is an output parameter which contains the newly allocated struct
+ * or NULL in case it could not be allocated or found.
+ *
+ * Returns 0 on success, ENOMEM otherwise (in which case rte_port is NULL).
+ */
+static int
+netdev_rte_port_set(struct netdev *netdev, odp_port_t dp_port,
+                    enum rte_port_type port_type,
+                    struct netdev_rte_port **rte_port)
+{
+    *rte_port = netdev_rte_port_search(dp_port, &port_map);
+    if (*rte_port) {
+        VLOG_DBG("Rte_port for datapath port %d already exists.", dp_port);
+        goto next;
+    }
+    *rte_port = xzalloc(sizeof **rte_port);
+    if (!*rte_port) {
+        VLOG_ERR("Failed to alloctae ret_port for datapath port %d.", dp_port);
+        return ENOMEM;
+    }
+    size_t hash = hash_bytes(&dp_port, sizeof dp_port, 0);
+    cmap_insert(&port_map,
+                CONST_CAST(struct cmap_node *, &(*rte_port)->node), hash);
+next:
+    (*rte_port)->netdev = netdev;
+    (*rte_port)->dp_port = dp_port;
+    (*rte_port)->rte_port_type = port_type;
+
+    return 0;
+}
 
 /*
  * A mapping from ufid to dpdk rte_flow.
@@ -726,8 +803,106 @@ netdev_rte_offloads_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
     struct rte_flow *rte_flow = ufid_to_rte_flow_find(ufid);
 
     if (!rte_flow) {
-        return -1;
+        return EINVAL;
     }
 
     return netdev_rte_offloads_destroy_flow(netdev, ufid, rte_flow);
+}
+
+static int
+netdev_rte_vport_flow_put(struct netdev *netdev OVS_UNUSED,
+                 struct match *match OVS_UNUSED,
+                 struct nlattr *actions OVS_UNUSED,
+                 size_t actions_len OVS_UNUSED,
+                 const ovs_u128 *ufid OVS_UNUSED,
+                 struct offload_info *info OVS_UNUSED,
+                 struct dpif_flow_stats *stats OVS_UNUSED)
+{
+    return -1;
+}
+
+static int
+netdev_rte_vport_flow_del(struct netdev * netdev OVS_UNUSED,
+                        const ovs_u128 * ufid OVS_UNUSED,
+                        struct dpif_flow_stats * flow_stats OVS_UNUSED)
+{
+    return -1;
+}
+/*
+ * Vport netdev flow pointers are initialized by default to kernel calls.
+ * They should be nullified or be set to a valid netdev (userspace) calls.
+ */
+static void
+netdev_rte_offloads_vxlan_init(struct netdev *netdev)
+{
+    struct netdev_class *cls = (struct netdev_class *) netdev->netdev_class;
+    cls->flow_put = netdev_rte_vport_flow_put;
+    cls->flow_del = netdev_rte_vport_flow_del;
+    cls->flow_get = NULL;
+    cls->init_flow_api = NULL;
+}
+
+/*
+ * Called when adding a new dpif netdev port.
+ */
+int
+netdev_rte_offloads_port_add(struct netdev *netdev, odp_port_t dp_port)
+{
+    struct netdev_rte_port *rte_port;
+    const char *type = netdev_get_type(netdev);
+    int ret = 0;
+
+    if (!strcmp("dpdk", type)) {
+        ret = netdev_rte_port_set(netdev, dp_port, RTE_PORT_TYPE_DPDK,
+                                  &rte_port);
+        if (!rte_port) {
+            goto out;
+        }
+        rte_port->dpdk_num_queues = netdev->n_rxq;
+        dpdk_phy_ports_amount++;
+        VLOG_INFO("Rte dpdk port %d allocated.", dp_port);
+        goto out;
+    }
+    if (!strcmp("vxlan", type)) {
+        ret = netdev_rte_port_set(netdev, dp_port, RTE_PORT_TYPE_VXLAN,
+                                  &rte_port);
+        if (!rte_port) {
+            goto out;
+        }
+        rte_port->table_id = VXLAN_TABLE_ID;
+        rte_port->exception_mark = VXLAN_EXCEPTION_MARK;
+        VLOG_INFO("Rte vxlan port %d allocated, table id %d",
+                  dp_port, rte_port->table_id);
+        netdev_rte_offloads_vxlan_init(netdev);
+        goto out;
+    }
+out:
+    return ret;
+}
+
+/*
+ * Called when deleting a dpif netdev port.
+ */
+int
+netdev_rte_offloads_port_del(odp_port_t dp_port)
+{
+    struct netdev_rte_port *rte_port =
+        netdev_rte_port_search(dp_port,  &port_map);
+    if (rte_port == NULL) {
+        VLOG_DBG("port %d has no rte_port", dp_port);
+        return ENODEV;
+    }
+
+    size_t hash = hash_bytes(&rte_port->dp_port,
+                             sizeof rte_port->dp_port, 0);
+    VLOG_DBG("Remove datapath port %d.", rte_port->dp_port);
+    cmap_remove(&port_map, CONST_CAST(struct cmap_node *, &rte_port->node),
+                hash);
+    free(rte_port);
+
+    if (rte_port->rte_port_type == RTE_PORT_TYPE_DPDK) {
+        dpdk_phy_ports_amount--;
+    }
+
+    return 0;
 }
