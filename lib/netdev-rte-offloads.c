@@ -820,6 +820,26 @@ netdev_dpdk_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
 }
 
 //---------------------------------------------------------------0
+static int
+netdev_rte_vport_flow_put(struct netdev *netdev OVS_UNUSED,
+                 struct match *match OVS_UNUSED,
+                 struct nlattr *actions OVS_UNUSED,
+                 size_t actions_len OVS_UNUSED,
+                 const ovs_u128 *ufid OVS_UNUSED,
+                 struct offload_info *info OVS_UNUSED,
+                 struct dpif_flow_stats *stats OVS_UNUSED)
+{
+
+    return -1;
+}
+
+static int 
+netdev_rte_vport_flow_del(struct netdev * netdev OVS_UNUSED,
+                        const ovs_u128 * ufid OVS_UNUSED,
+                        struct dpif_flow_stats * flow_stats OVS_UNUSED)
+{
+    return -1;
+}
 
 /**
  * @brief - allocate new rte_port.
@@ -941,6 +961,19 @@ static void netdev_rte_port_free(struct netdev_rte_port * rte_port)
    return;
 }
 
+
+static void netdev_rte_offload_vxlan_init(struct netdev *netdev)
+{
+
+    struct netdev_class * cls = (struct netdev_class *) netdev->netdev_class;
+    cls->flow_put = netdev_rte_vport_flow_put;
+    cls->flow_del = netdev_rte_vport_flow_del;
+    cls->flow_get = NULL;
+    cls->init_flow_api = NULL;
+    return;
+}
+
+
 /**
  * @brief - called when dpif netdev is added to the DPIF.
  *    we create rte_port for the netdev is hw-offload can be supported.
@@ -977,6 +1010,7 @@ int netdev_rte_offload_add_port(odp_port_t dp_port,
             rte_port->special_mark  = 1;
             rte_port->port_no       = dp_port;
 
+            netdev_rte_offload_vxlan_init(netdev);
             VLOG_INFO("rte port for vport %d allocated, table id %d",
                                                   dp_port, rte_port->table_id);
          }
