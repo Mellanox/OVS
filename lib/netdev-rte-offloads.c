@@ -18,6 +18,7 @@
 #include "netdev-rte-offloads.h"
 #include "netdev-provider.h"
 #include "dpif-netdev.h"
+#include "netdev-vport.h"
 #include "cmap.h"
 #include "openvswitch/vlog.h"
 #include "openvswitch/match.h"
@@ -25,6 +26,49 @@
 #include "uuid.h"
 
 VLOG_DEFINE_THIS_MODULE(netdev_rte_offloads);
+
+#define RTE_FLOW_MAX_TABLES (31)
+#define MAX_PHY_RTE_PORTS (128)
+
+
+enum rte_port_type {
+     RTE_PORT_TYPE_NONE,
+     RTE_PORT_TYPE_DPDK,
+     RTE_PORT_TYPE_VXLAN
+};
+
+/**
+ * @brief - struct for holding table represntation of a vport flows.
+ */
+struct netdev_rte_port {
+  struct cmap_node node;      // map by port_no
+  odp_port_t  port_no;
+
+  struct netdev *netdev;
+
+  struct cmap_node mark_node;
+  uint32_t mark;
+
+  enum rte_port_type rte_port_type;
+  uint32_t    table_id;
+  uint16_t    dpdk_port_id;
+  uint16_t    dpdk_num_queues;
+
+  uint32_t    special_mark;
+  struct rte_flow * default_rte_flow[RTE_FLOW_MAX_TABLES]; // per odp
+
+  struct cmap ufid_to_rte;   // map of fuid to all the matching rte_flows
+};
+
+
+static struct cmap vport_map = CMAP_INITIALIZER;
+static struct cmap dpdk_map = CMAP_INITIALIZER;
+
+static struct netdev_rte_port * rte_port_phy_arr[MAX_PHY_RTE_PORTS];
+static struct netdev_rte_port * rte_port_vir_arr[MAX_PHY_RTE_PORTS];
+
+
+//------------
 
 /*
  * A mapping from ufid to dpdk rte_flow.
@@ -775,3 +819,201 @@ netdev_dpdk_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
     return netdev_dpdk_destroy_rte_flow(netdev, ufid, rte_flow);
 }
 
+//---------------------------------------------------------------0
+
+/**
+ * @brief - allocate new rte_port.
+ *   all rte ports are kept in map by netdev, and are kept per thier type
+ *   in another map.
+ *
+ *   in offload flows we have only the port_id, and flow del
+ *   we have only the netdev.
+ *
+ * @param port_no
+ * @param map        - specific map by type, dpdk, vport..etc.
+ *
+ * @return the new allocated port. already initialized for common params.
+ */
+static struct netdev_rte_port * netdev_rte_port_alloc(odp_port_t port_no,
+                                           struct cmap * map,
+                                           struct netdev_rte_port * port_arr[])
+{
+    int count = (int) cmap_count(map);
+    size_t hash = hash_bytes(&port_no, sizeof(odp_port_t), 0);
+    struct netdev_rte_port *ret_port = xzalloc(sizeof(struct netdev_rte_port));
+
+    if (ret_port == NULL) {
+      VLOG_ERR("failed to alloctae ret_port, OOM");
+      return NULL;
+    }
+
+   memset(ret_port,0,sizeof(*ret_port));
+   ret_port->port_no = port_no;
+   cmap_init(&ret_port->ufid_to_rte);
+
+   cmap_insert(map,
+                CONST_CAST(struct cmap_node *, &ret_port->node), hash);
+   port_arr[count] = ret_port; // for quick access
+
+   return ret_port;
+}
+
+static void netdev_rte_port_del_arr(struct netdev_rte_port * rte_port,
+                                    struct netdev_rte_port * arr[],
+                                    int arr_len)
+{
+    for (int i = 0 ; i < arr_len; i++) {
+        if (arr[i] == rte_port) {
+            arr[i] = arr[arr_len -1]; /* switch with last*/
+            return;
+        }
+    }
+
+}
+
+/**
+ * search for offloaded voprt by odp port no.
+ *
+ **/
+static struct netdev_rte_port * netdev_rte_port_search(odp_port_t port_no,
+                                                       struct cmap * map)
+{
+    size_t hash = hash_bytes(&port_no, sizeof(odp_port_t), 0);
+    struct netdev_rte_port * data;
+
+    VLOG_DBG("search for port %d",port_no);
+
+    CMAP_FOR_EACH_WITH_HASH (data, node, hash, map) {
+        if (port_no ==  data->port_no) {
+            return data;
+        }
+    }
+
+    return NULL;
+}
+
+static struct netdev_rte_port * netdev_rte_port_search_by_port_no(
+                                                         odp_port_t port_no)
+{
+    struct netdev_rte_port * rte_port = NULL;
+
+    rte_port = netdev_rte_port_search(port_no,  &vport_map);
+    if (rte_port == NULL) {
+        rte_port = netdev_rte_port_search(port_no,  &dpdk_map);
+    }
+
+    return rte_port;
+}
+
+/**
+ * @brief - release the rte_port.
+ *   rte_port might contain refrences to offloaded rte_flow's
+ *   that should be cleaned
+ *
+ * @param rte_port
+ */
+static void netdev_rte_port_free(struct netdev_rte_port * rte_port)
+{
+    size_t hash     = hash_bytes(&rte_port->port_no, sizeof(odp_port_t), 0);
+    int count;
+
+    switch (rte_port->rte_port_type) {
+        case RTE_PORT_TYPE_VXLAN:
+            VLOG_DBG("remove vlxan port %d",rte_port->port_no);
+            count = (int) cmap_count(&vport_map);
+            cmap_remove(&vport_map,
+                        CONST_CAST(struct cmap_node *, &rte_port->node), hash);
+            netdev_rte_port_del_arr(rte_port, &rte_port_vir_arr[0],count);
+            break;
+        case RTE_PORT_TYPE_DPDK:
+            VLOG_DBG("remove dpdk port %d",rte_port->port_no);
+            count = (int) cmap_count(&dpdk_map);
+            cmap_remove(&dpdk_map,
+                        CONST_CAST(struct cmap_node *, &rte_port->node), hash);
+            netdev_rte_port_del_arr(rte_port, &rte_port_phy_arr[0],count);
+            break;
+        case RTE_PORT_TYPE_NONE:
+            // nothig
+            break;
+    }
+
+   free(rte_port);
+   return;
+}
+
+/**
+ * @brief - called when dpif netdev is added to the DPIF.
+ *    we create rte_port for the netdev is hw-offload can be supported.
+ *
+ * @param dp_port
+ * @param netdev
+ *
+ * @return 0 on success
+ */
+int netdev_rte_offload_add_port(odp_port_t dp_port,
+                                struct netdev * netdev)
+{
+    const char *type = netdev_get_type(netdev);
+
+    if (netdev_vport_is_vport_class(netdev->netdev_class)) {
+
+         struct netdev_rte_port * rte_port = netdev_rte_port_search(dp_port,
+                                                                 &vport_map);
+         if (rte_port == NULL) {
+            enum rte_port_type rte_port_type = RTE_PORT_TYPE_NONE;
+
+            if (!strcmp("vxlan", type)) {
+                rte_port_type = RTE_PORT_TYPE_VXLAN;
+            } else {
+                VLOG_WARN("type %s is not supported currently", type);
+                return -1;
+            }
+
+            rte_port = netdev_rte_port_alloc(dp_port, &vport_map,
+                                                    &rte_port_phy_arr[0]);
+            rte_port->rte_port_type = rte_port_type;
+            rte_port->netdev = netdev;
+            rte_port->table_id      = 1;
+            rte_port->special_mark  = 1;
+            rte_port->port_no       = dp_port;
+
+            VLOG_INFO("rte port for vport %d allocated, table id %d",
+                                                  dp_port, rte_port->table_id);
+         }
+
+         return 0;
+    }
+
+    if ( !strcmp("dpdk", type)) {
+        struct netdev_rte_port * rte_port = netdev_rte_port_search(dp_port,
+                                                                  &dpdk_map);
+        if (rte_port == NULL) {
+
+            rte_port = netdev_rte_port_alloc(dp_port, &dpdk_map,
+                                                         &rte_port_phy_arr[0]);
+            rte_port->rte_port_type = RTE_PORT_TYPE_DPDK;
+            rte_port->netdev = netdev;
+            rte_port->dpdk_num_queues = netdev->n_rxq;
+
+         }
+        return 0;
+    }
+
+    VLOG_INFO("port %s is not supported",type);
+
+    return 0;
+}
+
+int netdev_rte_offload_del_port(odp_port_t dp_port)
+{
+    struct netdev_rte_port * rte_port =
+                               netdev_rte_port_search_by_port_no(dp_port);
+    if (rte_port == NULL) {
+        VLOG_DBG("port %d has no rte_port",dp_port);
+        return -1;
+    }
+
+    netdev_rte_port_free(rte_port);
+
+    return 0;
+}
