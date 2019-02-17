@@ -52,6 +52,7 @@
 #include "netdev.h"
 #include "netdev-provider.h"
 #include "netdev-vport.h"
+#include "netdev-rte-offloads.h"
 #include "netlink.h"
 #include "odp-execute.h"
 #include "odp-util.h"
@@ -78,6 +79,7 @@
 #include "unixctl.h"
 #include "util.h"
 #include "uuid.h"
+
 
 VLOG_DEFINE_THIS_MODULE(dpif_netdev);
 
@@ -1865,6 +1867,7 @@ dpif_netdev_port_add(struct dpif *dpif, struct netdev *netdev,
     if (!error) {
         *port_nop = port_no;
         error = do_add_port(dp, dpif_port, netdev_get_type(netdev), port_no);
+        netdev_rte_offload_add_port(port_no, netdev);
     }
     ovs_mutex_unlock(&dp->port_mutex);
 
@@ -1885,6 +1888,7 @@ dpif_netdev_port_del(struct dpif *dpif, odp_port_t port_no)
 
         error = get_port_by_number(dp, port_no, &port);
         if (!error) {
+            netdev_rte_offload_del_port(port_no);
             do_del_port(dp, port);
         }
     }
