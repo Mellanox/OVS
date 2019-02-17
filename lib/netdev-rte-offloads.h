@@ -51,9 +51,12 @@ int netdev_rte_offloads_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
                                  struct dpif_flow_stats *stats);
 
 /*
- * Called by dpif netdev when a port is added
+ * Called by dpif netdev when a port is added/deleted
  */
-void netdev_rte_offloads_port_add(struct netdev *netdev);
+int netdev_rte_offloads_port_add(struct netdev *netdev, odp_port_t dp_port);
+int netdev_rte_offloads_port_del(odp_port_t dp_port);
+int netdev_rte_offloads_vport_add(struct netdev *netdev, odp_port_t dp_port);
+int netdev_rte_offloads_vport_del(odp_port_t dp_port);
 
 #define DPDK_FLOW_OFFLOAD_API                   \
     .flow_put = netdev_rte_offloads_flow_put,   \
