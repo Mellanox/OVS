@@ -42,4 +42,12 @@ bool dpif_is_netdev(const struct dpif *);
 }
 #endif
 
+#define INVALID_FLOW_MARK        (UINT32_MAX)
+#define MAX_FLOW_MARK            (UINT32_MAX - 1)
+#define RESERVED_FLOW_MARK_SIZE  (64)
+#define MIN_FLOW_MARK            RESERVED_FLOW_MARK_SIZE
+#define AVAILABLE_FLOW_MARK_SIZE (MAX_FLOW_MARK - MIN_FLOW_MARK + 1)
+#define MIN_RESERVED_MARK        1
+#define MAX_RESERVED_MARK        (RESERVED_FLOW_MARK_SIZE - 1)
+
 #endif /* netdev.h */
