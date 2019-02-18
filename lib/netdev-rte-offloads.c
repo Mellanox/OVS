@@ -15,11 +15,11 @@
  */
 #include <config.h>
 #include <rte_flow.h>
+#include "cmap.h"
+#include "dpif-netdev.h"
 #include "netdev-rte-offloads.h"
 #include "netdev-provider.h"
-#include "dpif-netdev.h"
 #include "netdev-vport.h"
-#include "cmap.h"
 #include "openvswitch/vlog.h"
 #include "openvswitch/match.h"
 #include "packets.h"
@@ -1081,6 +1081,66 @@ static struct netdev_rte_port * netdev_rte_port_alloc(odp_port_t port_no,
    return ret_port;
 }
 
+static int netdev_rte_port_destory_rte_flow(struct netdev *netdev,
+                                            struct rte_flow * flow)
+{
+    struct rte_flow_error error;
+    int ret = netdev_dpdk_rte_flow_destroy(netdev, flow, &error);
+
+    if (ret != 0) {
+        VLOG_ERR_RL(&error_rl, "rte flow destroy error: %u : message : %s\n",
+             error.type, error.message);
+
+    }
+    return ret;
+}
+/**
+ * @brief - if hw rules were introduced we make sure we clean them before
+ * we free the struct.
+ *
+ * @param hw_offload
+ */
+static int netdev_rte_port_ufid_hw_offload_free(
+                                           struct ufid_hw_offload * hw_offload)
+{
+    VLOG_DBG("clean all rte flows for fuid "UUID_FMT" \n",
+                                  UUID_ARGS((struct uuid *)&hw_offload->ufid));
+
+    for (int i = 0 ; i < hw_offload->curr_idx ; i++) {
+
+        if (hw_offload->rte_flow_data[i].flow != NULL) {
+            netdev_rte_port_destory_rte_flow(
+                          hw_offload->rte_flow_data[i].netdev,
+                          hw_offload->rte_flow_data[i].flow);
+
+            VLOG_DBG("rte_destory for flow "UUID_FMT" was called"
+                    ,UUID_ARGS((struct uuid *)&hw_offload->ufid));
+        }
+
+        hw_offload->rte_flow_data[i].flow = NULL;
+    }
+
+    free(hw_offload);
+    return 0;
+}
+
+/**
+ * vport conaines a hash with data that also should be cleaned.
+ *
+ **/
+static void netdev_rte_port_clean_all(struct netdev_rte_port * rte_port)
+{
+    struct cmap_cursor cursor;
+    struct ufid_hw_offload * data;
+
+    CMAP_CURSOR_FOR_EACH (data, node, &cursor, &rte_port->ufid_to_rte) {
+        netdev_rte_port_ufid_hw_offload_free(data);
+    }
+
+    return;
+}
+
+
 
 static void netdev_rte_port_del_arr(struct netdev_rte_port * rte_port,
                                     struct netdev_rte_port * arr[],
@@ -1140,6 +1200,8 @@ static void netdev_rte_port_free(struct netdev_rte_port * rte_port)
 {
     size_t hash     = hash_bytes(&rte_port->port_no, sizeof(odp_port_t), 0);
     int count;
+
+    netdev_rte_port_clean_all(rte_port);
 
     switch (rte_port->rte_port_type) {
         case RTE_PORT_TYPE_VXLAN:
