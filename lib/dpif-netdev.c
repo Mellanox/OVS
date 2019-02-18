@@ -2100,8 +2100,11 @@ dp_netdev_pmd_find_dpcls(struct dp_netdev_pmd_thread *pmd,
     return cls;
 }
 
-#define MAX_FLOW_MARK       (UINT32_MAX - 1)
-#define INVALID_FLOW_MARK   (UINT32_MAX)
+#define INVALID_FLOW_MARK        (UINT32_MAX)
+#define MAX_FLOW_MARK            (UINT32_MAX - 1)
+#define RESERVED_FLOW_MARK_SIZE  (64)
+#define MIN_FLOW_MARK            RESERVED_FLOW_MARK_SIZE
+#define AVAILABLE_FLOW_MARK_SIZE (MAX_FLOW_MARK - MIN_FLOW_MARK + 1)
 
 struct megaflow_to_mark_data {
     const struct cmap_node node;
@@ -2127,7 +2130,8 @@ flow_mark_alloc(void)
 
     if (!flow_mark.pool) {
         /* Haven't initiated yet, do it here */
-        flow_mark.pool = id_pool_create(0, MAX_FLOW_MARK);
+        flow_mark.pool = id_pool_create(MIN_FLOW_MARK,
+                                        AVAILABLE_FLOW_MARK_SIZE);
     }
 
     if (id_pool_alloc_id(flow_mark.pool, &mark)) {
