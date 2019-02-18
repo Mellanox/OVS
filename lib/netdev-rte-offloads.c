@@ -32,6 +32,7 @@
 #define VXLAN_TABLE_ID       1
 
 VLOG_DEFINE_THIS_MODULE(netdev_rte_offloads);
+static struct vlog_rate_limit error_rl = VLOG_RATE_LIMIT_INIT(100, 5);
 
 enum rte_port_type {
      RTE_PORT_TYPE_DPDK,
@@ -102,6 +103,149 @@ next:
     (*rte_port)->dp_port = dp_port;
     (*rte_port)->rte_port_type = port_type;
 
+    return 0;
+}
+
+struct ufid_hw_offload {
+    struct cmap_node node;
+    ovs_u128 ufid;
+    int max_flows;
+    int curr_idx;
+    struct rte_flow_params {
+        struct rte_flow *flow;
+        struct netdev *netdev;
+    } rte_flow_data[0];
+};
+
+/*
+ * fuid hw offload struct contains array of pointers to rte flows.
+ * There may be a one OVS flow to many rte flows. For example in case
+ * of vxlan OVS flow we add an rte flow per each phsical port.
+ *
+ * max_flows - number of expected max rte flows for this ufid.
+ * ufid - the ufid.
+ *
+ * Return allocated struct ufid_hw_offload or NULL if allocation failed.
+ */
+static struct ufid_hw_offload *
+netdev_rte_port_ufid_hw_offload_alloc(int max_flows,
+                                      const ovs_u128 * ufid) OVS_UNUSED;
+static struct ufid_hw_offload *
+netdev_rte_port_ufid_hw_offload_alloc(int max_flows, const ovs_u128 * ufid)
+{
+    struct ufid_hw_offload *ufidol =
+        xzalloc(sizeof(struct ufid_hw_offload) +
+                       sizeof(struct rte_flow_params) * max_flows);
+    if (ufidol) {
+        ufidol->max_flows = max_flows;
+        ufidol->curr_idx = 0;
+        ufidol->ufid = *ufid;
+    }
+
+    return ufidol;
+}
+
+/*
+ * Given ufid find its hw_offload struct.
+ *
+ * Return struct ufid_hw_offload or NULL if not found.
+ */
+static struct ufid_hw_offload *
+ufid_hw_offload_find(const ovs_u128 *ufid, struct cmap *map)
+{
+    size_t hash = hash_bytes(ufid, sizeof(*ufid), 0);
+    struct ufid_hw_offload *data;
+
+    CMAP_FOR_EACH_WITH_HASH (data, node, hash, map) {
+        if (ovs_u128_equals(*ufid, data->ufid)) {
+            return data;
+        }
+    }
+
+    return NULL;
+}
+
+static struct ufid_hw_offload *
+ufid_hw_offload_remove(const ovs_u128 *ufid, struct cmap *map) OVS_UNUSED;
+static struct ufid_hw_offload *
+ufid_hw_offload_remove(const ovs_u128 *ufid, struct cmap *map)
+{
+    size_t hash = hash_bytes(ufid, sizeof(*ufid), 0);
+    struct ufid_hw_offload *data = ufid_hw_offload_find(ufid,map);
+
+    if (data) {
+        cmap_remove(map, CONST_CAST(struct cmap_node *, &data->node), hash);
+    }
+    return data;
+}
+
+static void
+ufid_hw_offload_add(struct ufid_hw_offload *hw_offload,
+                    struct cmap *map) OVS_UNUSED;
+static void
+ufid_hw_offload_add(struct ufid_hw_offload *hw_offload, struct cmap *map)
+{
+    size_t hash = hash_bytes(&hw_offload->ufid, sizeof(ovs_u128), 0);
+    cmap_insert(map, CONST_CAST(struct cmap_node *, &hw_offload->node), hash);
+}
+
+static void
+ufid_hw_offload_add_rte_flow(struct ufid_hw_offload *hw_offload,
+                             struct rte_flow *rte_flow,
+                             struct netdev *netdev) OVS_UNUSED;
+static void
+ufid_hw_offload_add_rte_flow(struct ufid_hw_offload *hw_offload,
+                             struct rte_flow *rte_flow,
+                             struct netdev *netdev)
+{
+    if (hw_offload->curr_idx < hw_offload->max_flows) {
+        hw_offload->rte_flow_data[hw_offload->curr_idx].flow = rte_flow;
+        hw_offload->rte_flow_data[hw_offload->curr_idx].netdev = netdev;
+        hw_offload->curr_idx++;
+    } else {
+        struct rte_flow_error error;
+        int ret = netdev_dpdk_rte_flow_destroy(netdev, rte_flow, &error);
+        if (ret) {
+            VLOG_ERR_RL(&error_rl, "rte flow destroy error: %u : message :"
+                       " %s\n", error.type, error.message);
+        }
+    }
+}
+
+/*
+ * If hw rules were introduced we make sure we clean them before
+ * we free the struct.
+ *
+ */
+static int netdev_rte_port_ufid_hw_offload_free(
+    struct ufid_hw_offload *hw_offload) OVS_UNUSED;
+static int
+netdev_rte_port_ufid_hw_offload_free(struct ufid_hw_offload *hw_offload)
+{
+    struct rte_flow_error error;
+
+    VLOG_DBG("clean all rte flows for fuid "UUID_FMT".\n",
+             UUID_ARGS((struct uuid *)&hw_offload->ufid));
+
+    for (int i = 0 ; i < hw_offload->curr_idx ; i++) {
+        if (hw_offload->rte_flow_data[i].flow) {
+            VLOG_DBG("rte_destory for flow "UUID_FMT" is called."
+                    ,UUID_ARGS((struct uuid *)&hw_offload->ufid));
+            int ret = netdev_dpdk_rte_flow_destroy(
+                hw_offload->rte_flow_data[i].netdev,
+                hw_offload->rte_flow_data[i].flow,
+                &error);
+
+            if (ret) {
+                VLOG_ERR_RL(&error_rl,
+                            "rte flow destroy error: %u : message : %s.\n",
+                            error.type, error.message);
+            }
+        }
+        hw_offload->rte_flow_data[i].flow = NULL;
+    }
+
+    free(hw_offload);
     return 0;
 }
 
