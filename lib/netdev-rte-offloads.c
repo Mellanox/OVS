@@ -31,6 +31,7 @@ static struct vlog_rate_limit error_rl = VLOG_RATE_LIMIT_INIT(100, 5);
 
 #define RTE_FLOW_MAX_TABLES (31)
 #define MAX_PHY_RTE_PORTS (128)
+#define INVALID_ODP_PORT (-1)
 
 
 enum rte_port_type {
@@ -82,6 +83,13 @@ static struct cmap dpdk_map = CMAP_INITIALIZER;
 static struct netdev_rte_port * rte_port_phy_arr[MAX_PHY_RTE_PORTS];
 static struct netdev_rte_port * rte_port_vir_arr[MAX_PHY_RTE_PORTS];
 
+struct ufid_to_odp {
+    struct cmap_node node;
+    ovs_u128 ufid;
+    odp_port_t port_no;
+};
+
+static struct cmap ufid_to_portid_map = CMAP_INITIALIZER;
 
 //------------
 
@@ -836,6 +844,89 @@ netdev_dpdk_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
 
 //---------------------------------------------------------------0
 /**
+ * @brief - search for ufid mapping
+ *
+ * @param ufid
+ *
+ * @return ref to object and not a copy.
+ */
+static struct ufid_to_odp * ufid_to_portid_get(const ovs_u128 * ufid)
+{
+    size_t hash = hash_bytes(ufid, sizeof(*ufid), 0);
+    struct ufid_to_odp * data;
+
+    CMAP_FOR_EACH_WITH_HASH (data, node, hash, &ufid_to_portid_map) {
+        if (ovs_u128_equals(*ufid, data->ufid)) {
+            return data;
+        }
+    }
+
+    return NULL;
+}
+
+static odp_port_t ufid_to_portid_search(const ovs_u128 * ufid)
+{
+   struct ufid_to_odp * data = ufid_to_portid_get(ufid);
+
+   return (data != NULL)?data->port_no:INVALID_ODP_PORT;
+}
+
+
+/**
+ * @brief - save the fuid->port_no mapping.
+ *
+ * @param ufid
+ * @param port_no
+ *
+ * @return the port if saved successfully.
+ */
+static odp_port_t ufid_to_portid_add(const ovs_u128 * ufid, odp_port_t port_no)
+{
+    size_t hash = hash_bytes(ufid, sizeof(*ufid), 0);
+    struct ufid_to_odp * data;
+
+    if (ufid_to_portid_search(ufid) != INVALID_ODP_PORT) {
+        return port_no;
+    }
+
+    data = xzalloc(sizeof(*data));
+
+    if (data == NULL) {
+        VLOG_WARN("failed to add fuid to odp, OOM");
+        return INVALID_ODP_PORT;
+    }
+
+    data->ufid = *ufid;
+    data->port_no = port_no;
+
+    cmap_insert(&ufid_to_portid_map,
+                CONST_CAST(struct cmap_node *, &data->node), hash);
+
+    return port_no;
+}
+
+/**
+ * @brief - remove the mapping if exists.
+ *
+ * @param ufid
+ */
+static void ufid_to_portid_remove(const ovs_u128 * ufid)
+{
+    size_t hash = hash_bytes(ufid, sizeof(*ufid), 0);
+    struct ufid_to_odp * data = ufid_to_portid_get(ufid);
+
+    if (data != NULL) {
+        cmap_remove(&ufid_to_portid_map,
+                        CONST_CAST(struct cmap_node *, &data->node),
+                        hash);
+        free(data);
+    }
+
+
+    return;
+}
+
+/**
  * @brief - fuid hw offload struct contains array of pointers to RTE FLOWS.
  *  in case of vxlan offload we need rule per phy port. in other cases
  *  we might need only one.
@@ -989,6 +1080,7 @@ static struct netdev_rte_port * netdev_rte_port_alloc(odp_port_t port_no,
 
    return ret_port;
 }
+
 
 static void netdev_rte_port_del_arr(struct netdev_rte_port * rte_port,
                                     struct netdev_rte_port * arr[],
