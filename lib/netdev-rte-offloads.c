@@ -34,6 +34,8 @@
 VLOG_DEFINE_THIS_MODULE(netdev_rte_offloads);
 static struct vlog_rate_limit error_rl = VLOG_RATE_LIMIT_INIT(100, 5);
 
+#define INVALID_ODP_PORT (-1)
+
 enum rte_port_type {
      RTE_PORT_TYPE_DPDK,
      RTE_PORT_TYPE_VXLAN
@@ -50,6 +52,7 @@ struct netdev_rte_port {
     uint32_t table_id; /* Flow table id per related to this port. */
     uint16_t dpdk_num_queues; /* Number of dpdk queues of this port. */
     uint32_t exception_mark; /* Exception SW handling for this port type. */
+    struct cmap ufid_to_rte;
 };
 
 static struct cmap port_map = CMAP_INITIALIZER;
@@ -216,7 +219,6 @@ ufid_hw_offload_add_rte_flow(struct ufid_hw_offload *hw_offload,
 /*
  * If hw rules were introduced we make sure we clean them before
  * we free the struct.
- *
  */
 static int netdev_rte_port_ufid_hw_offload_free(
     struct ufid_hw_offload *hw_offload) OVS_UNUSED;
@@ -225,7 +227,7 @@ netdev_rte_port_ufid_hw_offload_free(struct ufid_hw_offload *hw_offload)
 {
     struct rte_flow_error error;
 
-    VLOG_DBG("clean all rte flows for fuid "UUID_FMT".\n",
+    VLOG_DBG("clean all rte flows for ufid "UUID_FMT".\n",
              UUID_ARGS((struct uuid *)&hw_offload->ufid));
 
     for (int i = 0 ; i < hw_offload->curr_idx ; i++) {
@@ -248,6 +250,93 @@ netdev_rte_port_ufid_hw_offload_free(struct ufid_hw_offload *hw_offload)
 
     free(hw_offload);
     return 0;
+}
+
+struct ufid_to_odp {
+    struct cmap_node node;
+    ovs_u128 ufid;
+    odp_port_t dp_port;
+};
+
+static struct cmap ufid_to_portid_map = CMAP_INITIALIZER;
+
+/*
+ * Search for ufid mapping
+ *
+ * Return ref to object and not a copy.
+ */
+static struct ufid_to_odp *
+ufid_to_portid_get(const ovs_u128 *ufid)
+{
+    size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
+    struct ufid_to_odp *data;
+
+    CMAP_FOR_EACH_WITH_HASH (data, node, hash, &ufid_to_portid_map) {
+        if (ovs_u128_equals(*ufid, data->ufid)) {
+            return data;
+        }
+    }
+
+    return NULL;
+}
+
+static odp_port_t
+ufid_to_portid_search(const ovs_u128 *ufid)
+{
+   struct ufid_to_odp *data = ufid_to_portid_get(ufid);
+
+   return (data) ? data->dp_port : INVALID_ODP_PORT;
+}
+
+/*
+ * Save the ufid->dp_port mapping.
+ *
+ * Return the port if saved successfully.
+ */
+static odp_port_t
+ufid_to_portid_add(const ovs_u128 *ufid, odp_port_t dp_port) OVS_UNUSED;
+static odp_port_t
+ufid_to_portid_add(const ovs_u128 *ufid, odp_port_t dp_port)
+{
+    size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
+    struct ufid_to_odp *data;
+
+    if (ufid_to_portid_search(ufid) != INVALID_ODP_PORT) {
+        return dp_port;
+    }
+
+    data = xzalloc(sizeof *data);
+    if (!data) {
+        VLOG_WARN("Failed to add ufid to odp, (ENOMEM)");
+        return INVALID_ODP_PORT;
+    }
+
+    data->ufid = *ufid;
+    data->dp_port = dp_port;
+
+    cmap_insert(&ufid_to_portid_map,
+                CONST_CAST(struct cmap_node *, &data->node), hash);
+
+    return dp_port;
+}
+
+/*
+ * Remove the mapping if exists.
+ */
+static void
+ufid_to_portid_remove(const ovs_u128 *ufid) OVS_UNUSED;
+static void
+ufid_to_portid_remove(const ovs_u128 *ufid)
+{
+    size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
+    struct ufid_to_odp *data = ufid_to_portid_get(ufid);
+
+    if (data != NULL) {
+        cmap_remove(&ufid_to_portid_map,
+                        CONST_CAST(struct cmap_node *, &data->node),
+                        hash);
+        free(data);
+    }
 }
 
 /*
