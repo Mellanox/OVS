@@ -27,6 +27,8 @@
 
 VLOG_DEFINE_THIS_MODULE(netdev_rte_offloads);
 
+static struct vlog_rate_limit error_rl = VLOG_RATE_LIMIT_INIT(100, 5);
+
 #define RTE_FLOW_MAX_TABLES (31)
 #define MAX_PHY_RTE_PORTS (128)
 
@@ -60,6 +62,19 @@ struct netdev_rte_port {
   struct cmap ufid_to_rte;   // map of fuid to all the matching rte_flows
 };
 
+struct rte_flow_data {
+     struct rte_flow * flow;
+     struct netdev *netdev;
+     uint64_t counter_id;
+};
+
+struct ufid_hw_offload {
+    struct cmap_node node;
+    int max_flows;
+    int curr_idx;
+    ovs_u128 ufid;
+    struct rte_flow_data rte_flow_data[1];
+};
 
 static struct cmap vport_map = CMAP_INITIALIZER;
 static struct cmap dpdk_map = CMAP_INITIALIZER;
@@ -820,6 +835,103 @@ netdev_dpdk_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
 }
 
 //---------------------------------------------------------------0
+/**
+ * @brief - fuid hw offload struct contains array of pointers to RTE FLOWS.
+ *  in case of vxlan offload we need rule per phy port. in other cases
+ *  we might need only one.
+ *
+ * @param size  - number of expected max rte for this fuids.
+ * @param ufid  - the fuid
+ *
+ * @return new struct on NULL if OOM
+ */
+static struct ufid_hw_offload * netdev_rte_port_ufid_hw_offload_alloc(int size,
+                                                         const ovs_u128 * ufid)
+{
+    struct ufid_hw_offload * ret = xzalloc(sizeof(struct  ufid_hw_offload) +
+                                           sizeof(struct rte_flow_data)*size);
+    if (ret != NULL) {
+        ret->max_flows = size;
+        ret->curr_idx = 0;
+        ret->ufid = *ufid;
+    }
+
+    return ret;
+}
+
+
+/**
+ * @brief 0 find hw_offload of specific fuid.
+ *
+ * @param ufid
+ * @param map    - map is bounded to interface
+ *
+ * @return if found on NULL if doesn't exists.
+ */
+static struct ufid_hw_offload * ufid_hw_offload_find(const ovs_u128 *ufid,
+                                                     struct cmap * map)
+{
+    size_t hash = hash_bytes(ufid, sizeof(*ufid), 0);
+    struct ufid_hw_offload * data;
+
+    CMAP_FOR_EACH_WITH_HASH (data, node, hash, map) {
+        if (ovs_u128_equals(*ufid, data->ufid)) {
+            return data;
+        }
+    }
+
+    return NULL;
+}
+
+
+static struct ufid_hw_offload * ufid_hw_offload_remove(const ovs_u128 *ufid,
+                                                       struct cmap * map)
+{
+    size_t hash = hash_bytes(ufid, sizeof(*ufid), 0);
+    struct ufid_hw_offload * data = ufid_hw_offload_find(ufid,map);
+
+    if (data != NULL) {
+        cmap_remove(map, CONST_CAST(struct cmap_node *, &data->node),
+                        hash);
+
+    }
+    return data;
+}
+
+static void ufid_hw_offload_add(struct ufid_hw_offload * hw_offload,
+                                struct cmap * map)
+{
+    size_t hash = hash_bytes(&hw_offload->ufid, sizeof(ovs_u128), 0);
+
+    cmap_insert(map,
+                CONST_CAST(struct cmap_node *, &hw_offload->node), hash);
+
+    return;
+}
+
+static void ufid_hw_offload_add_rte_flow(struct ufid_hw_offload * hw_offload,
+                                         struct rte_flow * rte_flow,
+                                         struct netdev * netdev,
+                                         uint64_t ctr_id)
+{
+    if (hw_offload->curr_idx < hw_offload->max_flows) {
+        hw_offload->rte_flow_data[hw_offload->curr_idx].flow = rte_flow;
+        hw_offload->rte_flow_data[hw_offload->curr_idx].netdev = netdev;
+        hw_offload->rte_flow_data[hw_offload->curr_idx].counter_id = ctr_id;
+        hw_offload->curr_idx++;
+    } else {
+        struct rte_flow_error error;
+        int ret = netdev_dpdk_rte_flow_destroy(netdev, rte_flow, &error);
+        if (ret != 0) {
+                VLOG_ERR_RL(&error_rl, "rte flow destroy error: %u : message :"
+                       " %s\n", error.type, error.message);
+        }
+    }
+    return;
+}
+
+
+    
 static int
 netdev_rte_vport_flow_put(struct netdev *netdev OVS_UNUSED,
                  struct match *match OVS_UNUSED,
