@@ -2123,7 +2123,7 @@ flow_mark_alloc(void)
 
     if (!flow_mark.pool) {
         /* Haven't initiated yet, do it here */
-        flow_mark.pool = id_pool_create(0, MAX_FLOW_MARK);
+        flow_mark.pool = id_pool_create(OFFLOAD_RESERVED_MARK, MAX_FLOW_MARK);
     }
 
     if (id_pool_alloc_id(flow_mark.pool, &mark)) {
@@ -6434,6 +6434,8 @@ dfc_processing(struct dp_netdev_pmd_thread *pmd,
                                                flow_map, map_cnt++);
                 }
                 continue;
+            } else {
+                netdev_rte_offload_preprocess(packet, mark);
             }
         }
 

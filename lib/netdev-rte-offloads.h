@@ -23,6 +23,9 @@ struct match;
 struct nlattr;
 struct offload_info;
 struct dpif_flow_stats;
+struct dp_packet;
+
+#define OFFLOAD_RESERVED_MARK (64)
 
 int netdev_dpdk_flow_put(struct netdev *netdev, struct match *match,
                      struct nlattr *actions, size_t actions_len,
@@ -39,5 +42,12 @@ int netdev_rte_offload_add_port(odp_port_t dp_port,
                                 struct netdev * netdev);
 
 int netdev_rte_offload_del_port(odp_port_t dp_port);
+
+/**
+ * rte offload might use speial mark to handle exception use case. 
+ * packet with special mark require some preprocessing before dpif can
+ * continue the processing.
+ */
+void netdev_rte_offload_preprocess(struct dp_packet *packet, uint32_t mark);
 
 #endif /* netdev-rte-offloads.h */
