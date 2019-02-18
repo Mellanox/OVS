@@ -1051,3 +1051,15 @@ int netdev_rte_offload_del_port(odp_port_t dp_port)
 
     return 0;
 }
+
+/**
+ * rte offload might use speial mark to handle exception use case. 
+ * packet with special mark require some preprocessing before dpif can
+ * continue the processing.
+ */
+void netdev_rte_offload_preprocess(struct dp_packet *packet OVS_UNUSED,
+                                               uint32_t mark OVS_UNUSED)
+{
+    return;
+}
+
