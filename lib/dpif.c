@@ -880,7 +880,16 @@ dpif_flow_stats_extract(const struct flow *flow, const struct dp_packet *packet,
     stats->tcp_flags = ntohs(flow->tcp_flags);
     stats->n_bytes = dp_packet_size(packet);
     stats->n_packets = 1;
+    stats->n_marked = 0;
     stats->used = used;
+}
+
+void
+dpif_offload_stats_format(const struct dpif_flow_stats *stats, struct ds *s)
+{
+    if (stats->n_marked) {
+        ds_put_format(s, "marked:%"PRIu64", ", stats->n_marked);
+    }
 }
 
 /* Appends a human-readable representation of 'stats' to 's'. */
