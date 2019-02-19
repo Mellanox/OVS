@@ -4416,6 +4416,7 @@ rule_construct(struct rule *rule_)
     rule->stats.n_packets = 0;
     rule->stats.n_bytes = 0;
     rule->stats.used = rule->up.modified;
+    rule->stats.n_marked = 0;
     rule->recirc_id = 0;
     rule->new_rule = NULL;
     rule->forward_counts = false;
@@ -5707,7 +5708,7 @@ ofproto_unixctl_dpif_dump_flows(struct unixctl_conn *conn,
         odp_flow_format(f.key, f.key_len, f.mask, f.mask_len,
                         portno_names, &ds, verbosity);
         ds_put_cstr(&ds, ", ");
-        dpif_flow_stats_format(&f.stats, &ds);
+        dpif_flow_stats_format(&f.stats, &ds, verbosity);
         ds_put_cstr(&ds, ", actions:");
         format_odp_actions(&ds, f.actions, f.actions_len, portno_names);
         ds_put_char(&ds, '\n');

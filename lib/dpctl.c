@@ -819,9 +819,9 @@ format_dpif_flow(struct ds *ds, const struct dpif_flow *f, struct hmap *ports,
                     dpctl_p->verbosity);
     ds_put_cstr(ds, ", ");
 
-    dpif_flow_stats_format(&f->stats, ds);
+    dpif_flow_stats_format(&f->stats, ds, false);
     if (dpctl_p->verbosity && f->attrs.offloaded) {
-        ds_put_cstr(ds, ", offloaded:yes");
+        ds_put_cstr(ds, ", offloaded:yes\n");
     }
     if (dpctl_p->verbosity && f->attrs.dp_layer) {
         ds_put_format(ds, ", dp:%s", f->attrs.dp_layer);
@@ -1144,7 +1144,7 @@ dpctl_put_flow(int argc, const char *argv[], enum dpif_flow_put_flags flags,
         struct ds s;
 
         ds_init(&s);
-        dpif_flow_stats_format(&stats, &s);
+        dpif_flow_stats_format(&stats, &s, false);
         dpctl_print(dpctl_p, "%s\n", ds_cstr(&s));
         ds_destroy(&s);
     }
@@ -1292,7 +1292,7 @@ dpctl_del_flow(int argc, const char *argv[], struct dpctl_params *dpctl_p)
         struct ds s;
 
         ds_init(&s);
-        dpif_flow_stats_format(&stats, &s);
+        dpif_flow_stats_format(&stats, &s, false);
         dpctl_print(dpctl_p, "%s\n", ds_cstr(&s));
         ds_destroy(&s);
     }

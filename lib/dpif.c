@@ -880,13 +880,18 @@ dpif_flow_stats_extract(const struct flow *flow, const struct dp_packet *packet,
     stats->tcp_flags = ntohs(flow->tcp_flags);
     stats->n_bytes = dp_packet_size(packet);
     stats->n_packets = 1;
+    stats->n_marked = 0;
     stats->used = used;
 }
 
 /* Appends a human-readable representation of 'stats' to 's'. */
 void
-dpif_flow_stats_format(const struct dpif_flow_stats *stats, struct ds *s)
+dpif_flow_stats_format(const struct dpif_flow_stats *stats, struct ds *s,
+                       bool verbose)
 {
+    if (verbose) {
+        ds_put_format(s, "marked:%"PRIu64", ", stats->n_marked);
+    }
     ds_put_format(s, "packets:%"PRIu64", bytes:%"PRIu64", used:",
                   stats->n_packets, stats->n_bytes);
     if (stats->used) {
@@ -1746,7 +1751,7 @@ log_flow_message(const struct dpif *dpif, int error,
     odp_flow_format(key, key_len, mask, mask_len, NULL, &ds, true);
     if (stats) {
         ds_put_cstr(&ds, ", ");
-        dpif_flow_stats_format(stats, &ds);
+        dpif_flow_stats_format(stats, &ds, true);
     }
     if (actions || actions_len) {
         ds_put_cstr(&ds, ", actions:");

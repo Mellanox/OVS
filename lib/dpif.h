@@ -492,6 +492,8 @@ struct dpif_flow_stats {
     uint64_t n_bytes;
     long long int used;
     uint16_t tcp_flags;
+    /* HW offload stats. */
+    uint64_t n_marked;
 };
 
 struct dpif_flow_attrs {
@@ -506,7 +508,8 @@ struct dpif_flow_dump_types {
 
 void dpif_flow_stats_extract(const struct flow *, const struct dp_packet *packet,
                              long long int used, struct dpif_flow_stats *);
-void dpif_flow_stats_format(const struct dpif_flow_stats *, struct ds *);
+void dpif_flow_stats_format(const struct dpif_flow_stats *, struct ds *,
+                            bool verbose);
 
 enum dpif_flow_put_flags {
     DPIF_FP_CREATE = 1 << 0,    /* Allow creating a new flow. */
