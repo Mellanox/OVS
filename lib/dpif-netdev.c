@@ -2096,7 +2096,7 @@ dp_netdev_pmd_find_dpcls(struct dp_netdev_pmd_thread *pmd,
     return cls;
 }
 
-#define MAX_FLOW_MARK       (UINT32_MAX - 1)
+#define MAX_AMOUNT_FLOW_MARK (UINT32_MAX - 1 - OFFLOAD_RESERVED_MARK)
 #define INVALID_FLOW_MARK   (UINT32_MAX)
 
 struct megaflow_to_mark_data {
@@ -2123,7 +2123,8 @@ flow_mark_alloc(void)
 
     if (!flow_mark.pool) {
         /* Haven't initiated yet, do it here */
-        flow_mark.pool = id_pool_create(OFFLOAD_RESERVED_MARK, MAX_FLOW_MARK);
+        flow_mark.pool = id_pool_create(OFFLOAD_RESERVED_MARK,
+                                        MAX_AMOUNT_FLOW_MARK);
     }
 
     if (id_pool_alloc_id(flow_mark.pool, &mark)) {
