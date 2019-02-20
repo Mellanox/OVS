@@ -324,74 +324,6 @@ ufid_to_portid_remove(const ovs_u128 *ufid)
 }
 
 /*
- * A mapping from ufid to dpdk rte_flow.
- */
-static struct cmap ufid_to_rte_flow = CMAP_INITIALIZER;
-
-struct ufid_to_rte_flow_data {
-    struct cmap_node node;
-    ovs_u128 ufid;
-    struct rte_flow *rte_flow;
-};
-
-/* Find rte_flow with @ufid. */
-static struct rte_flow *
-ufid_to_rte_flow_find(const ovs_u128 *ufid)
-{
-    size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
-    struct ufid_to_rte_flow_data *data;
-
-    CMAP_FOR_EACH_WITH_HASH (data, node, hash, &ufid_to_rte_flow) {
-        if (ovs_u128_equals(*ufid, data->ufid)) {
-            return data->rte_flow;
-        }
-    }
-
-    return NULL;
-}
-
-static inline void
-ufid_to_rte_flow_associate(const ovs_u128 *ufid,
-                           struct rte_flow *rte_flow)
-{
-    size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
-    struct ufid_to_rte_flow_data *data = xzalloc(sizeof *data);
-
-    /*
-     * We should not simply overwrite an existing rte flow.
-     * We should have deleted it first before re-adding it.
-     * Thus, if following assert triggers, something is wrong:
-     * the rte_flow is not destroyed.
-     */
-    ovs_assert(ufid_to_rte_flow_find(ufid) == NULL);
-
-    data->ufid = *ufid;
-    data->rte_flow = rte_flow;
-
-    cmap_insert(&ufid_to_rte_flow,
-                CONST_CAST(struct cmap_node *, &data->node), hash);
-}
-
-static inline void
-ufid_to_rte_flow_disassociate(const ovs_u128 *ufid)
-{
-    size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
-    struct ufid_to_rte_flow_data *data;
-
-    CMAP_FOR_EACH_WITH_HASH (data, node, hash, &ufid_to_rte_flow) {
-        if (ovs_u128_equals(*ufid, data->ufid)) {
-            cmap_remove(&ufid_to_rte_flow,
-                        CONST_CAST(struct cmap_node *, &data->node), hash);
-            ovsrcu_postpone(free, data);
-            return;
-        }
-    }
-
-    VLOG_WARN("ufid "UUID_FMT" is not associated with an rte flow\n",
-              UUID_ARGS((struct uuid *) ufid));
-}
-
-/*
  * To avoid individual xrealloc calls for each new element, a 'curent_max'
  * is used to keep track of current allocated number of elements. Starts
  * by 8 and doubles on each xrealloc call.
@@ -894,9 +826,6 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
         result = -1;
         goto out;
     }
-    ufid_to_rte_flow_associate(ufid, flow);
-    VLOG_DBG("%s: installed flow %p by ufid "UUID_FMT"\n",
-             netdev_get_name(netdev), flow, UUID_ARGS((struct uuid *)ufid));
 
 out:
     free(patterns.items);
