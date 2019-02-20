@@ -105,71 +105,6 @@ struct flow_items {
 
 //------------
 
-/*
- * A mapping from ufid to dpdk rte_flow.
- */
-static struct cmap ufid_to_rte_flow = CMAP_INITIALIZER;
-
-struct ufid_to_rte_flow_data {
-    struct cmap_node node;
-    ovs_u128 ufid;
-    struct rte_flow *rte_flow;
-};
-
-
-/* Find rte_flow with @ufid */
-static struct rte_flow *
-ufid_to_rte_flow_find(const ovs_u128 *ufid) {
-    size_t hash = hash_bytes(ufid, sizeof(*ufid), 0);
-    struct ufid_to_rte_flow_data *data;
-
-    CMAP_FOR_EACH_WITH_HASH (data, node, hash, &ufid_to_rte_flow) {
-        if (ovs_u128_equals(*ufid, data->ufid)) {
-            return data->rte_flow;
-        }
-    }
-
-    return NULL;
-}
-
-static inline void
-ufid_to_rte_flow_associate(const ovs_u128 *ufid,
-                           struct rte_flow *rte_flow) {
-    size_t hash = hash_bytes(ufid, sizeof(*ufid), 0);
-    struct ufid_to_rte_flow_data *data = xzalloc(sizeof(*data));
-
-    /*
-     * We should not simply overwrite an existing rte flow.
-     * We should have deleted it first before re-adding it.
-     * Thus, if following assert triggers, something is wrong:
-     * the rte_flow is not destroyed.
-     */
-    ovs_assert(ufid_to_rte_flow_find(ufid) == NULL);
-
-    data->ufid = *ufid;
-    data->rte_flow = rte_flow;
-
-    cmap_insert(&ufid_to_rte_flow,
-                CONST_CAST(struct cmap_node *, &data->node), hash);
-}
-
-static inline void
-ufid_to_rte_flow_disassociate(const ovs_u128 *ufid) {
-    size_t hash = hash_bytes(ufid, sizeof(*ufid), 0);
-    struct ufid_to_rte_flow_data *data;
-
-    CMAP_FOR_EACH_WITH_HASH (data, node, hash, &ufid_to_rte_flow) {
-        if (ovs_u128_equals(*ufid, data->ufid)) {
-            cmap_remove(&ufid_to_rte_flow,
-                        CONST_CAST(struct cmap_node *, &data->node), hash);
-            ovsrcu_postpone(free, data);
-            return;
-        }
-    }
-
-    VLOG_WARN("ufid "UUID_FMT" is not associated with an rte flow\n",
-              UUID_ARGS((struct uuid *)ufid));
-}
 
 /*
  * To avoid individual xrealloc calls for each new element, a 'curent_max'
@@ -608,7 +543,7 @@ netdev_dpdk_add_rte_flow_offload(struct netdev *netdev,
                                  const struct match *match,
                                  struct nlattr *nl_actions OVS_UNUSED,
                                  size_t actions_len OVS_UNUSED,
-                                 const ovs_u128 *ufid,
+                                 const ovs_u128 *ufid OVS_UNUSED,
                                  struct offload_info *info) {
     const struct rte_flow_attr flow_attr = {
         .group = 0,
@@ -653,9 +588,6 @@ netdev_dpdk_add_rte_flow_offload(struct netdev *netdev,
         result = -1;
         goto out;
     }
-    ufid_to_rte_flow_associate(ufid, flow);
-    VLOG_DBG("%s: installed flow %p by ufid "UUID_FMT"\n",
-             netdev_get_name(netdev), flow, UUID_ARGS((struct uuid *)ufid));
 
 out:
     free(patterns.items);
@@ -756,26 +688,6 @@ netdev_dpdk_validate_flow(const struct match *match) {
 err:
     VLOG_ERR("cannot HW accelerate this flow due to unsupported protocols");
     return -1;
-}
-
-static int
-netdev_dpdk_destroy_rte_flow(struct netdev *netdev,
-                             const ovs_u128 *ufid,
-                             struct rte_flow *rte_flow) {
-    struct rte_flow_error error;
-    int ret = netdev_dpdk_rte_flow_destroy(netdev, rte_flow, &error);
-
-    if (ret == 0) {
-        ufid_to_rte_flow_disassociate(ufid);
-        VLOG_DBG("%s: removed rte flow %p associated with ufid " UUID_FMT "\n",
-                 netdev_get_name(netdev), rte_flow,
-                 UUID_ARGS((struct uuid *)ufid));
-    } else {
-        VLOG_ERR("%s: rte flow destroy error: %u : message : %s\n",
-                 netdev_get_name(netdev), error.type, error.message);
-    }
-
-    return ret;
 }
 
 //---------------------------------------------------------------0
@@ -1226,8 +1138,10 @@ netdev_dpdk_flow_put(struct netdev *netdev, struct match *match,
         return -1;
     }
 
-    ufid_hw_offload_add_rte_flow(
-                ufid_hw_offload, rte_flow, netdev, 0);
+    ufid_hw_offload_add_rte_flow(ufid_hw_offload, rte_flow, netdev, 0);
+    VLOG_DBG("%s: installed flow %p by ufid "UUID_FMT"\n",
+        netdev_get_name(netdev), rte_flow, UUID_ARGS((struct uuid *)ufid));
+
     return 0;
 }
 
