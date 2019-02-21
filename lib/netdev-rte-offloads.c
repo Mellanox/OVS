@@ -606,19 +606,19 @@ struct action_rss_data {
 
 static struct action_rss_data *
 add_flow_rss_action(struct flow_actions *actions,
-                    struct netdev *netdev)
+                    uint16_t num_queues)
 {
     int i;
     struct action_rss_data *rss_data;
 
     rss_data = xmalloc(sizeof *rss_data +
-                       netdev_n_rxq(netdev) * sizeof rss_data->queue[0]);
+                       num_queues * sizeof rss_data->queue[0]);
     *rss_data = (struct action_rss_data) {
         .conf = (struct rte_flow_action_rss) {
             .func = RTE_ETH_HASH_FUNCTION_DEFAULT,
             .level = 0,
             .types = 0,
-            .queue_num = netdev_n_rxq(netdev),
+            .queue_num = num_queues,
             .queue = rss_data->queue,
             .key_len = 0,
             .key  = NULL
@@ -626,7 +626,7 @@ add_flow_rss_action(struct flow_actions *actions,
     };
 
     /* Override queue array with default. */
-    for (i = 0; i < netdev_n_rxq(netdev); i++) {
+    for (i = 0; i < num_queues; i++) {
        rss_data->queue[i] = i;
     }
 
@@ -828,7 +828,7 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
     mark.id = info->flow_mark;
     add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_MARK, &mark);
 
-    rss = add_flow_rss_action(&actions, netdev);
+    rss = add_flow_rss_action(&actions, netdev_n_rxq(netdev));
     add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_END, NULL);
 
     flow = netdev_dpdk_rte_flow_create(netdev, &flow_attr,
