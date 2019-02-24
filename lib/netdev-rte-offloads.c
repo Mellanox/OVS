@@ -539,6 +539,36 @@ add_flow_patterns(struct flow_patterns *patterns,
 }
 
 static struct rte_flow *
+netdev_rte_offload_mark_rss(struct netdev *netdev,
+                            struct offload_info *info,
+                            struct flow_patterns *patterns,
+                            struct flow_actions *actions,
+                            const struct rte_flow_attr *flow_attr) {
+    struct rte_flow *flow = NULL;
+    struct rte_flow_error error;
+
+    struct rte_flow_action_mark mark = {0};
+    mark.id = info->flow_mark;
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_MARK, &mark);
+
+    struct action_rss_data *rss = NULL;
+    rss = add_flow_rss_action(actions, netdev->n_rxq);
+
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_END, NULL);
+
+    flow = netdev_dpdk_rte_flow_create(netdev, flow_attr, patterns->items,
+                                       actions->actions, &error);
+
+    free(rss);
+    if (!flow) {
+        VLOG_ERR("%s: rte flow create offload error: %u : message : %s\n",
+                netdev_get_name(netdev), error.type, error.message);
+    }
+
+    return flow;
+}
+
+static struct rte_flow *
 netdev_dpdk_add_rte_flow_offload(struct netdev *netdev,
                                  const struct match *match,
                                  struct nlattr *nl_actions OVS_UNUSED,
@@ -554,7 +584,6 @@ netdev_dpdk_add_rte_flow_offload(struct netdev *netdev,
     struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
     struct flow_actions actions = { .actions = NULL, .cnt = 0 };
     struct rte_flow *flow = NULL;
-    struct rte_flow_error error;
     int result = 0;
     struct flow_items spec, mask;
 
@@ -568,26 +597,8 @@ netdev_dpdk_add_rte_flow_offload(struct netdev *netdev,
 
     add_flow_pattern(&patterns, RTE_FLOW_ITEM_TYPE_END, NULL, NULL);
 
-    struct rte_flow_action_mark mark;
-    struct action_rss_data *rss;
-
-    mark.id = info->flow_mark;
-    add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_MARK, &mark);
-
-
-    rss = add_flow_rss_action(&actions, netdev->n_rxq);
-    add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_END, NULL);
-
-    flow = netdev_dpdk_rte_flow_create(netdev, &flow_attr,patterns.items,
-                            actions.actions, &error);
-
-    free(rss);
-    if (!flow) {
-        VLOG_ERR("%s: rte flow create error: %u : message : %s\n",
-                 netdev_get_name(netdev), error.type, error.message);
-        result = -1;
-        goto out;
-    }
+    flow = netdev_rte_offload_mark_rss(netdev, info, &patterns, &actions,
+                                       &flow_attr);
 
 out:
     free(patterns.items);
@@ -1133,7 +1144,6 @@ netdev_dpdk_flow_put(struct netdev *netdev, struct match *match,
 
     rte_flow = netdev_dpdk_add_rte_flow_offload(netdev, match, actions,
                                             actions_len, ufid, info);
-
     if (!rte_flow) {
         return -1;
     }
