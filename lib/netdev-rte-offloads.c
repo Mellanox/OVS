@@ -603,7 +603,7 @@ add_flow_patterns(struct flow_patterns *patterns,
     return 0;
 }
 
-static int
+static struct rte_flow *
 netdev_dpdk_add_rte_flow_offload(struct netdev *netdev,
                                  const struct match *match,
                                  struct nlattr *nl_actions OVS_UNUSED,
@@ -618,16 +618,16 @@ netdev_dpdk_add_rte_flow_offload(struct netdev *netdev,
     };
     struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
     struct flow_actions actions = { .actions = NULL, .cnt = 0 };
-    struct rte_flow *flow;
+    struct rte_flow *flow = NULL;
     struct rte_flow_error error;
-    int ret = 0;
+    int result = 0;
     struct flow_items spec, mask;
 
     memset(&spec, 0, sizeof spec);
     memset(&mask, 0, sizeof mask);
 
-    ret = add_flow_patterns(&patterns, &spec, &mask, match);
-    if (ret) {
+    result = add_flow_patterns(&patterns, &spec, &mask, match);
+    if (result) {
         goto out;
     }
 
@@ -648,9 +648,9 @@ netdev_dpdk_add_rte_flow_offload(struct netdev *netdev,
 
     free(rss);
     if (!flow) {
-        VLOG_ERR("%s: rte flow creat error: %u : message : %s\n",
+        VLOG_ERR("%s: rte flow create error: %u : message : %s\n",
                  netdev_get_name(netdev), error.type, error.message);
-        ret = -1;
+        result = -1;
         goto out;
     }
     ufid_to_rte_flow_associate(ufid, flow);
@@ -660,10 +660,8 @@ netdev_dpdk_add_rte_flow_offload(struct netdev *netdev,
 out:
     free(patterns.items);
     free(actions.actions);
-    return ret;
+    return flow;
 }
-
-
 
 static bool
 is_all_zero(const void *addr, size_t n) {
@@ -778,48 +776,6 @@ netdev_dpdk_destroy_rte_flow(struct netdev *netdev,
     }
 
     return ret;
-}
-
-int
-netdev_dpdk_flow_put(struct netdev *netdev, struct match *match,
-                     struct nlattr *actions, size_t actions_len,
-                     const ovs_u128 *ufid, struct offload_info *info,
-                     struct dpif_flow_stats *stats OVS_UNUSED) {
-    struct rte_flow *rte_flow;
-    int ret;
-
-    /*
-     * If an old rte_flow exists, it means it's a flow modification.
-     * Here destroy the old rte flow first before adding a new one.
-     */
-    rte_flow = ufid_to_rte_flow_find(ufid);
-    if (rte_flow) {
-        ret = netdev_dpdk_destroy_rte_flow(netdev, ufid, rte_flow);
-        if (ret < 0) {
-            return ret;
-        }
-    }
-
-    ret = netdev_dpdk_validate_flow(match);
-    if (ret < 0) {
-        return ret;
-    }
-
-    return netdev_dpdk_add_rte_flow_offload(netdev, match, actions,
-                                            actions_len, ufid, info);
-}
-
-int
-netdev_dpdk_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
-                     struct dpif_flow_stats *stats OVS_UNUSED) {
-
-    struct rte_flow *rte_flow = ufid_to_rte_flow_find(ufid);
-
-    if (!rte_flow) {
-        return -1;
-    }
-
-    return netdev_dpdk_destroy_rte_flow(netdev, ufid, rte_flow);
 }
 
 //---------------------------------------------------------------0
@@ -1116,11 +1072,7 @@ static void netdev_rte_port_clean_all(struct netdev_rte_port * rte_port)
     CMAP_CURSOR_FOR_EACH (data, node, &cursor, &rte_port->ufid_to_rte) {
         netdev_rte_port_ufid_hw_offload_free(data);
     }
-
-    return;
 }
-
-
 
 static void netdev_rte_port_del_arr(struct netdev_rte_port * rte_port,
                                     struct netdev_rte_port * arr[],
@@ -1216,9 +1168,96 @@ static void netdev_rte_offload_vxlan_init(struct netdev *netdev)
     cls->flow_del = netdev_rte_vport_flow_del;
     cls->flow_get = NULL;
     cls->init_flow_api = NULL;
-    return;
 }
 
+int
+netdev_dpdk_flow_put(struct netdev *netdev, struct match *match,
+                     struct nlattr *actions, size_t actions_len,
+                     const ovs_u128 *ufid, struct offload_info *info,
+                     struct dpif_flow_stats *stats OVS_UNUSED) {
+    struct rte_flow *rte_flow;
+    int ret;
+
+    odp_port_t in_port = match->flow.in_port.odp_port;
+    struct netdev_rte_port *rte_port =
+            netdev_rte_port_search(in_port, &dpdk_map);
+
+    if (rte_port == NULL) {
+        VLOG_WARN("failed to find dpdk port number %d",in_port);
+        return -1;
+    }
+
+    /*
+     * If an old rte_flow exists, it means it's a flow modification.
+     * Here destroy the old rte flow first before adding a new one.
+     */
+    struct ufid_hw_offload *ufid_hw_offload =
+            ufid_hw_offload_find(ufid, &rte_port->ufid_to_rte);
+
+    if (ufid_hw_offload) {
+        VLOG_DBG("got modification and destroying previous rte_flow");
+        ufid_hw_offload_remove(ufid, &rte_port->ufid_to_rte);
+        ret = netdev_rte_port_ufid_hw_offload_free(ufid_hw_offload);
+        if (ret < 0) {
+            return ret;
+        }
+    }
+
+    /* Create ufid_to_rte map for the ufid */
+    ufid_hw_offload = netdev_rte_port_ufid_hw_offload_alloc(1, ufid);
+    if (!ufid_hw_offload) {
+        VLOG_WARN("failed to allocate ufid_hw_offlaod, OOM");
+        return -1;
+    }
+
+    ufid_hw_offload_add(ufid_hw_offload, &rte_port->ufid_to_rte);
+    ufid_to_portid_add(ufid, rte_port->port_no);
+
+    ret = netdev_dpdk_validate_flow(match);
+    if (ret < 0) {
+        VLOG_DBG("flow pattern is not supported");
+        return ret;
+    }
+
+    rte_flow = netdev_dpdk_add_rte_flow_offload(netdev, match, actions,
+                                            actions_len, ufid, info);
+
+    if (!rte_flow) {
+        return -1;
+    }
+
+    ufid_hw_offload_add_rte_flow(
+                ufid_hw_offload, rte_flow, netdev, 0);
+    return 0;
+}
+
+int
+netdev_dpdk_flow_del(struct netdev *netdev OVS_UNUSED, const ovs_u128 *ufid,
+                     struct dpif_flow_stats *stats OVS_UNUSED) {
+
+    odp_port_t port_num = ufid_to_portid_search(ufid);
+
+    if (port_num == INVALID_ODP_PORT) {
+        return -1;
+    }
+
+    struct netdev_rte_port *rte_port;
+    struct ufid_hw_offload *ufid_hw_offload;
+
+    rte_port = netdev_rte_port_search(port_num, &dpdk_map);
+    if (rte_port == NULL) {
+          VLOG_ERR("failed to find dpdk port for port %d",port_num);
+          return -1;
+    }
+
+    ufid_to_portid_remove(ufid);
+    ufid_hw_offload = ufid_hw_offload_remove(ufid, &rte_port->ufid_to_rte);
+    if (ufid_hw_offload) {
+        netdev_rte_port_ufid_hw_offload_free(ufid_hw_offload );
+    }
+
+    return 0;
+}
 
 /**
  * @brief - called when dpif netdev is added to the DPIF.
