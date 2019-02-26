@@ -877,6 +877,8 @@ dpif_flow_stats_extract(const struct flow *flow, const struct dp_packet *packet,
     stats->tcp_flags = ntohs(flow->tcp_flags);
     stats->n_bytes = dp_packet_size(packet);
     stats->n_packets = 1;
+    stats->n_marked = 0;
+    stats->n_hwcnt = 0;	
     stats->used = used;
 }
 
@@ -884,6 +886,9 @@ dpif_flow_stats_extract(const struct flow *flow, const struct dp_packet *packet,
 void
 dpif_flow_stats_format(const struct dpif_flow_stats *stats, struct ds *s)
 {
+    ds_put_format(s, "marked:%"PRIu64", ", stats->n_marked);
+    ds_put_format(s, "hw_cnt:%"PRIu64", ", stats->n_hwcnt);
+
     ds_put_format(s, "packets:%"PRIu64", bytes:%"PRIu64", used:",
                   stats->n_packets, stats->n_bytes);
     if (stats->used) {

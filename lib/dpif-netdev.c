@@ -487,6 +487,9 @@ struct dp_netdev_flow_stats {
     atomic_ullong packet_count;    /* Number of packets matched. */
     atomic_ullong byte_count;      /* Number of bytes matched. */
     atomic_uint16_t tcp_flags;     /* Bitwise-OR of seen tcp_flags values. */
+    /* HW offload stats. */
+    atomic_ullong mark_count;      /* Number of marked packets matched. */
+    atomic_ullong hw_count;        /* Number of HW counted packets. */	
 };
 
 /* A flow in 'dp_netdev_pmd_thread's 'flow_table'.
@@ -3022,6 +3025,11 @@ get_dpif_flow_stats(const struct dp_netdev_flow *netdev_flow_,
     stats->used = used;
     atomic_read_relaxed(&netdev_flow->stats.tcp_flags, &flags);
     stats->tcp_flags = flags;
+    /* HW offload stats. */
+    atomic_read_relaxed(&netdev_flow->stats.mark_count, &n);
+    stats->n_marked = n;
+    atomic_read_relaxed(&netdev_flow->stats.hw_count, &n);
+    stats->n_hwcnt = n;
 }
 
 /* Converts to the dpif_flow format, using 'key_buf' and 'mask_buf' for
@@ -3628,6 +3636,7 @@ dp_netdev_offload_used(struct dp_netdev_flow *netdev_flow,
                     pmd->ctx.now / 1000);
     non_atomic_ullong_add(&netdev_flow->stats.packet_count, stats.n_packets);
     non_atomic_ullong_add(&netdev_flow->stats.byte_count, stats.n_bytes);
+    non_atomic_ullong_add(&netdev_flow->stats.hw_count, stats.n_packets);
 
     return 0;
 }
@@ -6795,12 +6804,12 @@ dp_netdev_input__(struct dp_netdev_pmd_thread *pmd,
 
     /* All the flow batches need to be reset before any call to
      * packet_batch_per_flow_execute() as it could potentially trigger
-     * recirculation. When a packet matching flow ‘j’ happens to be
+     * recirculation. When a packet matching flow ???j??? happens to be
      * recirculated, the nested call to dp_netdev_input__() could potentially
      * classify the packet as matching another flow - say 'k'. It could happen
      * that in the previous call to dp_netdev_input__() that same flow 'k' had
      * already its own batches[k] still waiting to be served.  So if its
-     * ‘batch’ member is not reset, the recirculated packet would be wrongly
+     * ???batch??? member is not reset, the recirculated packet would be wrongly
      * appended to batches[k] of the 1st call to dp_netdev_input__(). */
     for (i = 0; i < n_batches; i++) {
         batches[i].flow->batch = NULL;

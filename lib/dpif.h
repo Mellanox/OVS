@@ -492,6 +492,9 @@ struct dpif_flow_stats {
     uint64_t n_bytes;
     long long int used;
     uint16_t tcp_flags;
+    /* HW offload. */
+    uint64_t n_marked; /* Number of marked packets */
+    uint64_t n_hwcnt;  /* Number of HW counted packets. */
 };
 
 struct dpif_flow_attrs {
