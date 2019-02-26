@@ -464,6 +464,8 @@ struct dp_netdev_flow_stats {
     atomic_ullong packet_count;    /* Number of packets matched. */
     atomic_ullong byte_count;      /* Number of bytes matched. */
     atomic_uint16_t tcp_flags;     /* Bitwise-OR of seen tcp_flags values. */
+    /* HW offload stats. */
+    atomic_ullong mark_count;      /* Number of marked packets matched. */
 };
 
 /* A flow in 'dp_netdev_pmd_thread's 'flow_table'.
@@ -2993,6 +2995,9 @@ get_dpif_flow_stats(const struct dp_netdev_flow *netdev_flow_,
     stats->used = used;
     atomic_read_relaxed(&netdev_flow->stats.tcp_flags, &flags);
     stats->tcp_flags = flags;
+    /* HW offload stats. */
+    atomic_read_relaxed(&netdev_flow->stats.mark_count, &n);
+    stats->n_marked = n;
 }
 
 /* Converts to the dpif_flow format, using 'key_buf' and 'mask_buf' for
@@ -5706,6 +5711,15 @@ dp_netdev_flow_used(struct dp_netdev_flow *netdev_flow, int cnt, int size,
     atomic_store_relaxed(&netdev_flow->stats.tcp_flags, flags);
 }
 
+static void
+dp_netdev_flow_marked(struct dp_netdev_flow *netdev_flow, uint32_t mark,
+                      int count)
+{
+    if (mark != INVALID_FLOW_MARK) {
+        non_atomic_ullong_add(&netdev_flow->stats.mark_count, count);
+    }
+}
+
 static int
 dp_netdev_upcall(struct dp_netdev_pmd_thread *pmd, struct dp_packet *packet_,
                  struct flow *flow, struct flow_wildcards *wc, ovs_u128 *ufid,
@@ -5825,6 +5839,8 @@ packet_batch_per_flow_execute(struct packet_batch_per_flow *batch,
 
     dp_netdev_flow_used(flow, batch->array.count, batch->byte_count,
                         batch->tcp_flags, pmd->ctx.now / 1000);
+
+    dp_netdev_flow_marked(flow, batch->flow->mark, batch->array.count);
 
     actions = dp_netdev_flow_get_actions(flow);
 
