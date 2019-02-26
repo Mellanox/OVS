@@ -398,6 +398,7 @@ struct netdev_dpdk {
         };
         struct dpdk_tx_queue *tx_q;
         struct rte_eth_link link;
+        bool is_uplink_port; /* True=uplink port, false=representor port. */
     );
 
     PADDED_MEMBERS_CACHELINE_MARKER(CACHE_LINE_SIZE, cacheline1,
@@ -496,6 +497,12 @@ is_dpdk_class(const struct netdev_class *class)
 {
     return class->destruct == netdev_dpdk_destruct
            || class->destruct == netdev_dpdk_vhost_destruct;
+}
+
+bool
+netdev_dpdk_is_uplink_port(const struct netdev *netdev)
+{
+    return CONTAINER_OF(netdev, struct netdev_dpdk, up)->is_uplink_port;
 }
 
 /* DPDK NIC drivers allocate RX buffers at a particular granularity, typically
@@ -1052,6 +1059,8 @@ dpdk_eth_dev_init(struct netdev_dpdk *dev)
         /* Do not warn on lack of scatter support */
         dev->hw_ol_features &= ~NETDEV_RX_HW_SCATTER;
     }
+
+    dev->is_uplink_port = !(*info.dev_flags & RTE_ETH_DEV_REPRESENTOR);
 
     n_rxq = MIN(info.max_rx_queues, dev->up.n_rxq);
     n_txq = MIN(info.max_tx_queues, dev->up.n_txq);
