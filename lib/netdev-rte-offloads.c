@@ -358,6 +358,24 @@ struct flow_actions {
 };
 
 static void
+free_flow_patterns(struct flow_patterns *patterns)
+{
+    /* When calling this function 'patterns' must be valid */
+    free(patterns->items);
+    patterns->items = NULL;
+    patterns->cnt = 0;
+}
+
+static void
+free_flow_actions(struct flow_actions *actions)
+{
+    /* When calling this function 'actions' must be valid */
+     free(actions->actions);
+     actions->actions = NULL;
+     actions->cnt = 0;
+}
+
+static void
 dump_flow_pattern(struct rte_flow_item *item)
 {
     struct ds s;
@@ -915,7 +933,6 @@ netdev_rte_offload_add_default_flow(struct netdev_rte_port *rte_port)
         VLOG_ERR_RL(&error_rl, "%s: rte flow create for default flow error: %u"
             " : message : %s\n", netdev_get_name(rte_port->netdev), error.type,
             error.message);
-
 #if 0
         result = netdev_dpdk_rte_flow_destroy(rte_port->netdev, def_flow,
                                               &error);
@@ -1030,8 +1047,9 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
     }
 
 out:
-    free(patterns.items);
-    free(actions.actions);
+    free_flow_patterns(&patterns);
+    free_flow_actions(&actions);
+
     return flow;
 }
 
@@ -1328,7 +1346,7 @@ netdev_rte_offload_decap(struct netdev_rte_port *rte_port,
                                        &error);
 
     free(rss);
-    free(actions.actions);
+    free_flow_actions(&actions);
     if (!flow) {
         VLOG_ERR("rte flow create offload error: %u : message : %s\n",
                  error.type, error.message);
@@ -1449,7 +1467,7 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
     }
 
 out:
-    free(patterns.items);
+    free_flow_patterns(&patterns);
     return ret;
 }
 
