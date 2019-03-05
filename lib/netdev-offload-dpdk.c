@@ -432,6 +432,24 @@ struct flow_actions {
 };
 
 static void
+free_flow_patterns(struct flow_patterns *patterns)
+{
+    /* When calling this function 'patterns' must be valid */
+    free(patterns->items);
+    patterns->items = NULL;
+    patterns->cnt = 0;
+}
+
+static void
+free_flow_actions(struct flow_actions *actions)
+{
+    /* When calling this function 'actions' must be valid */
+    free(actions->actions);
+    actions->actions = NULL;
+    actions->cnt = 0;
+}
+
+static void
 dump_flow_pattern(struct rte_flow_item *item)
 {
     struct ds s;
@@ -952,8 +970,8 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
              netdev_get_name(netdev), flow, UUID_ARGS((struct uuid *)ufid));
 
 out:
-    free(patterns.items);
-    free(actions.actions);
+    free_flow_patterns(&patterns);
+    free_flow_actions(&actions);
     return ret;
 }
 
