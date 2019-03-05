@@ -341,6 +341,24 @@ struct flow_actions {
 };
 
 static void
+free_flow_patterns(struct flow_patterns *patterns)
+{
+    /* When calling this function 'patterns' must be valid */
+    free(patterns->items);
+    patterns->items = NULL;
+    patterns->cnt = 0;
+}
+
+static void
+free_flow_actions(struct flow_actions *actions)
+{
+    /* When calling this function 'actions' must be valid */
+     free(actions->actions);
+     actions->actions = NULL;
+     actions->cnt = 0;
+}
+
+static void
 dump_flow_pattern(struct rte_flow_item *item)
 {
     struct ds s;
@@ -925,8 +943,9 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
     }
 
 out:
-    free(patterns.items);
-    free(actions.actions);
+    free_flow_patterns(&patterns);
+    free_flow_actions(&actions);
+
     return flow;
 }
 
@@ -1275,7 +1294,7 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
         if ((data->rte_port_type == RTE_PORT_TYPE_DPDK) &&
             (netdev_dpdk_is_uplink_port(data->netdev))) {
 
-            free(actions.actions);
+            free_flow_actions(&actions);
             netdev_rte_add_decap_flow_action(&actions);
 
             mark.id = info->flow_mark;
@@ -1301,7 +1320,7 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
     }
 
 out:
-    free(patterns.items);
+    free_flow_patterns(&patterns);
     return ret;
 }
 
