@@ -32,6 +32,15 @@ static struct vlog_rate_limit error_rl = VLOG_RATE_LIMIT_INIT(100, 5);
 static struct netdev_rte_port *
 netdev_rte_port_search_by_port_no(odp_port_t port_no);
 
+static struct netdev_rte_port *
+netdev_rte_port_search(odp_port_t port_no, struct cmap * map);
+
+static struct ufid_to_odp *
+ufid_to_portid_get(const ovs_u128 *ufid);
+
+static odp_port_t
+ufid_to_portid_search(const ovs_u128 *ufid);
+
 #define RTE_FLOW_MAX_TABLES (31)
 #define HW_OFFLOAD_MAX_PHY (128)
 #define MAX_PHY_RTE_PORTS (128)
@@ -629,6 +638,58 @@ netdev_rte_offload_flow(struct netdev *netdev,
 }
 
 static struct rte_flow *
+netdev_rte_offload_add_default_flow(struct netdev_rte_port *rte_port) {
+    /* The default flow has the lowest priority, no pattern
+     * (match all) and Mark action */
+    const struct rte_flow_attr def_flow_attr = {
+        .group = rte_port->table_id,
+        .priority = 1,
+        .ingress = 1,
+        .egress = 0,
+    };
+    struct flow_patterns def_patterns = { .items = NULL, .cnt = 0 };
+    struct flow_actions def_actions = { .actions = NULL, .cnt = 0 };
+    struct rte_flow *def_flow = NULL;
+    struct rte_flow_error error;
+    int result = -1;
+
+    add_flow_pattern(&def_patterns, RTE_FLOW_ITEM_TYPE_END, NULL, NULL);
+
+    struct action_rss_data *rss = NULL;
+    rss = add_flow_rss_action(&def_actions, rte_port->dpdk_num_queues);
+
+    struct rte_flow_action_mark mark;
+    mark.id = rte_port->special_mark;
+    add_flow_action(&def_actions, RTE_FLOW_ACTION_TYPE_MARK, &mark);
+
+    add_flow_action(&def_actions, RTE_FLOW_ACTION_TYPE_END, NULL);
+
+    def_flow = netdev_dpdk_rte_flow_create(rte_port->netdev, &def_flow_attr,
+        def_patterns.items, def_actions.actions, &error);
+
+    free(rss);
+
+    if (!def_flow) {
+        VLOG_ERR_RL(&error_rl, "%s: rte flow create for default flow error: %u"
+            " : message : %s\n", netdev_get_name(rte_port->netdev), error.type,
+            error.message);
+
+        free(def_patterns.items);
+        free(def_actions.actions);
+
+        result = netdev_dpdk_rte_flow_destroy(rte_port->netdev, def_flow,
+                                              &error);
+        if (result != 0) {
+            VLOG_ERR_RL(&error_rl, "rte flow destroy error: %u : message : "
+                "%s\n", error.type, error.message);
+            def_flow = NULL;
+        }
+    }
+
+    return def_flow;
+}
+
+static struct rte_flow *
 netdev_dpdk_add_rte_flow_offload(struct netdev *netdev,
                                  const struct match *match,
                                  struct nlattr *nl_actions,
@@ -659,6 +720,11 @@ netdev_dpdk_add_rte_flow_offload(struct netdev *netdev,
 
     const struct nlattr *a = NULL;
     unsigned int left = 0;
+
+    /* Actions in nl_actions will be asserted in this bitmap,
+     * according to their values in ovs_action_attr enum */
+    uint64_t is_action_bitmap = 0;
+
     struct rte_flow_action_jump jump = {0};
     struct rte_flow_action_count count = {0};
     struct netdev_rte_port *vport = NULL;
@@ -672,6 +738,7 @@ netdev_dpdk_add_rte_flow_offload(struct netdev *netdev,
                 break;
             }
             netdev_rte_add_count_flow_action(&count, &actions);
+            is_action_bitmap |= 1 << OVS_ACTION_ATTR_TUNNEL_POP;
             result = 0;
         } else {
             /* Unsupported action for offloading */
@@ -688,6 +755,25 @@ netdev_dpdk_add_rte_flow_offload(struct netdev *netdev,
         /* Actions are supported, offload the flow */
         flow = netdev_rte_offload_flow(netdev, info, &patterns, &actions,
                                        &flow_attr);
+        if (flow) {
+           /* odp_port_t port_id = ufid_to_portid_search(ufid);
+            struct netdev_rte_port *rte_port =
+                netdev_rte_port_search_by_port_no(port_id);*/
+
+            odp_port_t port_id = match->flow.in_port.odp_port;
+            struct netdev_rte_port *rte_port =
+                netdev_rte_port_search(port_id, &dpdk_map);
+
+            /* If action is tunnel pop, create another table with a default
+             * flow. Do it only once, if default rte flow doesn't exist */
+            if ((is_action_bitmap & (1 << OVS_ACTION_ATTR_TUNNEL_POP)) &&
+                (!rte_port->default_rte_flow[vport->table_id])) {
+
+                rte_port->default_rte_flow[vport->table_id] =
+                    netdev_rte_offload_add_default_flow(rte_port);
+            }
+        }
+
     }
 
 out:
@@ -793,6 +879,7 @@ err:
 }
 
 //---------------------------------------------------------------0
+
 /**
  * @brief - search for ufid mapping
  *
@@ -820,7 +907,6 @@ static odp_port_t ufid_to_portid_search(const ovs_u128 * ufid)
 
    return (data != NULL)?data->port_no:INVALID_ODP_PORT;
 }
-
 
 /**
  * @brief - save the fuid->port_no mapping.
