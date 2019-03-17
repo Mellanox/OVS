@@ -165,6 +165,7 @@ struct rte_flow_items {
     struct rte_flow_item_eth eth;
     struct rte_flow_item_vlan vlan;
     struct rte_flow_item_ipv4 ipv4;
+    struct rte_flow_item_ipv6 ipv6;
     struct rte_flow_item_tcp tcp;
     struct rte_flow_item_udp udp;
     struct rte_flow_item_sctp sctp;
@@ -1146,11 +1147,8 @@ netdev_dpdk_validate_flow(const struct match *match, bool is_tun) {
     }
 
     /* unsupported L3 */
-    if (match->wc.masks.ipv6_label ||
-        match->wc.masks.ct_nw_src ||
+    if (match->wc.masks.ct_nw_src ||
         match->wc.masks.ct_nw_dst ||
-        !is_all_zero(&match->wc.masks.ipv6_src, sizeof(struct in6_addr)) ||
-        !is_all_zero(&match->wc.masks.ipv6_dst, sizeof(struct in6_addr)) ||
         !is_all_zero(&match->wc.masks.ct_ipv6_src, sizeof(struct in6_addr)) ||
         !is_all_zero(&match->wc.masks.ct_ipv6_dst, sizeof(struct in6_addr)) ||
         !is_all_zero(&match->wc.masks.nd_target, sizeof(struct in6_addr)) ||
@@ -1287,6 +1285,33 @@ add_dpdk_flow_patterns(struct flow_patterns *patterns,
         /* Save proto for L4 protocol setup */
         proto = specs->ipv4.hdr.next_proto_id &
                 masks->ipv4.hdr.next_proto_id;
+    }
+
+    /* IP v6 */
+    if (match->flow.dl_type == htons(ETH_TYPE_IPV6)) {
+        memset(&specs->ipv6, 0, sizeof specs->ipv6);
+        memset(&masks->ipv6, 0, sizeof masks->ipv6);
+
+        specs->ipv6.hdr.proto = match->flow.nw_proto;
+        specs->ipv6.hdr.hop_limits = match->flow.nw_ttl;
+        rte_memcpy(specs->ipv6.hdr.src_addr, match->flow.ipv6_src.s6_addr,
+            sizeof specs->ipv6.hdr.src_addr);
+        rte_memcpy(specs->ipv6.hdr.dst_addr, match->flow.ipv6_dst.s6_addr,
+            sizeof specs->ipv6.hdr.dst_addr);
+
+        masks->ipv6.hdr.proto = match->wc.masks.nw_proto;
+        masks->ipv6.hdr.hop_limits = match->wc.masks.nw_ttl;
+        rte_memcpy(masks->ipv6.hdr.src_addr, match->wc.masks.ipv6_src.s6_addr,
+            sizeof masks->ipv6.hdr.src_addr);
+        rte_memcpy(masks->ipv6.hdr.dst_addr, match->wc.masks.ipv6_dst.s6_addr,
+            sizeof masks->ipv6.hdr.dst_addr);
+
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV6,
+                         &specs->ipv6, &masks->ipv6);
+
+        /* Save proto for L4 protocol setup */
+        proto = specs->ipv6.hdr.proto &
+                masks->ipv6.hdr.proto;
     }
 
     if (proto != IPPROTO_ICMP && proto != IPPROTO_UDP  &&
@@ -1764,7 +1789,39 @@ add_vport_vxlan_flow_patterns(struct flow_patterns *patterns,
         proto = specs->ipv4.hdr.next_proto_id &
                 masks->ipv4.hdr.next_proto_id;
 
+    } else if (!is_all_zero(&match->wc.masks.tunnel.ipv6_src,
+                   sizeof(struct in6_addr)) ||
+               !is_all_zero(&match->wc.masks.tunnel.ipv6_dst,
+                   sizeof(struct in6_addr))) {
+        memset(&specs->ipv6, 0, sizeof specs->ipv6);
+        memset(&masks->ipv6, 0, sizeof masks->ipv6);
+
+        specs->ipv6.hdr.proto = IPPROTO_UDP;
+        specs->ipv6.hdr.hop_limits = match->flow.tunnel.ip_ttl;
+        rte_memcpy(specs->ipv6.hdr.src_addr,
+            match->flow.tunnel.ipv6_src.s6_addr,
+            sizeof specs->ipv6.hdr.src_addr);
+        rte_memcpy(specs->ipv6.hdr.dst_addr,
+            match->flow.tunnel.ipv6_dst.s6_addr,
+            sizeof specs->ipv6.hdr.dst_addr);
+
+        masks->ipv6.hdr.proto = 0xffu;
+        masks->ipv6.hdr.hop_limits = match->wc.masks.tunnel.ip_ttl;
+        rte_memcpy(masks->ipv6.hdr.src_addr,
+            match->wc.masks.tunnel.ipv6_src.s6_addr,
+            sizeof masks->ipv6.hdr.src_addr);
+        rte_memcpy(masks->ipv6.hdr.dst_addr,
+            match->wc.masks.tunnel.ipv6_dst.s6_addr,
+            sizeof masks->ipv6.hdr.dst_addr);
+
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV6,
+                         &specs->ipv6, &masks->ipv6);
+
+        /* Save proto for L4 protocol setup */
+        proto = specs->ipv6.hdr.proto &
+                masks->ipv6.hdr.proto;
     } else {
+        VLOG_ERR_RL(&error_rl, "Tunnel L3 protocol is neither IPv4 nor IPv6");
         return -1;
     }
 
