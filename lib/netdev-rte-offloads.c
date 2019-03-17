@@ -1382,10 +1382,9 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
                                  const struct match *match,
                                  struct nlattr *nl_actions,
                                  size_t actions_len,
-                                 const ovs_u128 *ufid OVS_UNUSED,
+                                 const ovs_u128 *ufid,
                                  struct offload_info *info,
                                  uint64_t * counter_id) {
-
     const struct rte_flow_attr flow_attr = {
         .group = 0,
         .priority = 0,
@@ -1401,8 +1400,13 @@ netdev_dpdk_add_rte_flow_offload(struct netdev_rte_port *rte_port,
     int result = -1;
     struct netdev_rte_port * vport = NULL;
 
+    VLOG_DBG("Adding rte offload for flow ufid "UUID_FMT,
+        UUID_ARGS((struct uuid *) ufid));
+
     result = add_dpdk_flow_patterns(&patterns, &specs, &masks, match);
     if (result) {
+        VLOG_WARN("Adding rte match patterns for flow ufid"UUID_FMT" failed",
+            UUID_ARGS((struct uuid *) ufid));
         flow = NULL;
         goto out;
     }
@@ -1812,6 +1816,9 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port * rte_port,
                                         struct offload_info * info,
                               struct dpif_flow_stats * flow_stats  OVS_UNUSED)
 {
+    VLOG_DBG("Adding rte offload for vport vxlan flow ufid "UUID_FMT,
+        UUID_ARGS((struct uuid *) ufid));
+
     if (!actions_len || !nl_actions) {
         VLOG_DBG("%s: skip flow offload without actions\n",
             netdev_get_name(netdev));
@@ -1937,8 +1944,6 @@ int netdev_vport_flow_put(struct netdev * netdev , struct match * match,
     if (rte_port != NULL) {
          switch (rte_port->rte_port_type) {
              case RTE_PORT_TYPE_VXLAN:
-                   VLOG_DBG("vxlan offload ufid"UUID_FMT" \n",
-                                      UUID_ARGS((struct uuid *)ufid));
                    if (netdev_vport_vxlan_add_rte_flow_offload(rte_port,
                            netdev, match, actions, actions_len, ufid, info,
                            flow_stats)) {
