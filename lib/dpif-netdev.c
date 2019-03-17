@@ -2152,7 +2152,8 @@ megaflow_to_mark_disassociate(const ovs_u128 *mega_ufid)
         }
     }
 
-    VLOG_WARN("Masked ufid "UUID_FMT" is not associated with a mark?\n",
+    VLOG_WARN("Masked megaflow ufid "UUID_FMT
+              " is not associated with a mark?\n",
               UUID_ARGS((struct uuid *)mega_ufid));
 }
 
@@ -2168,7 +2169,7 @@ megaflow_to_mark_find(const ovs_u128 *mega_ufid)
         }
     }
 
-    VLOG_WARN("Mark id for ufid "UUID_FMT" was not found\n",
+    VLOG_WARN("Mark id for megaflow ufid "UUID_FMT" was not found\n",
               UUID_ARGS((struct uuid *)mega_ufid));
     return INVALID_FLOW_MARK;
 }
@@ -2184,7 +2185,8 @@ mark_to_flow_associate(const uint32_t mark, struct dp_netdev_flow *flow)
                 hash_int(mark, 0));
     flow->mark = mark;
 
-    VLOG_DBG("Associated dp_netdev flow %p with mark %u\n", flow, mark);
+    VLOG_DBG("Associated dp_netdev flow ufid "UUID_FMT" with mark %u\n",
+        UUID_ARGS((struct uuid *) &flow->ufid), mark);
 }
 
 static bool
