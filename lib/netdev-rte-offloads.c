@@ -811,7 +811,7 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
                              const struct match *match,
                              struct nlattr *nl_actions,
                              size_t actions_len,
-                             const ovs_u128 *ufid OVS_UNUSED,
+                             const ovs_u128 *ufid,
                              struct offload_info *info,
                              struct rte_flow **rte_flow0)
 {
@@ -828,11 +828,16 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
     int result = 0;
     struct flow_items spec, mask;
 
+    VLOG_DBG("Adding rte offload for flow ufid "UUID_FMT,
+        UUID_ARGS((struct uuid *)ufid));
+
     memset(&spec, 0, sizeof spec);
     memset(&mask, 0, sizeof mask);
 
     result = add_flow_patterns(&patterns, &spec, &mask, match);
     if (result) {
+        VLOG_WARN("Adding rte match patterns for flow ufid"UUID_FMT" failed",
+            UUID_ARGS((struct uuid *)ufid));
         goto out;
     }
 
@@ -1256,6 +1261,9 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
                                         struct offload_info *info,
                                         struct dpif_flow_stats *stats OVS_UNUSED)
 {
+    VLOG_DBG("Adding rte offload for vport vxlan flow ufid "UUID_FMT,
+        UUID_ARGS((struct uuid *)ufid));
+
     if (!actions_len || !nl_actions) {
         VLOG_DBG("skip flow offload without actions\n");
         return 0;
