@@ -445,6 +445,7 @@ struct flow_items {
     struct rte_flow_item_eth  eth;
     struct rte_flow_item_vlan vlan;
     struct rte_flow_item_ipv4 ipv4;
+    struct rte_flow_item_ipv6 ipv6;
     struct rte_flow_item_vxlan vxlan;
     union {
         struct rte_flow_item_tcp  tcp;
@@ -516,6 +517,33 @@ add_flow_patterns(struct flow_patterns *patterns,
         /* Save proto for L4 protocol setup. */
         proto = spec->ipv4.hdr.next_proto_id &
                 mask->ipv4.hdr.next_proto_id;
+    }
+
+    /* IP v6 */
+    if (match->flow.dl_type == htons(ETH_TYPE_IPV6)) {
+        memset(&spec->ipv6, 0, sizeof spec->ipv6);
+        memset(&mask->ipv6, 0, sizeof mask->ipv6);
+
+        spec->ipv6.hdr.proto = match->flow.nw_proto;
+        spec->ipv6.hdr.hop_limits = match->flow.nw_ttl;
+        rte_memcpy(spec->ipv6.hdr.src_addr, match->flow.ipv6_src.s6_addr,
+            sizeof spec->ipv6.hdr.src_addr);
+        rte_memcpy(spec->ipv6.hdr.dst_addr, match->flow.ipv6_dst.s6_addr,
+            sizeof spec->ipv6.hdr.dst_addr);
+
+        mask->ipv6.hdr.proto = match->wc.masks.nw_proto;
+        mask->ipv6.hdr.hop_limits = match->wc.masks.nw_ttl;
+        rte_memcpy(mask->ipv6.hdr.src_addr, match->wc.masks.ipv6_src.s6_addr,
+            sizeof mask->ipv6.hdr.src_addr);
+        rte_memcpy(mask->ipv6.hdr.dst_addr, match->wc.masks.ipv6_dst.s6_addr,
+            sizeof mask->ipv6.hdr.dst_addr);
+
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV6,
+                         &spec->ipv6, &mask->ipv6);
+
+        /* Save proto for L4 protocol setup */
+        proto = spec->ipv6.hdr.proto &
+                mask->ipv6.hdr.proto;
     }
 
     if (proto != IPPROTO_ICMP && proto != IPPROTO_UDP  &&
@@ -1023,9 +1051,7 @@ netdev_rte_offloads_validate_flow(const struct match *match, bool is_tun)
     }
 
     /* Unsupported L3. */
-    if (masks->ipv6_label || masks->ct_nw_src || masks->ct_nw_dst     ||
-        !is_all_zeros(&masks->ipv6_src,    sizeof masks->ipv6_src)    ||
-        !is_all_zeros(&masks->ipv6_dst,    sizeof masks->ipv6_dst)    ||
+    if (masks->ct_nw_src || masks->ct_nw_dst     ||
         !is_all_zeros(&masks->ct_ipv6_src, sizeof masks->ct_ipv6_src) ||
         !is_all_zeros(&masks->ct_ipv6_dst, sizeof masks->ct_ipv6_dst) ||
         !is_all_zeros(&masks->nd_target,   sizeof masks->nd_target)   ||
@@ -1203,8 +1229,39 @@ add_vport_vxlan_flow_patterns(struct flow_patterns *patterns,
         /* Save proto for L4 protocol setup */
         proto = spec->ipv4.hdr.next_proto_id &
                 mask->ipv4.hdr.next_proto_id;
+    } else if (!is_all_zeros(&match->wc.masks.tunnel.ipv6_src,
+                   sizeof(struct in6_addr)) ||
+               !is_all_zeros(&match->wc.masks.tunnel.ipv6_dst,
+                   sizeof(struct in6_addr))) {
+        memset(&spec->ipv6, 0, sizeof spec->ipv6);
+        memset(&mask->ipv6, 0, sizeof mask->ipv6);
 
+        spec->ipv6.hdr.proto = IPPROTO_UDP;
+        spec->ipv6.hdr.hop_limits = match->flow.tunnel.ip_ttl;
+        rte_memcpy(spec->ipv6.hdr.src_addr,
+            match->flow.tunnel.ipv6_src.s6_addr,
+            sizeof spec->ipv6.hdr.src_addr);
+        rte_memcpy(spec->ipv6.hdr.dst_addr,
+            match->flow.tunnel.ipv6_dst.s6_addr,
+            sizeof spec->ipv6.hdr.dst_addr);
+
+        mask->ipv6.hdr.proto = 0xffu;
+        mask->ipv6.hdr.hop_limits = match->wc.masks.tunnel.ip_ttl;
+        rte_memcpy(mask->ipv6.hdr.src_addr,
+            match->wc.masks.tunnel.ipv6_src.s6_addr,
+            sizeof mask->ipv6.hdr.src_addr);
+        rte_memcpy(mask->ipv6.hdr.dst_addr,
+            match->wc.masks.tunnel.ipv6_dst.s6_addr,
+            sizeof mask->ipv6.hdr.dst_addr);
+
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV6,
+                         &spec->ipv6, &mask->ipv6);
+
+        /* Save proto for L4 protocol setup */
+        proto = spec->ipv6.hdr.proto &
+                mask->ipv6.hdr.proto;
     } else {
+        VLOG_ERR_RL(&error_rl, "Tunnel L3 protocol is neither IPv4 nor IPv6");
         return -1;
     }
 
