@@ -1177,7 +1177,7 @@ add_vport_vxlan_flow_patterns(struct flow_patterns *patterns,
 
     /* IP v4 */
     uint8_t proto = 0;
-    if (match->flow.dl_type == htons(ETH_TYPE_IP)) {
+    if (match->wc.masks.tunnel.ip_src || match->wc.masks.tunnel.ip_dst) {
         memset(&spec->ipv4, 0, sizeof spec->ipv4);
         memset(&mask->ipv4, 0, sizeof mask->ipv4);
 
