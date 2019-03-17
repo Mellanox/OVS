@@ -898,7 +898,7 @@ dump_flow_pattern(struct rte_flow_item *item)
 
         VLOG_DBG("rte flow ipv4 pattern:\n");
         if (ipv4_spec) {
-            VLOG_DBG("  Spec: tos=0x%"PRIx8", ttl=%"PRIx8", proto=0x%"PRIx8
+            VLOG_DBG("  Spec: tos=0x%"PRIx8", ttl=%"PRIu8", proto=0x%"PRIx8
                      ", src="IP_FMT", dst="IP_FMT"\n",
                      ipv4_spec->hdr.type_of_service,
                      ipv4_spec->hdr.time_to_live,
@@ -909,7 +909,7 @@ dump_flow_pattern(struct rte_flow_item *item)
             VLOG_DBG("  Spec = null\n");
         }
         if (ipv4_mask) {
-            VLOG_DBG("  Mask: tos=0x%"PRIx8", ttl=%"PRIx8", proto=0x%"PRIx8
+            VLOG_DBG("  Mask: tos=0x%"PRIx8", ttl=%"PRIu8", proto=0x%"PRIx8
                      ", src="IP_FMT", dst="IP_FMT"\n",
                      ipv4_mask->hdr.type_of_service,
                      ipv4_mask->hdr.time_to_live,
