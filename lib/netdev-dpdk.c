@@ -4283,7 +4283,7 @@ dump_flow_pattern(struct rte_flow_item *item, struct ds *s)
         ds_put_cstr(s, "rte flow ipv4 pattern:\n");
         if (ipv4_spec) {
             ds_put_format(s,
-                          "  Spec: tos=0x%"PRIx8", ttl=%"PRIx8
+                          "  Spec: tos=0x%"PRIx8", ttl=%"PRIu8
                           ", proto=0x%"PRIx8
                           ", src="IP_FMT", dst="IP_FMT"\n",
                           ipv4_spec->hdr.type_of_service,
@@ -4296,7 +4296,7 @@ dump_flow_pattern(struct rte_flow_item *item, struct ds *s)
         }
         if (ipv4_mask) {
             ds_put_format(s,
-                          "  Mask: tos=0x%"PRIx8", ttl=%"PRIx8
+                          "  Mask: tos=0x%"PRIx8", ttl=%"PRIu8
                           ", proto=0x%"PRIx8
                           ", src="IP_FMT", dst="IP_FMT"\n",
                           ipv4_mask->hdr.type_of_service,
