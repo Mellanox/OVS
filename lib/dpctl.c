@@ -828,7 +828,7 @@ format_dpif_flow(struct ds *ds, const struct dpif_flow *f, struct hmap *ports,
 
     dpif_flow_stats_format(&f->stats, ds, false);
     if (dpctl_p->verbosity && f->attrs.offloaded) {
-        ds_put_cstr(ds, ", offloaded:yes\n");
+        ds_put_cstr(ds, ", offloaded:yes");
     }
     if (dpctl_p->verbosity && f->attrs.dp_layer) {
         ds_put_format(ds, ", dp:%s", f->attrs.dp_layer);
