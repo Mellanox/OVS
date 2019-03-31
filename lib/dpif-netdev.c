@@ -2367,6 +2367,11 @@ dp_netdev_flow_offload_put(struct dp_flow_offload_item *offload)
     info.flow_mark = mark;
     info.is_hwol = false;
 
+    if (!modification) {
+        megaflow_to_mark_associate(&flow->mega_ufid, mark);
+        mark_to_flow_associate(mark, flow);
+    }
+
     ovs_mutex_lock(&pmd->dp->hw_offload_mutex);
     port = dp_netdev_lookup_port(pmd->dp, in_port);
     if (!port) {
@@ -2382,16 +2387,12 @@ dp_netdev_flow_offload_put(struct dp_flow_offload_item *offload)
 
     if (ret) {
         if (!modification) {
+            megaflow_to_mark_disassociate(&flow->mega_ufid);
             flow_mark_free(mark);
-        } else {
-            mark_to_flow_disassociate(pmd, flow);
         }
-        return -1;
-    }
 
-    if (!modification) {
-        megaflow_to_mark_associate(&flow->mega_ufid, mark);
-        mark_to_flow_associate(mark, flow);
+        mark_to_flow_disassociate(pmd, flow);
+        return -1;
     }
 
     return 0;
