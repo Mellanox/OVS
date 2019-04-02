@@ -138,6 +138,26 @@ struct flow_actions {
 };
 
 static void
+free_flow_patterns(struct flow_patterns *patterns)
+{
+    if (patterns && patterns->items) {
+        free(patterns->items);
+        patterns->items = NULL;
+        patterns->cnt = 0;
+    }
+}
+
+static void
+free_flow_actions(struct flow_actions *actions)
+{
+    if (actions && actions->actions) {
+        free(actions->actions);
+        actions->actions = NULL;
+        actions->cnt = 0;
+    }
+}
+
+static void
 dump_flow_pattern(struct rte_flow_item *item)
 {
     struct ds s;
@@ -680,14 +700,13 @@ netdev_rte_offload_add_default_flow(struct netdev_rte_port *rte_port) {
         def_patterns.items, def_actions.actions, &error);
 
     free(rss);
+    free_flow_patterns(&def_patterns);
+    free_flow_actions(&def_actions);
 
     if (!def_flow) {
         VLOG_ERR_RL(&error_rl, "%s: rte flow create for default flow error: %u"
             " : message : %s\n", netdev_get_name(rte_port->netdev), error.type,
             error.message);
-
-        free(def_patterns.items);
-        free(def_actions.actions);
 
         result = netdev_dpdk_rte_flow_destroy(rte_port->netdev, def_flow,
                                               &error);
@@ -785,8 +804,9 @@ netdev_dpdk_add_rte_flow_offload(struct netdev *netdev,
     }
 
 out:
-    free(patterns.items);
-    free(actions.actions);
+    free_flow_patterns(&patterns);
+    free_flow_actions(&actions);
+
     return flow;
 }
 
@@ -1586,7 +1606,8 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
             /* In case flow cannot be offloaded with decap and output actions,
              * try to offload decap with mark and rss, and output will be done
              * in SW */
-            free(actions.actions);
+            free_flow_actions(&actions);
+
             netdev_rte_add_decap_flow_action(&actions);
             flow_attr.transfer = 0;
             flow = netdev_rte_offload_mark_rss(rte_port_phy_arr[i]->netdev,
@@ -1607,8 +1628,8 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
     }
 
 out:
-    free(patterns.items);
-    free(actions.actions);
+    free_flow_patterns(&patterns);
+    free_flow_actions(&actions);
 
     return ret;
 }
