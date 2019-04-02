@@ -583,11 +583,19 @@ netdev_rte_add_count_flow_action(struct rte_flow_action_count *count,
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_COUNT, count);
 }
 
+static void
+netdev_rte_add_port_id_flow_action(struct rte_flow_action_port_id *port_id,
+                                   struct flow_actions *actions)
+{
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_PORT_ID, port_id);
+}
+
 static struct rte_flow *
 netdev_rte_offload_mark_rss(struct netdev *netdev,
                             struct offload_info *info,
                             struct flow_patterns *patterns,
                             struct flow_actions *actions,
+                            struct rte_flow_action_port_id *port_id,
                             const struct rte_flow_attr *flow_attr) {
     struct rte_flow *flow = NULL;
     struct rte_flow_error error;
@@ -598,6 +606,10 @@ netdev_rte_offload_mark_rss(struct netdev *netdev,
 
     struct action_rss_data *rss = NULL;
     rss = add_flow_rss_action(actions, netdev->n_rxq);
+
+    if (port_id) {
+        netdev_rte_add_port_id_flow_action(port_id, actions);
+    }
 
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_END, NULL);
 
@@ -750,7 +762,7 @@ netdev_dpdk_add_rte_flow_offload(struct netdev *netdev,
     /* If actions are not supported, try offloading Mark and RSS actions */
     if (result) {
         flow = netdev_rte_offload_mark_rss(netdev, info, &patterns, &actions,
-                                           &flow_attr);
+                                           NULL, &flow_attr);
     } else {
         /* Actions are supported, offload the flow */
         flow = netdev_rte_offload_flow(netdev, info, &patterns, &actions,
@@ -1432,6 +1444,28 @@ netdev_rte_add_decap_flow_action(struct flow_actions *actions)
 }
 
 static int
+get_output_port(const struct nlattr *a,
+                struct rte_flow_action_port_id *port_id)
+{
+    odp_port_t odp_port;
+    struct netdev_rte_port *output_rte_port;
+
+    /* Output port should be hardware port number. */
+    odp_port = nl_attr_get_odp_port(a);
+    output_rte_port = netdev_rte_port_search_by_port_no(odp_port);
+    if (!output_rte_port) {
+        VLOG_ERR("No rte port was found for odp_port %u",
+                odp_to_u32(odp_port));
+        return EINVAL;
+    }
+
+    port_id->id = output_rte_port->port_no;
+    port_id->original = 0;
+
+    return 0;
+}
+
+static int
 netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
                                         struct match *match,
                                         struct nlattr *nl_actions,
@@ -1474,11 +1508,12 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
         return -1;
     }
 
-    const struct rte_flow_attr flow_attr = {
+    struct rte_flow_attr flow_attr = {
         .group = rte_port->table_id,
         .priority = 0,
         .ingress = 1,
-        .egress = 0
+        .egress = 0,
+        .transfer = 0
     };
 
     struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
@@ -1507,16 +1542,61 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
     add_flow_pattern(&patterns, RTE_FLOW_ITEM_TYPE_END, NULL, NULL);
 
     struct flow_actions actions = { .actions = NULL, .cnt = 0 };
-    netdev_rte_add_decap_flow_action(&actions);
+    struct rte_flow_action_port_id port_id;
+
+    /* Actions in nl_actions will be asserted in this bitmap,
+     * according to their values in ovs_action_attr enum */
+    uint64_t is_action_bitmap = 0;
+
+    const struct nlattr *a;
+    unsigned int left;
+    NL_ATTR_FOR_EACH_UNSAFE (a, left, nl_actions, actions_len) {
+        int type = nl_attr_type(a);
+        if ((enum ovs_action_attr)type == OVS_ACTION_ATTR_OUTPUT) {
+            ret = get_output_port(a, &port_id);
+            if (ret) {
+                goto out;
+            }
+            is_action_bitmap |= (1 << OVS_ACTION_ATTR_OUTPUT);
+        } else {
+            /* Unsupported action for offloading */
+            ret = EOPNOTSUPP;
+            goto out;
+        }
+    }
 
     struct rte_flow *flow = NULL;
     ret = 0;
     for (int i = 0 ; i < n_phy ; i++) {
+        struct rte_flow_action_port_id *temp_port_id = NULL;
+
         netdev_rte_add_decap_flow_action(&actions);
+        if (is_action_bitmap & (1 << OVS_ACTION_ATTR_OUTPUT)) {
+            temp_port_id = &port_id;
+        }
+
+        flow_attr.transfer = 1;
         flow = netdev_rte_offload_mark_rss(rte_port_phy_arr[i]->netdev,
                                            info, &patterns, &actions,
-                                           &flow_attr);
-        info->is_hwol = false;
+                                           temp_port_id, &flow_attr);
+
+        if (flow) {
+            info->is_hwol = true;
+        } else {
+            /* In case flow cannot be offloaded with decap and output actions,
+             * try to offload decap with mark and rss, and output will be done
+             * in SW */
+            free(actions.actions);
+            netdev_rte_add_decap_flow_action(&actions);
+            flow_attr.transfer = 0;
+            flow = netdev_rte_offload_mark_rss(rte_port_phy_arr[i]->netdev,
+                                               info, &patterns, &actions,
+                                               NULL, &flow_attr);
+            if (flow) {
+                info->is_hwol = false;
+            }
+        }
+
         if (flow) {
             ufid_hw_offload_add_rte_flow(ufid_hw_offload, flow,
                                          rte_port_phy_arr[i]->netdev, 0);
@@ -1524,8 +1604,6 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
             ret = -1;
             goto out;
         }
-
-        free(actions.actions);
     }
 
 out:
