@@ -1485,6 +1485,27 @@ get_output_port(const struct nlattr *a,
     return 0;
 }
 
+static void
+netdev_rte_add_push_vlan_flow_action(
+                              struct flow_actions *actions,
+                              const struct nlattr *nl_action,
+                              struct rte_flow_action_of_push_vlan *push_vlan,
+                              struct rte_flow_action_of_set_vlan_vid *vlan_vid,
+                              struct rte_flow_action_of_set_vlan_pcp *vlan_pcp)
+{
+    const struct ovs_action_push_vlan *vlan = nl_attr_get(nl_action);
+
+    push_vlan->ethertype = vlan->vlan_tpid;
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_OF_PUSH_VLAN, push_vlan);
+
+    vlan_vid->vlan_vid = vlan->vlan_tci & htons(VLAN_VID_MASK);
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_OF_SET_VLAN_VID, vlan_vid);
+
+    vlan_pcp->vlan_pcp =
+            (ntohs(vlan->vlan_tci) & VLAN_PCP_MASK) > VLAN_PCP_SHIFT;
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_OF_SET_VLAN_PCP, &vlan_pcp);
+}
+
 static int
 netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
                                         struct match *match,
@@ -1563,6 +1584,9 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
 
     struct flow_actions actions = { .actions = NULL, .cnt = 0 };
     struct rte_flow_action_port_id port_id;
+    struct rte_flow_action_of_push_vlan push_vlan;
+    struct rte_flow_action_of_set_vlan_vid vlan_vid;
+    struct rte_flow_action_of_set_vlan_pcp vlan_pcp;
 
     /* Actions in nl_actions will be asserted in this bitmap,
      * according to their values in ovs_action_attr enum */
@@ -1578,6 +1602,8 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
                 goto out;
             }
             is_action_bitmap |= (1 << OVS_ACTION_ATTR_OUTPUT);
+        } else if ((enum ovs_action_attr)type == OVS_ACTION_ATTR_PUSH_VLAN) {
+            is_action_bitmap |= (1 << OVS_ACTION_ATTR_PUSH_VLAN);
         } else {
             /* Unsupported action for offloading */
             ret = EOPNOTSUPP;
@@ -1591,6 +1617,12 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
         struct rte_flow_action_port_id *temp_port_id = NULL;
 
         netdev_rte_add_decap_flow_action(&actions);
+
+        if (is_action_bitmap & (1 << OVS_ACTION_ATTR_PUSH_VLAN)) {
+            netdev_rte_add_push_vlan_flow_action(&actions, a, &push_vlan,
+                                                 &vlan_vid, &vlan_pcp);
+        }
+
         if (is_action_bitmap & (1 << OVS_ACTION_ATTR_OUTPUT)) {
             temp_port_id = &port_id;
         }
