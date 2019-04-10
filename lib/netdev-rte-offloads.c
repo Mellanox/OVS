@@ -22,6 +22,7 @@
 #include "cmap.h"
 #include "dpif-netdev.h"
 #include "netdev-provider.h"
+#include "netdev-vport.h"
 #include "openvswitch/match.h"
 #include "openvswitch/vlog.h"
 #include "packets.h"
@@ -730,4 +731,50 @@ netdev_rte_offloads_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
     }
 
     return netdev_rte_offloads_destroy_flow(netdev, ufid, rte_flow);
+}
+
+/*
+ * Vport netdev flow pointers are initialized by default to kernel calls.
+ * They should be nullified or be set to a valid netdev (userspace) calls.
+ */
+#define NULLIFY(f) (ndc->f = NULL)
+static void
+netdev_rte_offloads_vxlan_init(struct netdev *netdev)
+{
+    /*
+     * Clone default function pointers some
+     * of which may be kernel flow pointers.
+     */
+    struct netdev_class *ndc = netdev_vport_dup_class_once(netdev);
+    if (!ndc) {
+        VLOG_DBG("Vport netdev_class offload api cannot be updated.");
+        return;
+    }
+
+    /* Override kernel flow pointers. */
+    NULLIFY(flow_put);
+    NULLIFY(flow_flush);
+    NULLIFY(flow_dump_create);
+    NULLIFY(flow_dump_destroy);
+    NULLIFY(flow_dump_next);
+    NULLIFY(flow_put);
+    NULLIFY(flow_get);
+    NULLIFY(flow_del);
+    NULLIFY(init_flow_api);
+
+    netdev_vport_update_class(netdev, ndc);
+}
+
+/*
+ * This function is called as part of adding a new dpif netdev port.
+ * In case of vport class of "vxlan" type we update it to match netdev
+ * datapath apis.
+ */
+void
+netdev_rte_offloads_port_add(struct netdev *netdev)
+{
+    const char *type = netdev_get_type(netdev);
+    if (!strcmp("vxlan", type)) {
+        netdev_rte_offloads_vxlan_init(netdev);
+    }
 }
