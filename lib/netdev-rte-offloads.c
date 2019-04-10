@@ -22,6 +22,7 @@
 #include "cmap.h"
 #include "dpif-netdev.h"
 #include "netdev-provider.h"
+#include "netdev-vport.h"
 #include "openvswitch/match.h"
 #include "openvswitch/vlog.h"
 #include "packets.h"
