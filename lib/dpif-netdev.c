@@ -51,6 +51,7 @@
 #include "latch.h"
 #include "netdev.h"
 #include "netdev-provider.h"
+#include "netdev-rte-offloads.h"
 #include "netdev-vport.h"
 #include "netlink.h"
 #include "odp-execute.h"
@@ -1865,6 +1866,9 @@ dpif_netdev_port_add(struct dpif *dpif, struct netdev *netdev,
     if (!error) {
         *port_nop = port_no;
         error = do_add_port(dp, dpif_port, netdev_get_type(netdev), port_no);
+#ifdef DPDK_NETDEV
+        netdev_rte_offloads_port_add(netdev);
+#endif
     }
     ovs_mutex_unlock(&dp->port_mutex);
 
