@@ -50,6 +50,11 @@ int netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
 int netdev_rte_offloads_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
                                  struct dpif_flow_stats *stats);
 
+/*
+ * Called by dpif netdev when a port is added
+ */
+void netdev_rte_offloads_port_add(struct netdev *netdev);
+
 #define DPDK_FLOW_OFFLOAD_API                   \
     .flow_put = netdev_rte_offloads_flow_put,   \
     .flow_del = netdev_rte_offloads_flow_del

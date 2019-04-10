@@ -1131,90 +1131,95 @@ netdev_vport_get_ifindex(const struct netdev *netdev_)
     .get_tunnel_config = get_netdev_tunnel_config,  \
     .get_status = tunnel_get_status
 
+/* The name of the dpif_port should be short enough to accomodate adding
+ * a port number to the end if one is necessary. */
+static struct vport_class vport_classes[] = {
+    { "genev_sys",
+      {
+          TUNNEL_FUNCTIONS_COMMON,
+          .type = "geneve",
+          .build_header = netdev_geneve_build_header,
+          .push_header = netdev_tnl_push_udp_header,
+          .pop_header = netdev_geneve_pop_header,
+          .get_ifindex = NETDEV_VPORT_GET_IFINDEX,
+      },
+      {{NULL, NULL, 0, 0}}
+    },
+    { "gre_sys",
+      {
+          TUNNEL_FUNCTIONS_COMMON,
+          .type = "gre",
+          .build_header = netdev_gre_build_header,
+          .push_header = netdev_gre_push_header,
+          .pop_header = netdev_gre_pop_header,
+          .get_ifindex = NETDEV_VPORT_GET_IFINDEX,
+      },
+      {{NULL, NULL, 0, 0}}
+    },
+    { "vxlan_sys",
+      {
+          TUNNEL_FUNCTIONS_COMMON,
+          .type = "vxlan",
+          .build_header = netdev_vxlan_build_header,
+          .push_header = netdev_tnl_push_udp_header,
+          .pop_header = netdev_vxlan_pop_header,
+          .get_ifindex = NETDEV_VPORT_GET_IFINDEX
+      },
+      {{NULL, NULL, 0, 0}}
+    },
+    { "lisp_sys",
+      {
+          TUNNEL_FUNCTIONS_COMMON,
+          .type = "lisp"
+      },
+      {{NULL, NULL, 0, 0}}
+    },
+    { "stt_sys",
+      {
+          TUNNEL_FUNCTIONS_COMMON,
+          .type = "stt"
+      },
+      {{NULL, NULL, 0, 0}}
+    },
+    { "erspan_sys",
+      {
+          TUNNEL_FUNCTIONS_COMMON,
+          .type = "erspan",
+          .build_header = netdev_erspan_build_header,
+          .push_header = netdev_erspan_push_header,
+          .pop_header = netdev_erspan_pop_header
+      },
+      {{NULL, NULL, 0, 0}}
+    },
+    { "ip6erspan_sys",
+      {
+          TUNNEL_FUNCTIONS_COMMON,
+          .type = "ip6erspan",
+          .build_header = netdev_erspan_build_header,
+          .push_header = netdev_erspan_push_header,
+          .pop_header = netdev_erspan_pop_header
+      },
+      {{NULL, NULL, 0, 0}}
+    },
+    { "ip6gre_sys",
+      {
+          TUNNEL_FUNCTIONS_COMMON,
+          .type = "ip6gre",
+          .build_header = netdev_gre_build_header,
+          .push_header = netdev_gre_push_header,
+          .pop_header = netdev_gre_pop_header
+      },
+      {{NULL, NULL, 0, 0}}
+    },
+};
+
+#define NUM_VPORT_CLASSES (sizeof vport_classes / sizeof vport_classes[0])
+
+static struct vport_class dup_vport_classes[NUM_VPORT_CLASSES];
+
 void
 netdev_vport_tunnel_register(void)
 {
-    /* The name of the dpif_port should be short enough to accomodate adding
-     * a port number to the end if one is necessary. */
-    static struct vport_class vport_classes[] = {
-        { "genev_sys",
-          {
-              TUNNEL_FUNCTIONS_COMMON,
-              .type = "geneve",
-              .build_header = netdev_geneve_build_header,
-              .push_header = netdev_tnl_push_udp_header,
-              .pop_header = netdev_geneve_pop_header,
-              .get_ifindex = NETDEV_VPORT_GET_IFINDEX,
-          },
-          {{NULL, NULL, 0, 0}}
-        },
-        { "gre_sys",
-          {
-              TUNNEL_FUNCTIONS_COMMON,
-              .type = "gre",
-              .build_header = netdev_gre_build_header,
-              .push_header = netdev_gre_push_header,
-              .pop_header = netdev_gre_pop_header,
-              .get_ifindex = NETDEV_VPORT_GET_IFINDEX,
-          },
-          {{NULL, NULL, 0, 0}}
-        },
-        { "vxlan_sys",
-          {
-              TUNNEL_FUNCTIONS_COMMON,
-              .type = "vxlan",
-              .build_header = netdev_vxlan_build_header,
-              .push_header = netdev_tnl_push_udp_header,
-              .pop_header = netdev_vxlan_pop_header,
-              .get_ifindex = NETDEV_VPORT_GET_IFINDEX
-          },
-          {{NULL, NULL, 0, 0}}
-        },
-        { "lisp_sys",
-          {
-              TUNNEL_FUNCTIONS_COMMON,
-              .type = "lisp"
-          },
-          {{NULL, NULL, 0, 0}}
-        },
-        { "stt_sys",
-          {
-              TUNNEL_FUNCTIONS_COMMON,
-              .type = "stt"
-          },
-          {{NULL, NULL, 0, 0}}
-        },
-        { "erspan_sys",
-          {
-              TUNNEL_FUNCTIONS_COMMON,
-              .type = "erspan",
-              .build_header = netdev_erspan_build_header,
-              .push_header = netdev_erspan_push_header,
-              .pop_header = netdev_erspan_pop_header
-          },
-          {{NULL, NULL, 0, 0}}
-        },
-        { "ip6erspan_sys",
-          {
-              TUNNEL_FUNCTIONS_COMMON,
-              .type = "ip6erspan",
-              .build_header = netdev_erspan_build_header,
-              .push_header = netdev_erspan_push_header,
-              .pop_header = netdev_erspan_pop_header
-          },
-          {{NULL, NULL, 0, 0}}
-        },
-        { "ip6gre_sys",
-          {
-              TUNNEL_FUNCTIONS_COMMON,
-              .type = "ip6gre",
-              .build_header = netdev_gre_build_header,
-              .push_header = netdev_gre_push_header,
-              .pop_header = netdev_gre_pop_header
-          },
-          {{NULL, NULL, 0, 0}}
-        },
-    };
     static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
 
     if (ovsthread_once_start(&once)) {
@@ -1224,6 +1229,8 @@ netdev_vport_tunnel_register(void)
             simap_init(&vport_classes[i].global_cfg_tracker);
             netdev_register_provider(&vport_classes[i].netdev_class);
         }
+
+        memset(dup_vport_classes, 0, sizeof dup_vport_classes);
 
         unixctl_command_register("tnl/egress_port_range", "min max", 0, 2,
                                  netdev_tnl_egress_port_range, NULL);
@@ -1247,3 +1254,45 @@ netdev_vport_patch_register(void)
     simap_init(&patch_class.global_cfg_tracker);
     netdev_register_provider(&patch_class.netdev_class);
 }
+
+/*
+ * This functions receives a netdev pointer which contains default
+ * netdev_class fields (such as kernel flow functions pointers).
+ * It returns a duplicated netdev_class that can be overriden by the caller
+ */
+struct netdev_class *
+netdev_vport_dup_class_once(struct netdev *netdev)
+{
+    unsigned int i;
+    struct vport_class *vpclass;
+    struct netdev_class *ndclass = NULL;
+
+    if (!is_vport_class(netdev->netdev_class)) {
+        goto out;
+    }
+
+    /* Get the vport_class which contains the netdev_class. */
+    vpclass = vport_class_cast(netdev_get_class(netdev));
+    /* Calculate vpclass entry index in the array 'vport_classes' */
+    i = vpclass - &vport_classes[0];
+    if (i >= NUM_VPORT_CLASSES) {
+        goto out;
+    }
+    /* Entry duplication should be done only once */
+    if (!dup_vport_classes[i].dpif_port) {
+        memcpy(&dup_vport_classes[i], vpclass, sizeof *vpclass);
+    }
+    /* Get the duplicated netdev_class pointer */
+    ndclass = &dup_vport_classes[i].netdev_class;
+out:
+    return ndclass;
+}
+
+void
+netdev_vport_update_class(struct netdev *netdev, struct netdev_class *ndclass)
+{
+    if (is_vport_class(netdev->netdev_class)) {
+        netdev->netdev_class = ndclass;
+    }
+}
+
