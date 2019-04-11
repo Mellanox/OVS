@@ -906,6 +906,7 @@ netdev_rte_offload_add_default_flow(struct netdev_rte_port *rte_port,
         .priority = 1,
         .ingress = 1,
         .egress = 0,
+        .transfer = 0,
     };
     struct flow_patterns def_patterns = { .items = NULL, .cnt = 0 };
     struct flow_actions def_actions = { .actions = NULL, .cnt = 0 };
@@ -970,7 +971,7 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
                              const ovs_u128 *ufid OVS_UNUSED,
                              struct offload_info *info)
 {
-    const struct rte_flow_attr flow_attr = {
+    struct rte_flow_attr flow_attr = {
         .group = 0,
         .priority = 0,
         .ingress = 1,
@@ -1002,6 +1003,7 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
 
     struct rte_flow_action_jump jump = {0};
     struct rte_flow_action_count count = {0};
+    struct rte_flow_action_port_id output = {0};
     struct netdev_rte_port *vport = NULL;
 
     NL_ATTR_FOR_EACH_UNSAFE (a, left, nl_actions, actions_len) {
@@ -1015,6 +1017,14 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
             netdev_rte_add_count_flow_action(&count, &actions);
             action_bitmap |= 1 << OVS_ACTION_ATTR_TUNNEL_POP;
             result = 0;
+        } else if ((enum ovs_action_attr) type == OVS_ACTION_ATTR_OUTPUT) {
+            result = get_output_port(a, &output);
+            if (result) {
+                break;
+            }
+            netdev_rte_add_count_flow_action(&count, &actions);
+            netdev_rte_add_port_id_flow_action(&output, &actions);
+            action_bitmap |= 1 << OVS_ACTION_ATTR_OUTPUT;
         } else {
             /* Unsupported action for offloading */
             result = -1;
@@ -1024,12 +1034,17 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
 
     /* If actions are not supported, try offloading Mark and RSS actions */
     if (result) {
+        flow_attr.transfer = 0;
         flow = netdev_rte_offload_mark_rss(netdev, info, &patterns, &actions,
                                            NULL, &flow_attr);
+        VLOG_DBG("Flow with Mark and RSS actions: NIC offload was %s",
+                flow ? "succeeded" : "failed");
     } else {
         /* Actions are supported, offload the flow */
+        flow_attr.transfer = 1;
         flow = netdev_rte_offload_flow(netdev, info, &patterns, &actions,
                                        &flow_attr);
+        VLOG_DBG("eSwitch offload was %s", flow ? "succeeded" : "failed");
         if (!flow) {
             goto out;
         }
