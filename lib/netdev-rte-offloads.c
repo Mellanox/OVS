@@ -1017,6 +1017,7 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
 
     struct rte_flow_action_jump jump = {0};
     struct rte_flow_action_count count = {0};
+    struct rte_flow_action_port_id output = {0};
     struct netdev_rte_port *vport = NULL;
 
     NL_ATTR_FOR_EACH_UNSAFE (a, left, nl_actions, actions_len) {
@@ -1030,6 +1031,14 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
             netdev_rte_add_count_flow_action(&count, &actions);
             action_bitmap |= 1 << OVS_ACTION_ATTR_TUNNEL_POP;
             result = 0;
+        } else if ((enum ovs_action_attr) type == OVS_ACTION_ATTR_OUTPUT) {
+            result = get_output_port(a, &output);
+            if (result) {
+                break;
+            }
+            netdev_rte_add_count_flow_action(&count, &actions);
+            netdev_rte_add_port_id_flow_action(&output, &actions);
+            action_bitmap |= 1 << OVS_ACTION_ATTR_OUTPUT;
         } else {
             /* Unsupported action for offloading */
             result = -1;
