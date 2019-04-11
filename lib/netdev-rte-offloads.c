@@ -41,6 +41,10 @@ ufid_to_portid_get(const ovs_u128 *ufid);
 static odp_port_t
 ufid_to_portid_search(const ovs_u128 *ufid);
 
+static int
+get_output_port(const struct nlattr *a,
+                struct rte_flow_action_port_id *port_id);
+
 #define RTE_FLOW_MAX_TABLES (31)
 #define HW_OFFLOAD_MAX_PHY (128)
 #define MAX_PHY_RTE_PORTS (128)
@@ -758,6 +762,7 @@ netdev_dpdk_add_rte_flow_offload(struct netdev *netdev,
 
     struct rte_flow_action_jump jump = {0};
     struct rte_flow_action_count count = {0};
+    struct rte_flow_action_port_id output = {0};
     struct netdev_rte_port *vport = NULL;
 
     NL_ATTR_FOR_EACH_UNSAFE (a, left, nl_actions, actions_len) {
@@ -771,6 +776,14 @@ netdev_dpdk_add_rte_flow_offload(struct netdev *netdev,
             netdev_rte_add_count_flow_action(&count, &actions);
             is_action_bitmap |= 1 << OVS_ACTION_ATTR_TUNNEL_POP;
             result = 0;
+        } else if ((enum ovs_action_attr) type == OVS_ACTION_ATTR_OUTPUT) {
+            result = get_output_port(a, &output);
+            if (result) {
+                break;
+            }
+            netdev_rte_add_count_flow_action(&count, &actions);
+            netdev_rte_add_port_id_flow_action(&output, &actions);
+            is_action_bitmap |= 1 << OVS_ACTION_ATTR_OUTPUT;
         } else {
             /* Unsupported action for offloading */
             result = -1;
