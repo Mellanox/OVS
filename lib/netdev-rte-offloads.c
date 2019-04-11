@@ -724,6 +724,50 @@ netdev_rte_offload_add_default_flow(struct netdev_rte_port *rte_port) {
     return def_flow;
 }
 
+static void
+netdev_rte_add_raw_encap_flow_action(const struct nlattr *a,
+                                     struct rte_flow_action_raw_encap *encap,
+                                     struct flow_actions *actions)
+{
+    const struct ovs_action_push_tnl *tunnel = nl_attr_get(a);
+    encap->data = (uint8_t *)tunnel->header;
+    encap->preserve = NULL;
+    encap->size = tunnel->header_len;
+
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_RAW_ENCAP, encap);
+}
+
+static int
+netdev_rte_add_clone_flow_action(const struct nlattr *nlattr,
+                                 struct rte_flow_action_raw_encap *raw_encap,
+                                 struct rte_flow_action_count *count,
+                                 struct rte_flow_action_port_id *output,
+                                 struct flow_actions *actions)
+{
+    const struct nlattr *clone_actions = nl_attr_get(nlattr);
+    size_t clone_actions_len = nl_attr_get_size(nlattr);
+    const struct nlattr *ca;
+    unsigned int cleft;
+    int result = 0;
+
+    NL_ATTR_FOR_EACH_UNSAFE (ca, cleft, clone_actions, clone_actions_len) {
+        int clone_type = nl_attr_type(ca);
+        if (clone_type == OVS_ACTION_ATTR_TUNNEL_PUSH) {
+            netdev_rte_add_raw_encap_flow_action(ca, raw_encap, actions);
+
+        } else if (clone_type == OVS_ACTION_ATTR_OUTPUT) {
+            result = get_output_port(ca, output);
+            if (result) {
+                break;
+            }
+            netdev_rte_add_count_flow_action(count, actions);
+            netdev_rte_add_port_id_flow_action(output, actions);
+        }
+    }
+
+    return result;
+}
+
 static struct rte_flow *
 netdev_dpdk_add_rte_flow_offload(struct netdev *netdev,
                                  const struct match *match,
@@ -763,6 +807,9 @@ netdev_dpdk_add_rte_flow_offload(struct netdev *netdev,
     struct rte_flow_action_jump jump = {0};
     struct rte_flow_action_count count = {0};
     struct rte_flow_action_port_id output = {0};
+    struct rte_flow_action_port_id clone_output = {0};
+    struct rte_flow_action_count clone_count = {0};
+    struct rte_flow_action_raw_encap clone_raw_encap = {0};
     struct netdev_rte_port *vport = NULL;
 
     NL_ATTR_FOR_EACH_UNSAFE (a, left, nl_actions, actions_len) {
@@ -776,6 +823,7 @@ netdev_dpdk_add_rte_flow_offload(struct netdev *netdev,
             netdev_rte_add_count_flow_action(&count, &actions);
             is_action_bitmap |= 1 << OVS_ACTION_ATTR_TUNNEL_POP;
             result = 0;
+
         } else if ((enum ovs_action_attr) type == OVS_ACTION_ATTR_OUTPUT) {
             result = get_output_port(a, &output);
             if (result) {
@@ -784,6 +832,16 @@ netdev_dpdk_add_rte_flow_offload(struct netdev *netdev,
             netdev_rte_add_count_flow_action(&count, &actions);
             netdev_rte_add_port_id_flow_action(&output, &actions);
             is_action_bitmap |= 1 << OVS_ACTION_ATTR_OUTPUT;
+
+        } else if ((enum ovs_action_attr) type == OVS_ACTION_ATTR_CLONE) {
+            result = netdev_rte_add_clone_flow_action(a, &clone_raw_encap,
+                                                      &clone_count,
+                                                      &clone_output, &actions);
+            if (result) {
+                break;
+            }
+            is_action_bitmap |= 1 << OVS_ACTION_ATTR_CLONE;
+
         } else {
             /* Unsupported action for offloading */
             result = -1;
