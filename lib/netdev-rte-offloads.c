@@ -768,6 +768,12 @@ netdev_rte_add_clone_flow_action(const struct nlattr *nlattr,
     return result;
 }
 
+static void
+netdev_rte_add_pop_valn_flow_action(struct flow_actions *actions)
+{
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_OF_POP_VLAN, NULL);
+}
+
 static struct rte_flow *
 netdev_dpdk_add_rte_flow_offload(struct netdev *netdev,
                                  const struct match *match,
@@ -841,6 +847,11 @@ netdev_dpdk_add_rte_flow_offload(struct netdev *netdev,
                 break;
             }
             is_action_bitmap |= 1 << OVS_ACTION_ATTR_CLONE;
+
+
+        } else if ((enum ovs_action_attr) type == OVS_ACTION_ATTR_POP_VLAN) {
+            netdev_rte_add_pop_valn_flow_action(&actions);
+            is_action_bitmap |= 1 << RTE_FLOW_ACTION_TYPE_OF_POP_VLAN;
 
         } else {
             /* Unsupported action for offloading */
