@@ -471,6 +471,10 @@ struct netdev_dpdk {
         int rte_xstats_ids_size;
         uint64_t *rte_xstats_ids;
     );
+    /* Start and set forwarder application for the given device. */
+    void (*fwd_operate)(int queue_id, int relay_id);
+    void (*del_relay)(int relay_id);
+    uint16_t relay_id;
 };
 
 struct netdev_rxq_dpdk {
@@ -1392,6 +1396,13 @@ netdev_dpdk_destruct(struct netdev *netdev)
 
     ovs_mutex_lock(&dpdk_mutex);
 
+    if (unlikely(dev->fwd_operate != NULL)) {
+        dev->fwd_operate = NULL;
+        dev->del_relay(dev->relay_id);
+        dev->del_relay = NULL;
+        dev->relay_id = DPDK_ETH_PORT_ID_INVALID;
+    }
+
     rte_eth_dev_stop(dev->port_id);
     dev->started = false;
 
@@ -2231,6 +2242,10 @@ netdev_dpdk_rxq_recv(struct netdev_rxq *rxq, struct dp_packet_batch *batch,
 
     if (OVS_UNLIKELY(!(dev->flags & NETDEV_UP))) {
         return EAGAIN;
+    }
+
+    if (dev->fwd_operate) {
+        dev->fwd_operate(rxq->queue_id, dev->relay_id);
     }
 
     nb_rx = rte_eth_rx_burst(rx->port_id, rxq->queue_id,
@@ -4650,6 +4665,51 @@ netdev_dpdk_rte_flow_create(struct netdev *netdev,
     dump_flow_info("Create", netdev, attr, items, actions, flow, NULL);
     ovs_mutex_unlock(&dev->mutex);
     return flow;
+}
+
+struct rte_mempool *
+netdev_dpdk_hw_forwarder_get_mempool(const char *name)
+{
+    struct netdev *netdev = NULL;
+    struct netdev_dpdk *dev = NULL;
+
+    netdev = netdev_from_name(name);
+    dev = netdev_dpdk_cast(netdev);
+    return dev->dpdk_mp->mp;
+}
+
+void
+netdev_dpdk_hw_forwarder_update(const char *name,
+                                int id,
+                                void (*fwd_fp)(int queue_id, int relay_id),
+                                void (*del_fp)(int relay_id))
+{
+    struct netdev *netdev = NULL;
+    struct netdev_dpdk *dev = NULL;
+
+    netdev = netdev_from_name(name);
+    if (!netdev) {
+        VLOG_ERR("netdev was not found for %s\n", name);
+        return;
+    }
+    if (!is_dpdk_class(netdev->netdev_class)) {
+        VLOG_ERR("netdev is not dpdk class\n");
+        goto out;
+    }
+    dev = netdev_dpdk_cast(netdev);
+
+    if (fwd_fp != NULL) {
+        dev->fwd_operate = fwd_fp;
+        dev->del_relay = del_fp;
+        dev->relay_id = id;
+        goto out;
+    }
+    dev->fwd_operate = NULL;
+    dev->del_relay = NULL;
+    dev->relay_id = DPDK_ETH_PORT_ID_INVALID;
+
+out:
+    netdev_close(netdev);
 }
 
 #define NETDEV_DPDK_CLASS_COMMON                            \

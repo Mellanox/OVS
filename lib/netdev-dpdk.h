@@ -35,8 +35,14 @@ struct rte_flow_error;
 struct rte_flow_attr;
 struct rte_flow_item;
 struct rte_flow_action;
+struct rte_mempool;
 
 void netdev_dpdk_register(void);
+struct rte_mempool *netdev_dpdk_hw_forwarder_get_mempool(const char *name);
+void netdev_dpdk_hw_forwarder_update(const char *name,
+                                     int id,
+                                     void (*fwd_fp)(int queue_id, int relay_id),
+                                     void (*del_fp)(int relay_id));
 void free_dpdk_buf(struct dp_packet *);
 int
 netdev_dpdk_rte_flow_destroy(struct netdev *netdev,
