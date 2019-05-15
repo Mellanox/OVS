@@ -963,6 +963,78 @@ get_output_port(const struct nlattr *a,
     return 0;
 }
 
+static void
+netdev_rte_add_raw_encap_flow_action(const struct nlattr *a,
+                                     struct rte_flow_action_raw_encap *encap,
+                                     struct flow_actions *actions)
+{
+    const struct ovs_action_push_tnl *tunnel = nl_attr_get(a);
+    encap->data = (uint8_t *)tunnel->header;
+    encap->preserve = NULL;
+    encap->size = tunnel->header_len;
+
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_RAW_ENCAP, encap);
+}
+
+static int
+netdev_rte_add_clone_flow_action(const struct nlattr *nlattr,
+                                 struct rte_flow_action_raw_encap *raw_encap,
+                                 struct rte_flow_action_count *count,
+                                 struct rte_flow_action_port_id *output,
+                                 struct flow_actions *actions)
+{
+    const struct nlattr *clone_actions = nl_attr_get(nlattr);
+    size_t clone_actions_len = nl_attr_get_size(nlattr);
+    const struct nlattr *ca;
+    unsigned int cleft;
+    int result = 0;
+
+    NL_ATTR_FOR_EACH_UNSAFE (ca, cleft, clone_actions, clone_actions_len) {
+        int clone_type = nl_attr_type(ca);
+        if (clone_type == OVS_ACTION_ATTR_TUNNEL_PUSH) {
+            netdev_rte_add_raw_encap_flow_action(ca, raw_encap, actions);
+
+        } else if (clone_type == OVS_ACTION_ATTR_OUTPUT) {
+            result = get_output_port(ca, output);
+            if (result) {
+                break;
+            }
+            netdev_rte_add_count_flow_action(count, actions);
+            netdev_rte_add_port_id_flow_action(output, actions);
+        }
+    }
+
+    return result;
+}
+
+static struct rte_flow *
+netdev_dpdk_add_jump_to_non_root_table(struct netdev *netdev,
+                                       struct offload_info *info)
+{
+    struct rte_flow_attr flow_attr = {
+        .group = 0,
+        .priority = 1,
+        .ingress = 1,
+        .egress = 0,
+        .transfer = 1
+    };
+
+    struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
+    struct flow_actions actions = { .actions = NULL, .cnt = 0 };
+    struct rte_flow_action_jump jump = {0};
+    struct rte_flow *flow = NULL;
+
+    add_flow_pattern(&patterns, RTE_FLOW_ITEM_TYPE_END, NULL, NULL);
+
+    jump.group = 1; // TODO: need to find the table id
+    add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_JUMP, &jump);
+
+    flow = netdev_rte_offload_flow(netdev, info, &patterns, &actions,
+                                   &flow_attr);
+
+    return flow;
+}
+
 static struct rte_flow *
 netdev_rte_offloads_add_flow(struct netdev *netdev,
                              const struct match *match,
@@ -1004,6 +1076,9 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
     struct rte_flow_action_jump jump = {0};
     struct rte_flow_action_count count = {0};
     struct rte_flow_action_port_id output = {0};
+    struct rte_flow_action_port_id clone_output = {0};
+    struct rte_flow_action_count clone_count = {0};
+    struct rte_flow_action_raw_encap clone_raw_encap = {0};
     struct netdev_rte_port *vport = NULL;
 
     NL_ATTR_FOR_EACH_UNSAFE (a, left, nl_actions, actions_len) {
@@ -1017,6 +1092,7 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
             netdev_rte_add_count_flow_action(&count, &actions);
             action_bitmap |= 1 << OVS_ACTION_ATTR_TUNNEL_POP;
             result = 0;
+
         } else if ((enum ovs_action_attr) type == OVS_ACTION_ATTR_OUTPUT) {
             result = get_output_port(a, &output);
             if (result) {
@@ -1025,6 +1101,16 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
             netdev_rte_add_count_flow_action(&count, &actions);
             netdev_rte_add_port_id_flow_action(&output, &actions);
             action_bitmap |= 1 << OVS_ACTION_ATTR_OUTPUT;
+
+        } else if ((enum ovs_action_attr) type == OVS_ACTION_ATTR_CLONE) {
+            result = netdev_rte_add_clone_flow_action(a, &clone_raw_encap,
+                                                      &clone_count,
+                                                      &clone_output, &actions);
+            if (result) {
+                break;
+            }
+            action_bitmap |= 1 << OVS_ACTION_ATTR_CLONE;
+
         } else {
             /* Unsupported action for offloading */
             result = -1;
@@ -1040,6 +1126,19 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
         VLOG_DBG("Flow with Mark and RSS actions: NIC offload was %s",
                 flow ? "succeeded" : "failed");
     } else {
+        /* For better performance the clone action is offloaded to the
+         * vport table, and a jump rule is added to table 0 */
+        if (action_bitmap & (1 << OVS_ACTION_ATTR_CLONE)) {
+            flow = netdev_dpdk_add_jump_to_non_root_table(netdev, info);
+            VLOG_DBG("Flow with catch-all and jump actions: "
+                    "eSwitch offload was %s", flow ? "succeeded" : "failed");
+            if (!flow) {
+                goto out;
+            }
+            /* The flows for encap should be added to group 1 */
+            flow_attr.group = 1;
+        }
+
         /* Actions are supported, offload the flow */
         flow_attr.transfer = 1;
         flow = netdev_rte_offload_flow(netdev, info, &patterns, &actions,
