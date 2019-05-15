@@ -53,6 +53,9 @@ int netdev_rte_offloads_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
 int netdev_rte_offloads_flow_stats_get(struct netdev *netdev,
                                        const ovs_u128 *ufid,
                                        struct dpif_flow_stats *stats);
+void netdev_rte_offloads_init(void);
+void netdev_rte_offloads_hw_pr_fwd(int queue_id, int relay_id);
+void netdev_rte_offloads_hw_pr_remove(int relay_id);
 
 /*
  * Called by dpif netdev when a port is added/deleted
