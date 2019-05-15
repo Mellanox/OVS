@@ -56,9 +56,11 @@ struct netdev_rte_port {
     uint32_t exception_mark; /* Exception SW handling for this port type. */
     struct cmap ufid_to_rte;
     struct rte_flow *default_rte_flow[RTE_FLOW_MAX_TABLES];
+    struct cmap_node mark_node;
 };
 
 static struct cmap port_map = CMAP_INITIALIZER;
+static struct cmap mark_to_rte_port = CMAP_INITIALIZER;
 
 static uint32_t dpdk_phy_ports_amount = 0;
 /*
@@ -1686,6 +1688,12 @@ netdev_rte_offloads_port_add(struct netdev *netdev, odp_port_t dp_port)
         }
         rte_port->table_id = VXLAN_TABLE_ID;
         rte_port->exception_mark = VXLAN_EXCEPTION_MARK;
+
+        cmap_insert(&mark_to_rte_port,
+            CONST_CAST(struct cmap_node *, &rte_port->mark_node),
+            hash_bytes(&rte_port->exception_mark,
+                       sizeof rte_port->exception_mark,0));
+
         VLOG_INFO("Rte vxlan port %d allocated, table id %d",
                   dp_port, rte_port->table_id);
         netdev_rte_offloads_vxlan_init(netdev);
@@ -1756,9 +1764,64 @@ netdev_rte_offloads_port_del(odp_port_t dp_port)
     if (rte_port->rte_port_type == RTE_PORT_TYPE_DPDK) {
         netdev_rte_port_del_default_rules(rte_port);
         dpdk_phy_ports_amount--;
+    } else if (rte_port->rte_port_type == RTE_PORT_TYPE_VXLAN) {
+        cmap_remove(&mark_to_rte_port,
+                    CONST_CAST(struct cmap_node *,
+                    &rte_port->mark_node),
+                    hash_bytes(&rte_port->exception_mark,
+                    sizeof rte_port->exception_mark,0));
     }
 
     free(rte_port);
 
     return 0;
+}
+
+static void
+netdev_rte_port_preprocess(struct netdev_rte_port *rte_port,
+                           struct dp_packet *packet)
+{
+    switch (rte_port->rte_port_type) {
+        case RTE_PORT_TYPE_VXLAN:
+            /* VXLAN table failed to match on HW, but according to port
+             * id it can be popped here */
+            if (rte_port->netdev->netdev_class->pop_header) {
+                rte_port->netdev->netdev_class->pop_header(packet);
+                packet->md.in_port.odp_port = rte_port->dp_port;
+                dp_packet_reset_checksum_ol_flags(packet);
+            }
+            break;
+        case RTE_PORT_TYPE_UNINIT:
+        case RTE_PORT_TYPE_DPDK:
+        default:
+            VLOG_WARN("port type %d has no pre-process",
+                    rte_port->rte_port_type);
+            break;
+    }
+}
+
+/**
+ * @brief - Once received a packet with special mark, need to run
+ *  pre-processing on the it so it could be processed by the OVS SW.
+
+ *  Example for such case in vxlan is where we get match on outer
+ *  vxlan so we jump to vxlan table, but then we fail on inner match.
+ *  In this case we need to make sure SW processing continues from second flow.
+ *
+ * @param packet
+ * @param mark
+ */
+void
+netdev_rte_offload_preprocess(struct dp_packet *packet, uint32_t mark)
+{
+    struct netdev_rte_port *rte_port;
+    size_t hash = hash_bytes(&mark, sizeof mark,0);
+
+    CMAP_FOR_EACH_WITH_HASH (rte_port, mark_node, hash, &mark_to_rte_port) {
+        if (rte_port->exception_mark == mark) {
+            netdev_rte_port_preprocess(rte_port, packet);
+            return;
+        }
+    }
+    VLOG_WARN("Exception mark %u with no port", mark);
 }
