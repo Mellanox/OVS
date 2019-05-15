@@ -6444,6 +6444,9 @@ dfc_processing(struct dp_netdev_pmd_thread *pmd,
                                                flow_map, map_cnt++);
                 }
                 continue;
+            } else if (mark <= MAX_RESERVED_MARK) {
+                miniflow_extract(packet, &key->mf);
+                netdev_rte_offload_preprocess(packet, mark);
             }
         }
 

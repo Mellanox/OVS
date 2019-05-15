@@ -525,6 +525,13 @@ dp_packet_reset_offload(struct dp_packet *p)
     p->mbuf.ol_flags = 0;
 }
 
+static inline void
+dp_packet_reset_checksum_ol_flags(struct dp_packet *p)
+{
+    p->mbuf.ol_flags &= ~(PKT_RX_L4_CKSUM_GOOD | PKT_RX_L4_CKSUM_BAD |
+                          PKT_RX_IP_CKSUM_GOOD | PKT_RX_IP_CKSUM_BAD);
+}
+
 static inline bool
 dp_packet_ip_checksum_valid(const struct dp_packet *p)
 {
