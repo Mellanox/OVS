@@ -399,6 +399,7 @@ struct netdev_dpdk {
         struct dpdk_tx_queue *tx_q;
         struct rte_eth_link link;
         bool is_uplink_port; /* True=uplink port, false=representor port. */
+        /* Start and set forwarder application for the given device. */
     );
 
     PADDED_MEMBERS_CACHELINE_MARKER(CACHE_LINE_SIZE, cacheline1,
@@ -475,6 +476,9 @@ struct netdev_dpdk {
         int rte_xstats_ids_size;
         uint64_t *rte_xstats_ids;
     );
+    void (*set_fwd)(int queue_id, int relay_id);
+    void (*del_relay)(int relay_id);
+    uint16_t relay_id;
 };
 
 struct netdev_rxq_dpdk {
@@ -1388,6 +1392,13 @@ netdev_dpdk_destruct(struct netdev *netdev)
 
     ovs_mutex_lock(&dpdk_mutex);
 
+    if (unlikely(dev->set_fwd != NULL)) {
+        dev->set_fwd = NULL;
+        dev->del_relay(dev->relay_id);
+        dev->del_relay = NULL;
+        dev->relay_id = 0xFFFF; //NOA: change to define
+    }
+
     rte_eth_dev_stop(dev->port_id);
     dev->started = false;
 
@@ -2227,6 +2238,10 @@ netdev_dpdk_rxq_recv(struct netdev_rxq *rxq, struct dp_packet_batch *batch,
 
     if (OVS_UNLIKELY(!(dev->flags & NETDEV_UP))) {
         return EAGAIN;
+    }
+
+    if (dev->set_fwd) {
+        dev->set_fwd(rxq->queue_id, dev->relay_id);
     }
 
     nb_rx = rte_eth_rx_burst(rx->port_id, rxq->queue_id,
@@ -4247,6 +4262,50 @@ netdev_dpdk_rte_flow_create(struct netdev *netdev,
     flow = rte_flow_create(dev->port_id, attr, items, actions, error);
     ovs_mutex_unlock(&dev->mutex);
     return flow;
+}
+
+struct rte_mempool *netdev_dpdk_hw_forwarder_get_mempool(const char *name)
+{
+    struct netdev *netdev = NULL;
+    struct netdev_dpdk *dev = NULL;
+
+    netdev = netdev_from_name(name);
+    dev = netdev_dpdk_cast(netdev);
+    return dev->dpdk_mp->mp;
+}
+
+void netdev_dpdk_hw_forwarder_register(const char *name, int id,
+        void (*fwd_fp)(int queue_id, int relay_id),
+        void (*del_fp)(int relay_id))
+{
+    struct netdev *netdev = NULL;
+    struct netdev_dpdk *dev = NULL;
+
+    netdev = netdev_from_name(name);
+    if (!is_dpdk_class(netdev->netdev_class)) {
+        VLOG_ERR("netdev is not dpdk class\n");
+        return;
+    }
+    dev = netdev_dpdk_cast(netdev);
+    if (dev == NULL) {
+        VLOG_ERR("netdev_dpdk_hw_forwarder_register failed\n");
+        //unlock
+        return;
+    }
+
+    if (fwd_fp != NULL) {
+        dev->set_fwd = fwd_fp;
+        dev->del_relay = del_fp;
+        dev->relay_id = id;
+        //unlock
+        netdev_close(netdev);
+        return;
+    }
+    dev->set_fwd = NULL;
+    dev->del_relay = NULL;
+    dev->relay_id = 0xFFFF; //NOA: change to define
+    netdev_close(netdev);
+    //unlock
 }
 
 #define NETDEV_DPDK_CLASS_COMMON                            \

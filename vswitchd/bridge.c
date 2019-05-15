@@ -69,6 +69,7 @@
 #include "lib/vswitch-idl.h"
 #include "xenserver.h"
 #include "vlan-bitmap.h"
+#include "lib/netdev-rte-offloads.h"
 
 VLOG_DEFINE_THIS_MODULE(bridge);
 
@@ -2998,6 +2999,7 @@ bridge_run(void)
     if (cfg) {
         netdev_set_flow_api_enabled(&cfg->other_config);
         dpdk_init(&cfg->other_config);
+        netdev_rte_offloads_init();
     }
 
     /* Initialize the ofproto library.  This only needs to run once, but

@@ -18,6 +18,13 @@
 #include "netdev-rte-offloads.h"
 
 #include <rte_flow.h>
+#include <rte_eth_vhost.h>
+#include <rte_ethdev.h>
+#include <rte_errno.h>
+#include <rte_mbuf.h>
+#include <rte_malloc.h>
+#include <rte_atomic.h>
+#include <rte_common.h>
 
 #include "cmap.h"
 #include "dpif-netdev.h"
@@ -26,6 +33,7 @@
 #include "openvswitch/vlog.h"
 #include "packets.h"
 #include "uuid.h"
+#include "unixctl.h"
 
 #define VXLAN_EXCEPTION_MARK (MIN_RESERVED_MARK + 0)
 #define VXLAN_TABLE_ID       1
@@ -1045,6 +1053,19 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
                              const ovs_u128 *ufid OVS_UNUSED,
                              struct offload_info *info)
 {
+    static bool is_non_root_flow_created = false;
+    struct rte_flow *flow = NULL;
+
+    if (!is_non_root_flow_created) {
+        flow = netdev_dpdk_add_jump_to_non_root_table(netdev, info);
+        VLOG_DBG("Flow with catch-all and jump action: "
+                "eSwitch offload was %s", flow ? "succeeded" : "failed");
+        if (!flow) {
+            goto out;
+        }
+        is_non_root_flow_created = true;
+    }
+
     struct rte_flow_attr flow_attr = {
         .group = 0,
         .priority = 0,
@@ -1053,7 +1074,6 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
     };
     struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
     struct flow_actions actions = { .actions = NULL, .cnt = 0 };
-    struct rte_flow *flow = NULL;
     struct rte_flow_error error;
     int result = 0;
     struct flow_items spec, mask;
@@ -1098,7 +1118,8 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
         } else if ((enum ovs_action_attr) type == OVS_ACTION_ATTR_OUTPUT) {
             result = get_output_port(a, &output);
             if (result) {
-                break;
+                //break; ASAF temp
+                continue;
             }
             netdev_rte_add_count_flow_action(&count, &actions);
             netdev_rte_add_port_id_flow_action(&output, &actions);
@@ -1128,16 +1149,9 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
         VLOG_DBG("Flow with Mark and RSS actions: NIC offload was %s",
                 flow ? "succeeded" : "failed");
     } else {
-        /* For better performance the clone action is offloaded to the
-         * vport table, and a jump rule is added to table 0 */
-        if (action_bitmap & (1 << OVS_ACTION_ATTR_CLONE)) {
-            flow = netdev_dpdk_add_jump_to_non_root_table(netdev, info);
-            VLOG_DBG("Flow with catch-all and jump actions: "
-                    "eSwitch offload was %s", flow ? "succeeded" : "failed");
-            if (!flow) {
-                goto out;
-            }
-            /* The flows for encap should be added to group 1 */
+        /* For better performance, if these actions exist add to table 1 */
+        if ((action_bitmap & (1 << OVS_ACTION_ATTR_CLONE)) ||
+            (action_bitmap & (1 << OVS_ACTION_ATTR_OUTPUT))) {
             flow_attr.group = 1;
         }
 
@@ -1824,4 +1838,823 @@ netdev_rte_offload_preprocess(struct dp_packet *packet, uint32_t mark)
         }
     }
     VLOG_WARN("Exception mark %u with no port", mark);
+}
+
+#define NETDEV_RTE_OFFLOADS_MAX_QPAIRS 32
+#define NETDEV_RTE_OFFLOADS_MAX_RELAYS RTE_MAX_ETHPORTS
+#define SIZEOF_MBUF (sizeof(struct rte_mbuf *))
+#define NETDEV_RTE_OFFLOADS_INVALID_ID 0xFFFF
+
+enum netdev_rte_offloads_fwd_type {
+    NETDEV_RTE_OFFLOADS_FWD_TYPE_PR,
+    NETDEV_RTE_OFFLOADS_FWD_TYPE_VDPA,
+    NETDEV_RTE_OFFLOADS_FWD_TYPE_GENERIC,
+};
+
+static struct rte_eth_conf netdev_rte_offloads_port_conf = {
+    .rxmode = {
+        .mq_mode = ETH_MQ_RX_RSS,
+    },
+    .txmode = {
+        .mq_mode = ETH_MQ_TX_NONE,
+    },
+};
+
+struct qpair_stats {
+    uint64_t packets;
+    uint64_t bytes;
+    uint64_t cycles;
+    rte_spinlock_t stats_lock;
+};
+
+struct netdev_rte_offloads_qpair {
+    uint16_t pid_rx;
+    uint16_t pid_tx;
+    uint16_t pr_queue;
+    uint16_t mbuf_head;
+    uint16_t mbuf_tail;
+    struct rte_mbuf *pkts[NETDEV_MAX_BURST * 2];
+    struct qpair_stats qp_stats;
+};
+
+struct relay_flow {
+    struct rte_flow *flow;
+    bool queues_en[RTE_MAX_QUEUES_PER_PORT];
+    uint32_t priority;
+};
+
+struct netdev_pr {
+    char *name;
+    int n_rxq;
+};
+
+struct netdev_rte_offloads_relay {
+    PADDED_MEMBERS(CACHE_LINE_SIZE,
+        struct netdev_rte_offloads_qpair qpair[NETDEV_RTE_OFFLOADS_MAX_QPAIRS * 2];
+        rte_atomic16_t valid;
+        uint32_t num_queues;
+        struct rte_mempool *mempool;
+        struct relay_flow flow_params;
+        struct netdev_pr *pr_netdev;
+        char vf_pci[15];
+        char vm_socket[128];
+        int pid_vm;
+        int pid_vf;
+        );
+};
+
+static struct netdev_rte_offloads_relay *relays;
+
+static int
+netdev_rte_offloads_get_port_from_name(const char *name)
+{
+    int pid;
+    size_t len;
+
+    if (name == NULL) {
+        VLOG_ERR("Null pointer is specified\n");
+        return -1;
+    }
+    len = strlen(name);
+    for (pid = 0; pid < RTE_MAX_ETHPORTS; pid++) {
+        if (rte_eth_dev_is_valid_port(pid) &&
+                !strncmp(name, rte_eth_devices[pid].device->name, len)) {
+            return pid;
+        }
+    }
+    VLOG_ERR("No port was found for %s\n", name);
+    return -1;
+}
+
+static void
+netdev_rte_offloads_clear_relay(struct netdev_rte_offloads_relay *relay)
+{
+    uint16_t q, i;
+
+    for (q = 0; q < relay->num_queues; q++) {
+        for (i = relay->qpair[q].mbuf_head; i < relay->qpair[q].mbuf_tail; ++i) {
+            rte_pktmbuf_free(relay->qpair[q].pkts[i]);
+        }
+        relay->qpair[q].mbuf_head = 0;
+        relay->qpair[q].mbuf_tail = 0;
+        relay->qpair[q].pid_rx = 0;
+        relay->qpair[q].pid_tx = 0;
+        relay->qpair[q].pr_queue = 0;
+        rte_spinlock_lock(&relay->qpair[q].qp_stats.stats_lock);
+        relay->qpair[q].qp_stats.bytes = 0;
+        relay->qpair[q].qp_stats.packets = 0;
+        relay->qpair[q].qp_stats.cycles = 0;
+        rte_spinlock_unlock(&relay->qpair[q].qp_stats.stats_lock);
+    }
+
+    memset(relay->vm_socket, 0, sizeof relay->vm_socket);
+    memset(relay->vf_pci, 0, sizeof relay->vf_pci);
+    relay->pid_vm = 0;
+    relay->pid_vf = 0;
+    relay->num_queues = 0;
+    relay->mempool = NULL;
+    rte_free(relay->pr_netdev);
+    memset(&relay->flow_params, 0, sizeof relay->flow_params);
+
+    rte_atomic16_clear(&relay->valid);
+}
+
+static int
+netdev_rte_offloads_generate_rss_flow(struct netdev_rte_offloads_relay *relay)
+{
+    struct rte_flow_attr attr;
+    struct rte_flow_item pattern[2];
+    struct rte_flow_action action[2];
+    static struct rte_flow_action_rss action_rss = {
+            .func = RTE_ETH_HASH_FUNCTION_DEFAULT,
+            .level = 0,
+            .types = ETH_RSS_IP | ETH_RSS_UDP | ETH_RSS_TCP,
+            .key_len = 0,
+            .key = NULL,
+    };
+    struct rte_flow *flow = NULL;
+    uint16_t queue[RTE_MAX_QUEUES_PER_PORT];
+    unsigned int i;
+    unsigned int j;
+    struct rte_flow_error error;
+    int res;
+
+    memset(pattern, 0, sizeof(pattern));
+    memset(action, 0, sizeof(action));
+    memset(&attr, 0, sizeof(struct rte_flow_attr));
+    attr.ingress = 1;
+    if (relay->flow_params.priority) {
+        attr.priority = 0;
+    } else {
+        attr.priority = 1;
+    }
+
+    for (i = 0, j = 0; i < RTE_MAX_QUEUES_PER_PORT; ++i) {
+        if (relay->flow_params.queues_en[i] == true) {
+            queue[j++] = i;
+        }
+    }
+
+    action_rss.queue = queue;
+    action_rss.queue_num = j;
+
+    action[0].type = RTE_FLOW_ACTION_TYPE_RSS;
+    action[0].conf = &action_rss;
+    action[1].type = RTE_FLOW_ACTION_TYPE_END;
+
+    pattern[0].type = RTE_FLOW_ITEM_TYPE_ETH;
+    pattern[0].spec = NULL;
+    pattern[0].mask = NULL;
+    pattern[1].type = RTE_FLOW_ITEM_TYPE_END;
+
+    flow = rte_flow_create(relay->pid_vf, &attr, pattern, action, &error);
+    if (flow == NULL) {
+        VLOG_ERR("Failed to create flow. msg: %s\n",
+                error.message ? error.message : "(no stated reason)");
+        return -1;
+    }
+
+    if( relay->flow_params.flow != NULL)
+    {
+        res = rte_flow_destroy(relay->pid_vf, relay->flow_params.flow, &error);
+        if (res < 0) {
+            VLOG_ERR("Failed to destroy flow. msg: %s\n",
+                    error.message ? error.message : "(no stated reason)");
+            return -1;
+        }
+    }
+
+    relay->flow_params.flow = flow;
+    relay->flow_params.priority = attr.priority;
+    return 0;
+}
+
+static int
+netdev_rte_offloads_queue_state(uint16_t port, uint16_t relay_id)
+{
+    struct rte_eth_vhost_queue_event event;
+    uint32_t q_index;
+    int ret = 0;
+
+    while (ret == 0) {
+        ret = rte_eth_vhost_get_queue_event(port, &event);
+        if (ret < 0) {
+            return 0;
+        }
+        if (event.rx) {
+            q_index = event.queue_id * 2;
+        } else {
+            q_index = event.queue_id * 2 + 1;
+        }
+
+        if (event.enable) {
+            if(!event.rx) {
+                relays[relay_id].flow_params.queues_en[event.queue_id] = true;
+                if (netdev_rte_offloads_generate_rss_flow(&relays[relay_id]) < 0) {
+                    VLOG_ERR("netdev_rte_offloads_generate_rss_flow failed\n");
+                    return -1;
+                }
+            }
+            relays[relay_id].qpair[q_index].pr_queue =
+                    q_index % relays[relay_id].pr_netdev->n_rxq;
+        }
+    }
+
+    return 0;
+}
+
+static int
+netdev_rte_offloads_queue_state_cb_fn(uint16_t port_id,
+        enum rte_eth_event_type type,
+        void *param,
+        void *ret_param)
+{
+    int ret;
+    struct rte_eth_vhost_queue_event event;
+    struct netdev_rte_offloads_relay *relay = param;
+    uint32_t q_index;
+
+    RTE_SET_USED(type);
+    RTE_SET_USED(ret_param);
+
+    ret = 0;
+    while (ret == 0) {
+        ret = rte_eth_vhost_get_queue_event(port_id, &event);
+        if (ret < 0) {
+            return 0;
+        }
+        if (event.rx) {
+            q_index = event.queue_id * 2;
+        } else {
+            q_index = event.queue_id * 2 + 1;
+        }
+
+        if (event.enable) {
+            if(!event.rx) {
+                relay->flow_params.queues_en[event.queue_id] = true;
+                netdev_rte_offloads_generate_rss_flow(relay);
+            }
+            relay->qpair[q_index].pr_queue =
+                    q_index % relay->pr_netdev->n_rxq;
+        } else {
+            if(!event.rx) {
+                relay->flow_params.queues_en[event.queue_id] = false;
+                netdev_rte_offloads_generate_rss_flow(relay);
+            }
+            relay->qpair[q_index].pr_queue =
+                    NETDEV_RTE_OFFLOADS_INVALID_ID;
+        }
+    }
+
+    return 0;
+}
+
+static int
+netdev_rte_offloads_link_status_cb_fn(uint16_t port_id,
+        enum rte_eth_event_type type,
+        void *param,
+        void *ret_param)
+{
+    struct rte_eth_link link;
+    struct netdev_rte_offloads_relay *relay = param;
+    int q;
+
+    RTE_SET_USED(type);
+    RTE_SET_USED(ret_param);
+
+    rte_eth_link_get_nowait(port_id, &link);
+    if (!link.link_status) {
+        for (q = 0; q < NETDEV_RTE_OFFLOADS_MAX_QPAIRS; ++q){
+            relay->qpair[q].pr_queue = NETDEV_RTE_OFFLOADS_INVALID_ID;
+        }
+        for (q = 0; q < RTE_MAX_QUEUES_PER_PORT; ++q){
+            relay->flow_params.queues_en[q] = false;
+        }
+    }
+
+    return 0;
+}
+
+static int
+netdev_rte_offloads_port_init(uint16_t relay_id, uint16_t port, uint16_t queue_num,
+        struct rte_mempool *mbuf_pool, bool vm)
+{
+    uint16_t q;
+    struct rte_eth_dev_info dev_info;
+    struct rte_eth_txconf txconf;
+    int ret;
+
+    if (!rte_eth_dev_is_valid_port(port)) {
+        VLOG_ERR("port_init invalid port %u\n", port);
+        return -1;
+    }
+    rte_eth_dev_info_get(port, &dev_info);
+    netdev_rte_offloads_port_conf.rxmode.offloads = 0;
+
+    ret = rte_eth_dev_configure(port, queue_num, queue_num,
+            &netdev_rte_offloads_port_conf);
+    if (ret < 0) {
+        VLOG_ERR("rte_eth_dev_configure failed\n");
+        return ret;
+    }
+    for (q = 0; q < queue_num; q++) {
+        ret = rte_eth_rx_queue_setup(port, q, 512,
+                        rte_eth_dev_socket_id(port),
+                        NULL, mbuf_pool);
+        if (ret < 0) {
+            VLOG_ERR("rte_eth_rx_queue_setup failed with error %i\n", ret);
+            rte_eth_dev_close(port);
+            return ret;
+        }
+    }
+    txconf = dev_info.default_txconf;
+    txconf.offloads = netdev_rte_offloads_port_conf.txmode.offloads;
+    for (q = 0; q < queue_num; q++) {
+        ret = rte_eth_tx_queue_setup(port, q, 512,
+                        rte_eth_dev_socket_id(port),
+                        &txconf);
+        if (ret < 0) {
+            VLOG_ERR("rte_eth_tx_queue_setup failed with error %i\n", ret);
+            rte_eth_dev_close(port);
+            return ret;
+        }
+    }
+
+    if (vm)
+        netdev_rte_offloads_queue_state(port, relay_id);
+
+    ret = rte_eth_dev_callback_register(port, RTE_ETH_EVENT_QUEUE_STATE,
+            netdev_rte_offloads_queue_state_cb_fn, &relays[relay_id]);
+    if (ret < 0) {
+        VLOG_ERR("rte_eth_dev_callback_register failed with error %i\n", ret);
+        return ret;
+    }
+
+    ret = rte_eth_dev_callback_register(port, RTE_ETH_EVENT_INTR_LSC,
+            netdev_rte_offloads_link_status_cb_fn, &relays[relay_id]);
+    if (ret < 0) {
+        VLOG_ERR("rte_eth_dev_callback_register failed with error %i\n", ret);
+        return ret;
+    }
+
+    ret = rte_eth_dev_start(port);
+    if (ret < 0) {
+        VLOG_ERR("rte_eth_dev_start failed\n");
+        rte_eth_dev_close(port);
+        return ret;
+    }
+
+    return 0;
+}
+
+static int
+netdev_rte_offloads_update_relay(uint16_t relay_id,  uint32_t num_queues,
+        int *pid_vm, int *pid_vf, const char *vf_pci, const char *vhost_socket)
+{
+    uint32_t q;
+    int ret;
+
+    strcpy(relays[relay_id].vf_pci, vf_pci);
+    strcpy(relays[relay_id].vm_socket, vhost_socket);
+    relays[relay_id].num_queues = num_queues;
+    relays[relay_id].pid_vf = *pid_vf;
+    relays[relay_id].pid_vm = *pid_vm;
+    relays[relay_id].flow_params.flow = NULL;
+    relays[relay_id].flow_params.priority = 0;
+    memset(relays[relay_id].flow_params.queues_en, false,
+            sizeof(bool) * RTE_MAX_QUEUES_PER_PORT);
+
+    for (q = 0; q < (num_queues * 2); q++) {
+        relays[relay_id].qpair[q].pr_queue = NETDEV_RTE_OFFLOADS_INVALID_ID;
+        if (q & 1) {
+            relays[relay_id].qpair[q].pid_rx = *pid_vm;
+            relays[relay_id].qpair[q].pid_tx = *pid_vf;
+        } else {
+            relays[relay_id].qpair[q].pid_rx = *pid_vf;
+            relays[relay_id].qpair[q].pid_tx = *pid_vm;
+        }
+        rte_spinlock_init(&relays[relay_id].qpair[q].qp_stats.stats_lock);
+        relays[relay_id].qpair[q].mbuf_head = 0;
+        relays[relay_id].qpair[q].mbuf_tail = 0;
+        memset(&relays[relay_id].qpair[q].qp_stats, 0, sizeof(struct qpair_stats));
+    }
+
+    ret = netdev_rte_offloads_port_init(relay_id, *pid_vf, num_queues,
+            relays[relay_id].mempool, false);
+    if (ret) {
+        VLOG_ERR("port_init failed, port_id %u\n", *pid_vf);
+        return ret;
+    }
+
+    ret = netdev_rte_offloads_port_init(relay_id, *pid_vm, num_queues,
+            relays[relay_id].mempool, true);
+    if (ret) {
+        VLOG_ERR("port_init failed, port_id %u\n", *pid_vm);
+        rte_eth_dev_stop(*pid_vf);
+        rte_eth_dev_close(*pid_vf);
+        return ret;
+    }
+    return 0;
+}
+
+static int
+netdev_rte_offloads_forward_traffic(struct netdev_rte_offloads_qpair *qpair,
+        uint16_t queue_id)
+{
+    int burst_success;
+    int diff;
+
+    diff = qpair->mbuf_tail - qpair->mbuf_head;
+    if (diff >= NETDEV_MAX_BURST) {
+        goto send;
+    }
+
+    /*copy pkts to start*/
+    if (unlikely(qpair->mbuf_tail > NETDEV_MAX_BURST)) {
+        rte_memcpy(&qpair->pkts[0], &qpair->pkts[qpair->mbuf_head],
+                   diff * SIZEOF_MBUF);
+        qpair->mbuf_head = 0;
+        qpair->mbuf_tail = diff;
+    }
+
+    /*receive burst:*/
+    burst_success = rte_eth_rx_burst(qpair->pid_rx, queue_id,
+            qpair->pkts+qpair->mbuf_tail, NETDEV_MAX_BURST);
+    qpair->mbuf_tail += burst_success;
+    diff += burst_success;
+
+    /*send:*/
+send:
+    burst_success = rte_eth_tx_burst(qpair->pid_tx, queue_id,
+            qpair->pkts+qpair->mbuf_head, diff);
+
+    /* update stats */
+    if (likely(burst_success)) {
+        int i;
+        unsigned bytes = 0;
+        for (i = 0; i < burst_success; ++i) {
+            bytes += qpair->pkts[qpair->mbuf_head+i]->pkt_len;
+        }
+        rte_spinlock_lock(&qpair->qp_stats.stats_lock);
+        qpair->qp_stats.packets += burst_success;
+        qpair->qp_stats.bytes += bytes;
+        rte_spinlock_unlock(&qpair->qp_stats.stats_lock);
+    }
+
+    qpair->mbuf_head += burst_success;
+    if (likely(qpair->mbuf_head == qpair->mbuf_tail)) {
+        qpair->mbuf_head = 0;
+        qpair->mbuf_tail = 0;
+    }
+
+    return 0;
+}
+
+static int
+netdev_rte_offloads_check_valid_params(const char *pci, const char *vhost_socket,
+        uint16_t relay_id)
+{
+    if (strcmp (relays[relay_id].vm_socket, vhost_socket) == 0 ) {
+        VLOG_ERR("vhost %s already exists, can't add relay\n",
+                vhost_socket);
+        return -1;
+    }
+    if (strcmp (relays[relay_id].vf_pci, pci) == 0 ) {
+        VLOG_ERR("PCI %s already exists, can't add relay\n",
+                pci);
+        return -1;
+    }
+    return 0;
+}
+
+static int
+netdev_rte_offloads_add_relay(const char *pci, const char *vhost_socket, const char *pr, uint32_t max_queues)
+{
+    struct netdev *netdev = NULL;
+    char vhost_name[40];
+    char vhost_args[128];
+    uint16_t relay_id = 0;
+    uint16_t next_valid = NETDEV_RTE_OFFLOADS_INVALID_ID;
+    int pid_vm, pid_vf;
+    int len = 0;
+    int ret;
+
+    for (relay_id = 0; relay_id < NETDEV_RTE_OFFLOADS_MAX_RELAYS; relay_id++) {
+        /* find a free index in the relays array */
+        if (next_valid == NETDEV_RTE_OFFLOADS_INVALID_ID) {
+            if (rte_atomic16_test_and_set(&relays[relay_id].valid)) {
+                next_valid = relay_id;
+            }
+        }
+        /* check that the socket/PCI doesn't exist */
+        if (netdev_rte_offloads_check_valid_params(pci, vhost_socket, relay_id) < 0) {
+            if (next_valid != NETDEV_RTE_OFFLOADS_INVALID_ID) {
+                rte_atomic16_clear(&relays[next_valid].valid);
+            }
+            return -1;
+        }
+    }
+
+    relay_id = next_valid;
+    /* add new relay */
+    netdev = netdev_from_name(pr);
+    if (netdev == NULL) {
+        VLOG_ERR("Port %s doesn't exist\n", pr);
+        netdev_rte_offloads_clear_relay(&relays[relay_id]);
+        return -1;
+    }
+
+    relays[relay_id].pr_netdev = xmalloc(sizeof *relays[relay_id].pr_netdev);
+    relays[relay_id].pr_netdev->name = xmalloc(sizeof *relays[relay_id].pr_netdev->name);
+    relays[relay_id].pr_netdev->n_rxq = netdev->n_rxq;
+    strcpy(relays[relay_id].pr_netdev->name, pr);
+    relays[relay_id].mempool = netdev_dpdk_hw_forwarder_get_mempool(pr);
+
+    sprintf(vhost_name, "net_vhost%d", relay_id);
+    len += sprintf(vhost_args, "iface=%s,queues=%d,client=1",
+                   vhost_socket, max_queues);
+
+    /* create vm:*/
+    ret = rte_eal_hotplug_add("vdev", vhost_name, vhost_args);
+    if (ret) {
+        VLOG_ERR("rte_eal_hotplug_add vdev failed\n");
+        netdev_rte_offloads_clear_relay(&relays[relay_id]);
+        netdev_close(netdev);
+        return ret;
+    }
+    pid_vm = netdev_rte_offloads_get_port_from_name(vhost_name);
+    if (pid_vm < 0 ) {
+        VLOG_ERR("No port id found for vm\n");
+        netdev_rte_offloads_clear_relay(&relays[relay_id]);
+        netdev_close(netdev);
+        return -1;
+    }
+
+    /* create vf:*/
+    ret = rte_eal_hotplug_add("pci", pci, NULL);
+    if (ret) {
+        VLOG_ERR("rte_eal_hotplug_add pci failed\n");
+        rte_eal_hotplug_remove("vdev", vhost_name);
+        netdev_rte_offloads_clear_relay(&relays[relay_id]);
+        netdev_close(netdev);
+        return ret;
+    }
+    pid_vf = netdev_rte_offloads_get_port_from_name(pci);
+    if (pid_vf < 0 ) {
+        VLOG_ERR("No port id found for vf\n");
+        netdev_rte_offloads_clear_relay(&relays[relay_id]);
+        netdev_close(netdev);
+        return -1;
+    }
+
+    ret = netdev_rte_offloads_update_relay(relay_id, max_queues, &pid_vm, &pid_vf, pci,
+                       vhost_socket);
+    if (ret) {
+        VLOG_ERR("update_relay failed\n");
+        netdev_rte_offloads_clear_relay(&relays[relay_id]);
+        netdev_close(netdev);
+        return ret;
+    }
+    /* add the relay to the pr */
+    netdev_dpdk_hw_forwarder_register(pr, relay_id, netdev_rte_offloads_hw_pr_fwd,
+            netdev_rte_offloads_hw_pr_remove);
+
+    /* free the returned netdev after using the netdev_from_name */
+    netdev_close(netdev);
+    return 0;
+}
+
+static int
+netdev_rte_offloads_remove_relay(const char *vhost_path, bool remove_dev)
+{
+    uint16_t relay_id;
+    int found = 0;
+    int port_id;
+    char vhost_name[40];
+
+
+    for (relay_id = 0; relay_id < NETDEV_RTE_OFFLOADS_MAX_RELAYS; relay_id++) {
+        if (strcmp (relays[relay_id].vm_socket, vhost_path) == 0 ) {
+            found = 1;
+            break;
+        }
+    }
+    if (!found) {
+        VLOG_ERR("Could not find relay for %s", vhost_path);
+        return -1;
+    }
+
+    /* if the PR still exist, remove the relay from the pr */
+    if (!remove_dev) {
+        netdev_dpdk_hw_forwarder_register(relays[relay_id].pr_netdev->name, relay_id,
+                NULL, NULL);
+    }
+
+    port_id = relays[relay_id].pid_vm;
+    rte_eth_dev_stop(port_id);
+    rte_eth_dev_callback_unregister(port_id, RTE_ETH_EVENT_QUEUE_STATE,
+            netdev_rte_offloads_queue_state_cb_fn, &relays[relay_id]);
+    rte_eth_dev_callback_unregister(port_id, RTE_ETH_EVENT_INTR_LSC,
+            netdev_rte_offloads_link_status_cb_fn, &relays[relay_id]);
+    rte_eth_dev_close(port_id);
+
+    port_id = relays[relay_id].pid_vf;
+    rte_eth_dev_stop(port_id);
+    rte_eth_dev_callback_unregister(port_id, RTE_ETH_EVENT_QUEUE_STATE,
+            netdev_rte_offloads_queue_state_cb_fn, &relays[relay_id]);
+    rte_eth_dev_callback_unregister(port_id, RTE_ETH_EVENT_INTR_LSC,
+            netdev_rte_offloads_link_status_cb_fn, &relays[relay_id]);
+    rte_eth_dev_close(port_id);
+
+    if (relays[relay_id].flow_params.flow != NULL ) {
+        struct rte_flow_error error;
+        rte_flow_destroy(port_id, relays[relay_id].flow_params.flow, &error);
+    }
+
+    sprintf(vhost_name, "net_vhost%d", relay_id);
+    rte_eal_hotplug_remove("vdev", vhost_name);
+    rte_eal_hotplug_remove("pci", relays[relay_id].vf_pci);
+
+    netdev_rte_offloads_clear_relay(&relays[relay_id]);
+    return 0;
+}
+
+static void
+netdev_rte_offloads_show_statistics_vm(struct ds *reply)
+{
+    uint32_t relay_id;
+    uint32_t qp_index;
+    struct netdev_rte_offloads_qpair *qp;
+    enum stats_array {RX_PKTS, RX_BYTES,TX_PKTS,TX_BYTES};
+    uint64_t count_stats[4] = {0};
+
+    ds_put_cstr(reply,"############################## STATISTICS ##############################\n\n");
+    for (relay_id = 0; relay_id < NETDEV_RTE_OFFLOADS_MAX_RELAYS; ++relay_id) {
+        if (rte_atomic16_read(&relays[relay_id].valid) == 1) {
+            ds_put_format(reply, "relay id: %u, VM:  %s, VF:  %s\n",
+                    relay_id, relays[relay_id].vm_socket,
+                    relays[relay_id].vf_pci);
+
+            memset(count_stats, 0, sizeof count_stats);
+            for (qp_index = 0; qp_index < NETDEV_RTE_OFFLOADS_MAX_QPAIRS; qp_index++) {
+                qp = &relays[relay_id].qpair[qp_index];
+                if (qp_index&1) {
+                    count_stats[TX_PKTS] += qp->qp_stats.packets;
+                    count_stats[TX_BYTES] += qp->qp_stats.bytes;
+                } else{
+                    count_stats[RX_PKTS] += qp->qp_stats.packets;
+                    count_stats[RX_BYTES] += qp->qp_stats.bytes;
+                }
+            }
+
+            ds_put_format(reply,"\tRX-packets: %lu  RX-bytes: %lu\n",
+                    count_stats[RX_PKTS], count_stats[RX_BYTES]);
+            ds_put_format(reply,"\tTX-packets: %lu  TX-bytes: %lu\n",
+                    count_stats[TX_PKTS], count_stats[TX_BYTES]);
+        }
+    }
+    ds_put_cstr(reply,"\n########################################################################\n\n");
+}
+
+static void
+netdev_rte_offloads_show_statistics_queue(struct ds *reply)
+{
+    uint32_t relay_id;
+    uint32_t q_index;
+    struct netdev_rte_offloads_qpair *qp;
+
+    ds_put_cstr(reply,"############################## STATISTICS ##############################\n\n");
+    for (relay_id = 0; relay_id < NETDEV_RTE_OFFLOADS_MAX_RELAYS; ++relay_id) {
+        if (rte_atomic16_read(&relays[relay_id].valid) == 1) {
+            ds_put_format(reply, "relay id: %u, VM:  %s, VF:  %s\n",
+                    relay_id, relays[relay_id].vm_socket,
+                    relays[relay_id].vf_pci);
+
+            for (q_index = 0; q_index < NETDEV_RTE_OFFLOADS_MAX_QPAIRS; q_index++) {
+                if (relays[relay_id].flow_params.queues_en[q_index>>1]) {
+                    qp = &relays[relay_id].qpair[q_index];
+                    if (q_index&1) {
+                        ds_put_format(reply,"\t\tTX-packets: %lu  TX-bytes: %lu\n",
+                                qp->qp_stats.packets, qp->qp_stats.bytes);
+                        ds_put_cstr(reply,"\n");
+                    } else{
+                        ds_put_format(reply,"\tqueue %u:\n", (q_index>>1));
+                        ds_put_format(reply,"\t\tRX-packets: %lu  RX-bytes: %lu\n",
+                                qp->qp_stats.packets, qp->qp_stats.bytes);
+                    }
+                }
+            }
+        }
+    }
+    ds_put_cstr(reply,"\n########################################################################\n\n");
+}
+
+static void
+netdev_rte_offloads_show_relays(struct ds *reply)
+{
+    uint32_t relay_id;
+
+    for (relay_id = 0; relay_id < NETDEV_RTE_OFFLOADS_MAX_RELAYS; ++relay_id) {
+        if (rte_atomic16_read(&relays[relay_id].valid) == 1) {
+            ds_put_format(reply, "relay id: %u\nVM: %s port id %u\n"
+                    "VF: %s port id %u\n\n",
+                    relay_id,
+                    relays[relay_id].vm_socket,
+                    relays[relay_id].pid_vm,
+                    relays[relay_id].vf_pci,
+                    relays[relay_id].pid_vf );
+        }
+    }
+}
+
+static void
+netdev_rte_offloads_cmd(struct unixctl_conn *conn, int argc,
+                          const char *argv[],
+                          void *aux OVS_UNUSED)
+{
+    struct ds reply = DS_EMPTY_INITIALIZER;
+    uint32_t max_queues = 0;
+    uint32_t i;
+
+    for (i = 0; i < argc; i++) {
+        ds_put_cstr(&reply, argv[i]);
+        ds_put_cstr(&reply, " ");
+    }
+    ds_put_cstr(&reply, "\n");
+
+    if (strcmp(argv[0], "hw-offload/set-forwarder") == 0) {
+        max_queues = atoi(argv[4]);
+        if (netdev_rte_offloads_add_relay(argv[2], argv[3], argv[5], max_queues) != 0) {
+            VLOG_ERR("netdev_rte_offloads_add_relay failed\n");
+        }
+    } else if (strcmp(argv[0], "hw-offload/remove-forwarder") == 0) {
+        if (netdev_rte_offloads_remove_relay(argv[2], false) != 0) {
+            VLOG_ERR("netdev_rte_offloads_remove_relay failed\n");
+        }
+    } else if (strcmp(argv[0], "hw-offload/show-stats") == 0) {
+        if ((strcmp(argv[1],"vm") == 0) || (strcmp(argv[1],"VM") == 0)) {
+            netdev_rte_offloads_show_statistics_vm(&reply);
+        }else if ((strcmp(argv[1],"queue") == 0) || (strcmp(argv[1],"QUEUE") == 0) ||
+                (strcmp(argv[1],"Queue") == 0)) {
+            netdev_rte_offloads_show_statistics_queue(&reply);
+        } else {
+            ds_put_cstr(&reply, "No such option for show-stats\n");
+        }
+    } else if (strcmp(argv[0], "hw-offload/show") == 0) {
+        netdev_rte_offloads_show_relays(&reply);
+    }
+
+    unixctl_command_reply(conn, ds_cstr(&reply));
+    ds_destroy(&reply);
+}
+
+void
+netdev_rte_offloads_init(void)
+{
+    static int initialized = 0;
+
+    if ( initialized) {
+        return;
+    }
+    relays = rte_zmalloc(NULL, sizeof(*relays)*NETDEV_RTE_OFFLOADS_MAX_RELAYS, RTE_CACHE_LINE_SIZE);
+
+    unixctl_command_register("hw-offload/set-forwarder",
+                             "[type] [dpdk-devargs] [vhost-server-path] [vhost-queues] [representor]",
+                             5, 5, netdev_rte_offloads_cmd,
+                             NULL);
+
+    unixctl_command_register("hw-offload/remove-forwarder",
+                             "[type][vhost-server-path]",
+                             2, 2, netdev_rte_offloads_cmd,
+                             NULL);
+
+    unixctl_command_register("hw-offload/show-stats",
+                             "level",
+                             1, 1, netdev_rte_offloads_cmd,
+                             NULL);
+
+    unixctl_command_register("hw-offload/show",
+                             "",
+                             0, 0, netdev_rte_offloads_cmd,
+                             NULL);
+    initialized = 1;
+}
+
+void
+netdev_rte_offloads_hw_pr_fwd(int queue_id, int relay_id)
+{
+    uint32_t q;
+    for (q = 0; q < (relays[relay_id].num_queues * 2); ++q) {
+        if (relays[relay_id].qpair[q].pr_queue == queue_id) {
+            netdev_rte_offloads_forward_traffic(&relays[relay_id].qpair[q], q>>1);
+        }
+    }
+}
+
+void
+netdev_rte_offloads_hw_pr_remove(int relay_id)
+{
+    if (netdev_rte_offloads_remove_relay(relays[relay_id].vm_socket, true) != 0) {
+        VLOG_ERR("netdev_rte_offloads_remove_relay failed\n");
+    }
 }
