@@ -48,6 +48,7 @@ enum rte_port_type {
 struct netdev_rte_port {
     struct cmap_node node; /* Map by datapath port number. */
     odp_port_t dp_port; /* Datapath port number. */
+    uint16_t dpdk_port_id; /* Id of the DPDK port. */
     struct netdev *netdev; /* struct *netdev of this port. */
     enum rte_port_type rte_port_type; /* rte ports types. */
     uint32_t table_id; /* Flow table id per related to this port. */
@@ -827,11 +828,19 @@ netdev_rte_add_count_flow_action(struct rte_flow_action_count *count,
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_COUNT, count);
 }
 
+static void
+netdev_rte_add_port_id_flow_action(struct rte_flow_action_port_id *port_id,
+                                   struct flow_actions *actions)
+{
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_PORT_ID, port_id);
+}
+
 static struct rte_flow *
 netdev_rte_offload_mark_rss(struct netdev *netdev,
                             struct offload_info *info,
                             struct flow_patterns *patterns,
                             struct flow_actions *actions,
+                            struct rte_flow_action_port_id *port_id,
                             const struct rte_flow_attr *flow_attr)
 {
     struct rte_flow *flow = NULL;
@@ -843,6 +852,10 @@ netdev_rte_offload_mark_rss(struct netdev *netdev,
 
     struct action_rss_data *rss = NULL;
     rss = add_flow_rss_action(actions, netdev_n_rxq(netdev));
+
+    if (port_id) {
+        netdev_rte_add_port_id_flow_action(port_id, actions);
+    }
 
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_END, NULL);
 
@@ -926,6 +939,29 @@ netdev_rte_offload_add_default_flow(struct netdev_rte_port *rte_port,
     return def_flow;
 }
 
+static int
+get_output_port(const struct nlattr *a,
+                struct rte_flow_action_port_id *port_id)
+{
+    odp_port_t odp_port;
+    struct netdev_rte_port *output_rte_port;
+
+    /* Output port should be hardware port number. */
+    odp_port = nl_attr_get_odp_port(a);
+    output_rte_port = netdev_rte_port_search(odp_port, &port_map);
+
+    if (!output_rte_port) {
+        VLOG_DBG("No rte port was found for odp_port %u",
+                odp_to_u32(odp_port));
+        return EINVAL;
+    }
+
+    port_id->id = output_rte_port->dpdk_port_id;
+    port_id->original = 0;
+
+    return 0;
+}
+
 static struct rte_flow *
 netdev_rte_offloads_add_flow(struct netdev *netdev,
                              const struct match *match,
@@ -989,7 +1025,7 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
     /* If actions are not supported, try offloading Mark and RSS actions */
     if (result) {
         flow = netdev_rte_offload_mark_rss(netdev, info, &patterns, &actions,
-                                           &flow_attr);
+                                           NULL, &flow_attr);
     } else {
         /* Actions are supported, offload the flow */
         flow = netdev_rte_offload_flow(netdev, info, &patterns, &actions,
@@ -1340,11 +1376,12 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
         return -1;
     }
 
-    const struct rte_flow_attr flow_attr = {
+    struct rte_flow_attr flow_attr = {
         .group = rte_port->table_id,
         .priority = 0,
         .ingress = 1,
-        .egress = 0
+        .egress = 0,
+        .transfer = 0
     };
 
     struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
@@ -1373,10 +1410,33 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
     add_flow_pattern(&patterns, RTE_FLOW_ITEM_TYPE_END, NULL, NULL);
 
     struct rte_flow *flow = NULL;
-    struct netdev_rte_port *data;
     struct flow_actions actions = { .actions = NULL, .cnt = 0 };
-    struct rte_flow_action_mark mark = {0};
-    struct action_rss_data *rss = NULL;
+    struct rte_flow_action_port_id port_id;
+    struct rte_flow_action_count count;
+
+    /* Actions in nl_actions will be asserted in this bitmap,
+     * according to their values in ovs_action_attr enum */
+    uint64_t action_bitmap = 0;
+
+    const struct nlattr *a;
+    unsigned int left;
+
+    NL_ATTR_FOR_EACH_UNSAFE (a, left, nl_actions, actions_len) {
+        int type = nl_attr_type(a);
+        if ((enum ovs_action_attr)type == OVS_ACTION_ATTR_OUTPUT) {
+            ret = get_output_port(a, &port_id);
+            if (ret) {
+                continue;
+            }
+            action_bitmap |= (1 << OVS_ACTION_ATTR_OUTPUT);
+        } else {
+            /* Unsupported action for offloading */
+            ret = EOPNOTSUPP;
+            goto out;
+        }
+    }
+
+    struct netdev_rte_port *data;
     struct rte_flow_error error;
     CMAP_FOR_EACH (data, node, &port_map) {
         /* Offload only in case the port is DPDK and it's the uplink port */
@@ -1386,24 +1446,45 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
             free_flow_actions(&actions);
             netdev_rte_add_decap_flow_action(&actions);
 
-            mark.id = info->flow_mark;
-            add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_MARK, &mark);
-
-            rss = add_flow_rss_action(&actions, data->dpdk_num_queues);
+            if (action_bitmap & (1 << OVS_ACTION_ATTR_OUTPUT)) {
+                netdev_rte_add_count_flow_action(&count, &actions);
+                netdev_rte_add_port_id_flow_action(&port_id, &actions);
+            }
 
             add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_END, NULL);
 
+            flow_attr.transfer = 1;
             flow = netdev_dpdk_rte_flow_create(data->netdev,
                                                &flow_attr, patterns.items,
                                                actions.actions, &error);
-            free(rss);
+            VLOG_DBG("eSwitch offload was %s", flow ? "succeeded" : "failed");
+
             if (flow) {
-                ufid_hw_offload_add_rte_flow(ufid_hw_offload, flow,
-                                             data->netdev);
+                info->is_hwol = true;
             } else {
                 VLOG_ERR("%s: rte flow create offload error: %u : "
                         "message : %s\n", netdev_get_name(data->netdev),
                         error.type, error.message);
+
+                /* In case flow cannot be offloaded with decap and output
+                 * actions, try to offload decap with mark and rss, and output
+                 * will be done in SW */
+                free_flow_actions(&actions);
+
+                netdev_rte_add_decap_flow_action(&actions);
+                flow_attr.transfer = 0;
+                flow = netdev_rte_offload_mark_rss(data->netdev,
+                                                   info, &patterns, &actions,
+                                                   NULL, &flow_attr);
+                VLOG_DBG("NIC offload was %s", flow ? "succeeded" : "failed");
+                if (flow) {
+                    info->is_hwol = false;
+                }
+            }
+
+            if (flow) {
+                ufid_hw_offload_add_rte_flow(ufid_hw_offload, flow,
+                                             rte_port->netdev);
             }
         }
     }
@@ -1478,6 +1559,7 @@ netdev_rte_offloads_port_add(struct netdev *netdev, odp_port_t dp_port)
         }
 
         rte_port->dpdk_num_queues = netdev_n_rxq(netdev);
+        rte_port->dpdk_port_id = netdev_dpdk_get_port_id(netdev);
         dpdk_phy_ports_amount++;
         VLOG_INFO("Rte dpdk port %d allocated.", dp_port);
         goto out;
