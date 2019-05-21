@@ -48,6 +48,8 @@ netdev_dpdk_rte_flow_create(struct netdev *netdev,
                             const struct rte_flow_action *actions,
                             struct rte_flow_error *error);
 
+bool netdev_dpdk_is_uplink_port(const struct netdev *netdev);
+
 #else
 
 static inline void

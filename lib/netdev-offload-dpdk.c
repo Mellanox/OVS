@@ -1139,6 +1139,125 @@ const struct netdev_flow_api netdev_offload_dpdk = {
 };
 
 static int
+netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
+                                        struct match *match,
+                                        struct nlattr *nl_actions,
+                                        size_t actions_len,
+                                        const ovs_u128 *ufid,
+                                        struct offload_info *info,
+                                        struct dpif_flow_stats *stats OVS_UNUSED)
+{
+    VLOG_DBG("Adding rte offload for vport vxlan flow ufid "UUID_FMT,
+              UUID_ARGS((struct uuid *)ufid));
+
+    if (!actions_len || !nl_actions) {
+        VLOG_DBG("skip flow offload without actions\n");
+        return 0;
+    }
+
+    int ret = 0;
+
+    /* If an old rte_flow exists, it means it's a flow modification.
+     * Here destroy the old rte flow first before adding a new one.
+     */
+    struct ufid_hw_offload *ufid_hw_offload =
+        ufid_hw_offload_find(ufid, &rte_port->ufid_to_rte);
+
+    if (ufid_hw_offload) {
+        VLOG_DBG("got modification and destroying previous rte_flow");
+        ufid_hw_offload_remove(ufid, &rte_port->ufid_to_rte);
+        ret = netdev_rte_port_ufid_hw_offload_free(ufid_hw_offload);
+        if (ret < 0) {
+            return ret;
+        }
+    }
+
+    if (!dpdk_phy_ports_amount) {
+        VLOG_WARN("offload while no phy ports %d",(int)dpdk_phy_ports_amount);
+        return -1;
+    }
+
+    ufid_hw_offload =
+        netdev_rte_port_ufid_hw_offload_alloc(dpdk_phy_ports_amount, ufid);
+    if (ufid_hw_offload == NULL) {
+        VLOG_WARN("failed to allocate ufid_hw_offlaod, OOM");
+        return -1;
+    }
+
+    ufid_hw_offload_add(ufid_hw_offload, &rte_port->ufid_to_rte);
+    ufid_to_portid_add(ufid, rte_port->dp_port);
+
+    struct netdev_rte_port *data;
+    struct rte_flow *flow;
+    struct flow_data fdata;
+    CMAP_FOR_EACH (data, node, &port_map) {
+        /* Offload only in case the port is DPDK and it's the uplink port */
+        if ((data->rte_port_type == RTE_PORT_TYPE_DPDK) &&
+            (netdev_dpdk_is_uplink_port(data->netdev))) {
+
+            memset(&fdata, 0, sizeof fdata);
+            flow = netdev_offload_dpdk_put_handler(data->netdev, rte_port, &fdata,
+                                                   match, nl_actions,
+                                                   actions_len, info);
+            if (!flow) {
+                goto err;
+            }
+            ufid_hw_offload_add_rte_flow(ufid_hw_offload, flow, data->netdev);
+        }
+    }
+
+    return ret;
+
+err:
+    netdev_offload_dpdk_destroy_flow(ufid);
+    return -1;
+}
+
+static int
+netdev_offload_vxlan_flow_put(struct netdev *netdev OVS_UNUSED,
+                              struct match *match,
+                              struct nlattr *actions,
+                              size_t actions_len,
+                              const ovs_u128 *ufid,
+                              struct offload_info *info,
+                              struct dpif_flow_stats *stats)
+{
+    if (netdev_offload_dpdk_validate_flow(match, true)) {
+        VLOG_DBG("flow pattern is not supported");
+        return EOPNOTSUPP;
+    }
+
+    int ret = 0;
+    odp_port_t in_port = match->flow.in_port.odp_port;
+    struct netdev_rte_port *rte_port = netdev_rte_port_search(in_port,
+                                                              &port_map);
+    if (rte_port != NULL) {
+        if (rte_port->rte_port_type == RTE_PORT_TYPE_VXLAN) {
+            VLOG_DBG("vxlan offload ufid "UUID_FMT" \n",
+                     UUID_ARGS((struct uuid *)ufid));
+            ret = netdev_vport_vxlan_add_rte_flow_offload(rte_port, match,
+                                                          actions,
+                                                          actions_len, ufid,
+                                                          info, stats);
+        } else {
+            VLOG_DBG("unsupported tunnel type");
+            ovs_assert(true);
+        }
+    }
+
+    return ret;
+}
+
+
+static int
+netdev_offload_vxlan_flow_del(struct netdev * netdev OVS_UNUSED,
+                              const ovs_u128 * ufid,
+                              struct dpif_flow_stats * flow_stats OVS_UNUSED)
+{
+    return netdev_offload_dpdk_destroy_flow(ufid);
+}
+
+static int
 add_vport_vxlan_flow_patterns(struct flow_patterns *patterns,
                               struct flow_items *spec,
                               struct flow_items *mask,
@@ -1251,26 +1370,6 @@ static void
 netdev_rte_add_decap_flow_action(struct flow_actions *actions)
 {
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_VXLAN_DECAP, NULL);
-}
-
-static int
-netdev_offload_vxlan_flow_put(struct netdev *netdev OVS_UNUSED,
-                              struct match *match OVS_UNUSED,
-                              struct nlattr *actions OVS_UNUSED,
-                              size_t actions_len OVS_UNUSED,
-                              const ovs_u128 *ufid OVS_UNUSED,
-                              struct offload_info *info OVS_UNUSED,
-                              struct dpif_flow_stats *stats OVS_UNUSED)
-{
-    return EOPNOTSUPP;
-}
-
-static int
-netdev_offload_vxlan_flow_del(struct netdev * netdev OVS_UNUSED,
-                              const ovs_u128 * ufid OVS_UNUSED,
-                              struct dpif_flow_stats * flow_stats OVS_UNUSED)
-{
-    return EOPNOTSUPP;
 }
 
 static int
