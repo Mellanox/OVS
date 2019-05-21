@@ -775,12 +775,97 @@ add_flow_patterns(struct flow_patterns *patterns,
     return 0;
 }
 
+static struct netdev_rte_port *
+netdev_rte_add_jump_flow_action(const struct nlattr *nlattr,
+                                struct rte_flow_action_jump *jump,
+                                struct flow_actions *actions)
+{
+    odp_port_t odp_port;
+    struct netdev_rte_port *rte_port;
+
+    odp_port = nl_attr_get_odp_port(nlattr);
+    rte_port = netdev_rte_port_search(odp_port, &port_map);
+    if (!rte_port) {
+        VLOG_DBG("No rte port was found for odp_port %u",
+                odp_to_u32(odp_port));
+        return NULL;
+    }
+
+    jump->group = rte_port->table_id;
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_JUMP, jump);
+
+    return rte_port;
+}
+
+static void
+netdev_rte_add_count_flow_action(struct rte_flow_action_count *count,
+                                 struct flow_actions *actions)
+{
+    count->shared = 0;
+    count->id = 0; /* Each flow has a single count action, so no need of id */
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_COUNT, count);
+}
+
+static struct rte_flow *
+netdev_rte_offload_mark_rss(struct netdev *netdev,
+                            struct offload_info *info,
+                            struct flow_patterns *patterns,
+                            struct flow_actions *actions,
+                            const struct rte_flow_attr *flow_attr)
+{
+    struct rte_flow *flow = NULL;
+    struct rte_flow_error error;
+
+    struct rte_flow_action_mark mark = {0};
+    mark.id = info->flow_mark;
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_MARK, &mark);
+
+    struct action_rss_data *rss = NULL;
+    rss = add_flow_rss_action(actions, netdev_n_rxq(netdev));
+
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_END, NULL);
+
+    flow = netdev_dpdk_rte_flow_create(netdev, flow_attr, patterns->items,
+                                       actions->actions, &error);
+
+    free(rss);
+    if (!flow) {
+        VLOG_ERR("%s: rte flow create offload error: %u : message : %s\n",
+                netdev_get_name(netdev), error.type, error.message);
+    }
+
+    return flow;
+}
+
+static struct rte_flow *
+netdev_rte_offload_flow(struct netdev *netdev,
+                        struct offload_info *info,
+                        struct flow_patterns *patterns,
+                        struct flow_actions *actions,
+                        const struct rte_flow_attr *flow_attr)
+{
+    struct rte_flow *flow = NULL;
+    struct rte_flow_error error;
+
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_END, NULL);
+
+    flow = netdev_dpdk_rte_flow_create(netdev, flow_attr, patterns->items,
+                                       actions->actions, &error);
+    if (!flow) {
+        VLOG_ERR("%s: rte flow create offload error: %u : message : %s\n",
+                netdev_get_name(netdev), error.type, error.message);
+    }
+
+    info->is_hwol = (flow) ? true : false;
+    return flow;
+}
+
 static struct rte_flow *
 netdev_rte_offloads_add_flow(struct netdev *netdev,
                              const struct match *match,
-                             struct nlattr *nl_actions OVS_UNUSED,
-                             size_t actions_len OVS_UNUSED,
-                             const ovs_u128 *ufid,
+                             struct nlattr *nl_actions,
+                             size_t actions_len,
+                             const ovs_u128 *ufid OVS_UNUSED,
                              struct offload_info *info)
 {
     const struct rte_flow_attr flow_attr = {
@@ -792,7 +877,6 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
     struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
     struct flow_actions actions = { .actions = NULL, .cnt = 0 };
     struct rte_flow *flow = NULL;
-    struct rte_flow_error error;
     int result = 0;
     struct flow_items spec, mask;
 
@@ -806,25 +890,37 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
 
     add_flow_pattern(&patterns, RTE_FLOW_ITEM_TYPE_END, NULL, NULL);
 
-    struct rte_flow_action_mark mark;
-    struct action_rss_data *rss;
+    const struct nlattr *a = NULL;
+    unsigned int left = 0;
+    struct rte_flow_action_jump jump = {0};
+    struct rte_flow_action_count count = {0};
+    struct netdev_rte_port *vport = NULL;
 
-    mark.id = info->flow_mark;
-    add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_MARK, &mark);
+    NL_ATTR_FOR_EACH_UNSAFE (a, left, nl_actions, actions_len) {
+        int type = nl_attr_type(a);
+        if ((enum ovs_action_attr) type == OVS_ACTION_ATTR_TUNNEL_POP) {
+            vport = netdev_rte_add_jump_flow_action(a, &jump, &actions);
+            if (!vport) {
+                result = -1;
+                break;
+            }
+            netdev_rte_add_count_flow_action(&count, &actions);
+            result = 0;
+        } else {
+            /* Unsupported action for offloading */
+            result = -1;
+            break;
+        }
+    }
 
-    rss = add_flow_rss_action(&actions, netdev_n_rxq(netdev));
-    add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_END, NULL);
-
-    flow = netdev_dpdk_rte_flow_create(netdev, &flow_attr,
-                                       patterns.items,
-                                       actions.actions, &error);
-
-    free(rss);
-    if (!flow) {
-        VLOG_ERR("%s: rte flow create error: %u : message : %s\n",
-                 netdev_get_name(netdev), error.type, error.message);
-        result = -1;
-        goto out;
+    /* If actions are not supported, try offloading Mark and RSS actions */
+    if (result) {
+        flow = netdev_rte_offload_mark_rss(netdev, info, &patterns, &actions,
+                                           &flow_attr);
+    } else {
+        /* Actions are supported, offload the flow */
+        flow = netdev_rte_offload_flow(netdev, info, &patterns, &actions,
+                                       &flow_attr);
     }
 
 out:
@@ -837,7 +933,7 @@ out:
  * Check if any unsupported flow patterns are specified.
  */
 static int
-netdev_rte_offloads_validate_flow(const struct match *match)
+netdev_rte_offloads_validate_flow(const struct match *match, bool is_tun)
 {
     struct match match_zero_wc;
     const struct flow *masks = &match->wc.masks;
@@ -845,8 +941,8 @@ netdev_rte_offloads_validate_flow(const struct match *match)
     /* Create a wc-zeroed version of flow. */
     match_init(&match_zero_wc, &match->flow, &match->wc);
 
-    if (!is_all_zeros(&match_zero_wc.flow.tunnel,
-                      sizeof match_zero_wc.flow.tunnel)) {
+    if (!is_tun && !is_all_zeros(&match_zero_wc.flow.tunnel,
+                                 sizeof match_zero_wc.flow.tunnel)) {
         goto err;
     }
 
@@ -949,7 +1045,7 @@ netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
     ufid_hw_offload_add(ufid_hw_offload, &rte_port->ufid_to_rte);
     ufid_to_portid_add(ufid, rte_port->dp_port);
 
-    ret = netdev_rte_offloads_validate_flow(match);
+    ret = netdev_rte_offloads_validate_flow(match, false);
     if (ret < 0) {
         VLOG_DBG("flow pattern is not supported");
         return EINVAL;
@@ -965,12 +1061,9 @@ netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
     return 0;
 }
 
-int
-netdev_rte_offloads_flow_del(struct netdev *netdev OVS_UNUSED,
-                             const ovs_u128 *ufid,
-                             struct dpif_flow_stats *stats OVS_UNUSED)
+static int
+netdev_offloads_flow_del(const ovs_u128 *ufid)
 {
-
     odp_port_t port_num = ufid_to_portid_search(ufid);
 
     if (port_num == INVALID_ODP_PORT) {
@@ -995,6 +1088,23 @@ netdev_rte_offloads_flow_del(struct netdev *netdev OVS_UNUSED,
     return 0;
 }
 
+}
+int
+netdev_rte_offloads_flow_del(struct netdev *netdev OVS_UNUSED,
+                             const ovs_u128 *ufid,
+                             struct dpif_flow_stats *stats OVS_UNUSED)
+{
+    return netdev_offloads_flow_del(ufid);
+}
+
+static int
+netdev_rte_vport_flow_del(struct netdev *netdev OVS_UNUSED,
+                          const ovs_u128 *ufid,
+                          struct dpif_flow_stats *stats OVS_UNUSED)
+{
+    return netdev_offloads_flow_del(ufid);
+}
+
 static int
 netdev_rte_vport_flow_put(struct netdev *netdev OVS_UNUSED,
                  struct match *match OVS_UNUSED,
@@ -1007,13 +1117,6 @@ netdev_rte_vport_flow_put(struct netdev *netdev OVS_UNUSED,
     return -1;
 }
 
-static int
-netdev_rte_vport_flow_del(struct netdev * netdev OVS_UNUSED,
-                        const ovs_u128 * ufid OVS_UNUSED,
-                        struct dpif_flow_stats * flow_stats OVS_UNUSED)
-{
-    return -1;
-}
 /*
  * Vport netdev flow pointers are initialized by default to kernel calls.
  * They should be nullified or be set to a valid netdev (userspace) calls.
@@ -1044,7 +1147,7 @@ netdev_rte_offloads_port_add(struct netdev *netdev, odp_port_t dp_port)
         if (!rte_port) {
             goto out;
         }
-        rte_port->dpdk_num_queues = netdev->n_rxq;
+        rte_port->dpdk_num_queues = netdev_n_rxq(netdev);
         dpdk_phy_ports_amount++;
         VLOG_INFO("Rte dpdk port %d allocated.", dp_port);
         goto out;
