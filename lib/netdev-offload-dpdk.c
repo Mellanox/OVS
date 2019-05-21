@@ -48,6 +48,7 @@ VLOG_DEFINE_THIS_MODULE(netdev_offload_dpdk);
 
 static struct vlog_rate_limit error_rl = VLOG_RATE_LIMIT_INIT(100, 5);
 
+#define RTE_FLOW_MAX_TABLES (31)
 #define INVALID_ODP_PORT (-1)
 
 enum rte_port_type {
@@ -78,6 +79,7 @@ struct netdev_rte_port {
     uint32_t table_id; /* Flow table id per related to this port. */
     uint32_t exception_mark; /* Exception SW handling for this port type. */
     struct cmap ufid_to_rte;
+    struct rte_flow *default_rte_flow[RTE_FLOW_MAX_TABLES];
 };
 
 struct flow_data;
@@ -866,9 +868,80 @@ add_flow_patterns(struct flow_patterns *patterns,
     return 0;
 }
 
+static struct rte_flow *
+netdev_offload_dpdk_add_default_flow(struct netdev_rte_port *rte_port,
+                                    struct netdev_rte_port *vport)
+{
+    /* The default flow has the lowest priority, no
+     * pattern (match all) and a Mark action
+     */
+    const struct rte_flow_attr def_flow_attr = {
+        .group = vport->table_id,
+        .priority = 1,
+        .ingress = 1,
+        .egress = 0,
+    };
+    struct flow_patterns def_patterns = { .items = NULL, .cnt = 0 };
+    struct flow_actions def_actions = { .actions = NULL, .cnt = 0 };
+    struct rte_flow *def_flow = NULL;
+    struct rte_flow_error error;
+
+    add_flow_pattern(&def_patterns, RTE_FLOW_ITEM_TYPE_END, NULL, NULL);
+
+    struct action_rss_data *rss = NULL;
+    rss = add_flow_rss_action(&def_actions, rte_port->netdev);
+
+    struct rte_flow_action_mark mark;
+    mark.id = vport->exception_mark;
+    add_flow_action(&def_actions, RTE_FLOW_ACTION_TYPE_MARK, &mark);
+    add_flow_action(&def_actions, RTE_FLOW_ACTION_TYPE_END, NULL);
+
+    def_flow = netdev_dpdk_rte_flow_create(rte_port->netdev, &def_flow_attr,
+                                           def_patterns.items,
+                                           def_actions.actions, &error);
+    free(rss);
+    free_flow_patterns(&def_patterns);
+    free_flow_actions(&def_actions);
+
+    if (!def_flow) {
+        VLOG_ERR_RL(&error_rl, "%s: rte flow create for default flow error: %u"
+            " : message : %s\n", netdev_get_name(rte_port->netdev), error.type,
+            error.message);
+
+    }
+
+    return def_flow;
+}
+
+/* When we add a jump to vport table we add a new table.
+ * We add a default rule with low priority that if we fail
+ * to match on table we set a sepical mark and go to SW.
+ */
+static int
+netdev_rte_vport_add_default_rule(struct netdev_rte_port *rte_port,
+                                  struct netdev_rte_port *vport)
+{
+    int ret = 0;
+    /* TODO: RONI, code was copied from previous implementation
+     * there is a hidden assumption here that we always jump from
+     * phy port so we will never get rte_port which is not the uplink */
+    if (rte_port->default_rte_flow[vport->table_id]) {
+        return ret;
+    }
+    rte_port->default_rte_flow[vport->table_id] =
+        netdev_offload_dpdk_add_default_flow(rte_port, vport);
+
+    if (!rte_port->default_rte_flow[vport->table_id]) {
+        VLOG_ERR("ASAF Default flow is expected to fail "
+                "- no support for NIC and group 1 yet");
+        ret = -1;
+    }
+    return ret;
+}
+
 static int
 netdev_rte_add_jump_to_vport_flow_action(
-    struct netdev_rte_port *rte_port OVS_UNUSED,
+    struct netdev_rte_port *rte_port,
     struct flow_data *fdata,
     odp_port_t vport_odp_port,
     struct flow_actions *actions)
@@ -879,6 +952,12 @@ netdev_rte_add_jump_to_vport_flow_action(
     if (!vport) {
         VLOG_DBG("No rte port was found for odp_port %u",
                 odp_to_u32(vport_odp_port));
+        return -1;
+    }
+
+    /* if we fail here, we can't add the rule as will break
+     * flow process on miss */
+    if (netdev_rte_vport_add_default_rule(rte_port, vport)) {
         return -1;
     }
 
@@ -946,6 +1025,7 @@ netdev_rte_offload_flow(struct netdev *netdev,
                 netdev_get_name(netdev), error.type, error.message);
     }
 
+    info->is_hwol = (flow) ? true : false;
     return flow;
 }
 
@@ -1431,6 +1511,30 @@ netdev_rte_port_clean_all(struct netdev_rte_port *rte_port)
     }
 }
 
+/**
+ * @brief - Go over all the default rules and free if exists.
+ *
+ * @param rte_port
+ */
+static void
+netdev_rte_port_del_default_rules(struct netdev_rte_port *rte_port)
+{
+    int i = 0;
+    struct rte_flow_error error = {0};
+
+    for (i = 0 ; i < RTE_FLOW_MAX_TABLES ; i++) {
+        if (rte_port->default_rte_flow[i]) {
+            if (netdev_dpdk_rte_flow_destroy(rte_port->netdev,
+                                             rte_port->default_rte_flow[i],
+                                             &error)) {
+                 VLOG_ERR_RL(&error_rl, "rte flow destroy error: %u : "
+                             "message : %s\n", error.type, error.message);
+            }
+            rte_port->default_rte_flow[i] = NULL;
+        }
+    }
+}
+
 /*
  * Called when deleting a dpif netdev port.
  */
@@ -1451,11 +1555,13 @@ netdev_offloads_port_del(odp_port_t dp_port)
     VLOG_DBG("Remove datapath port %d.", rte_port->dp_port);
     cmap_remove(&port_map, CONST_CAST(struct cmap_node *, &rte_port->node),
                 hash);
-    ovsrcu_postpone(free, rte_port);
 
     if (rte_port->rte_port_type == RTE_PORT_TYPE_DPDK) {
+        netdev_rte_port_del_default_rules(rte_port);
         dpdk_phy_ports_amount--;
     }
+
+    ovsrcu_postpone(free, rte_port);
 
     return 0;
 }
