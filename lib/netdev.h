@@ -204,10 +204,11 @@ struct offload_info {
     uint8_t tunnel_csum_on; /* Tunnel header with checksum */
 
     /*
-     * The flow mark id assigened to the flow. If any pkts hit the flow,
+     * The flow mark id assigned to the flow. If any pkts hit the flow,
      * it will be in the pkt meta data.
      */
     uint32_t flow_mark;
+    bool is_hwol; /* true if flow is fully offloaded */
 };
 struct dpif_class;
 struct netdev_flow_dump;
