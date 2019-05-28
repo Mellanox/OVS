@@ -251,6 +251,49 @@ struct conntrack_bucket {
 #define CONNTRACK_BUCKETS_SHIFT 8
 #define CONNTRACK_BUCKETS (1 << CONNTRACK_BUCKETS_SHIFT)
 
+
+enum off_op {
+    CT_FLOW_OFFLOAD_OP_ADD = 1 << 0,
+    CT_FLOW_OFFLOAD_OP_DEL = 1 << 1,
+};
+
+struct ct_flow_offload_item {
+    int  op;
+    bool ct_ipv6;
+    uint32_t setmark;
+
+    union {                   
+        struct ovs_key_ct_tuple_ipv4 ipv4;
+        struct ovs_key_ct_tuple_ipv6 ipv6;  
+    } ct_key; 
+
+    union {                   
+        struct ovs_key_ct_tuple_ipv4 ipv4;
+        struct ovs_key_ct_tuple_ipv6 ipv6;  
+    } ct_match; 
+
+    union {                   
+        struct ovs_key_ct_tuple_ipv4 ipv4;
+        struct ovs_key_ct_tuple_ipv6 ipv6;  
+    } ct_modify; 
+
+};
+
+/* hw-offload callbacks.
+ * 
+ * */
+struct conntrack_off_class {
+    /* 
+     *
+     *  */
+    const char *type;
+    int (*conn_add)(struct ct_flow_offload_item *item);
+ 
+
+    int (*conn_del)(struct ct_flow_offload_item *item);
+
+};
+
 struct conntrack {
     /* Independent buckets containing the connections */
     struct conntrack_bucket buckets[CONNTRACK_BUCKETS];
@@ -293,6 +336,12 @@ struct conntrack {
     /* Fragmentation handling context. */
     struct ipf *ipf;
 
+    /* Holding HW offload class */
+    struct conntrack_off_class * off_class;
+
 };
+
+
+void conntrack_init_offload(struct conntrack *,struct conntrack_off_class *);
 
 #endif /* conntrack.h */

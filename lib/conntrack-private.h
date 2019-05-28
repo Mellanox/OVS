@@ -106,6 +106,7 @@ struct conn {
     uint8_t seq_skew_dir;
     /* True if alg data connection. */
     uint8_t alg_related;
+    uint8_t offload_flags;
 };
 
 enum ct_update_res {
@@ -117,6 +118,13 @@ enum ct_update_res {
 enum ct_conn_type {
     CT_CONN_TYPE_DEFAULT,
     CT_CONN_TYPE_UN_NAT,
+};
+
+
+enum ct_off_flag {
+    CT_OFF_NONE = 0,
+    CT_OFF_INIT = 0x1,
+    CT_OFF_REP  = 0x2,
 };
 
 struct ct_l4_proto {

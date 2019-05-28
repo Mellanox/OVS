@@ -1367,6 +1367,125 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
                    &conn_for_expectation);
 }
 
+
+static void
+conntrack_off_fill_nat(struct ct_flow_offload_item *msg,
+                       struct dp_packet *packet,
+                       bool reply)
+{
+    if (msg->ct_ipv6) {
+        VLOG_DBG("IPV6 not supported yet");
+    } else {
+        const struct ip_header *l3 = dp_packet_l3(packet);
+        if (reply) {
+            VLOG_DBG("going down packet");
+            if (get_16aligned_be32(&l3->ip_src) != msg->ct_key.ipv4.ipv4_dst) {
+                VLOG_DBG("have a nat, chnage src "IP_FMT" to "IP_FMT, IP_ARGS(
+                         get_16aligned_be32(&l3->ip_src)),
+                         IP_ARGS(msg->ct_key.ipv4.ipv4_dst));
+            }
+            if (get_16aligned_be32(&l3->ip_dst) != msg->ct_key.ipv4.ipv4_src) {
+                VLOG_DBG("have a nat, chnage dst "IP_FMT" to "IP_FMT, IP_ARGS(
+                           get_16aligned_be32(&l3->ip_dst)),
+                            IP_ARGS(msg->ct_key.ipv4.ipv4_src));
+            }
+
+
+        } else {
+            VLOG_ERR("have to chnage packet %s",reply?"down":"up");
+            if (get_16aligned_be32(&l3->ip_src) != msg->ct_key.ipv4.ipv4_src) {
+                VLOG_DBG("have a nat, chnage src "IP_FMT" from "IP_FMT,
+                        IP_ARGS( get_16aligned_be32(&l3->ip_src)),
+                        IP_ARGS(msg->ct_key.ipv4.ipv4_src));
+            }
+            if (get_16aligned_be32(&l3->ip_dst) != msg->ct_key.ipv4.ipv4_dst) {
+                VLOG_DBG("have a nat, chnage dst "IP_FMT" from "IP_FMT,
+                        IP_ARGS( get_16aligned_be32(&l3->ip_dst)),
+                        IP_ARGS(msg->ct_key.ipv4.ipv4_dst));
+            }
+
+        }
+    }
+
+
+}
+
+static void
+conntrack_off_fill_key(struct ct_flow_offload_item *msg,
+                       struct dp_packet *packet)
+{
+    if (msg->ct_ipv6) {
+        VLOG_ERR("IPV6 not supported yet");
+    } else {
+        msg->ct_key.ipv4 = packet->md.ct_orig_tuple.ipv4;
+    }
+}
+
+static void
+conntrack_off_fill_match(struct ct_flow_offload_item *msg,
+                       struct conn_lookup_ctx *ctx)
+{
+    if (msg->ct_ipv6) {
+        VLOG_ERR("not supported yet");
+    } else {
+        msg->ct_match.ipv4.ipv4_src  = ctx->key.src.addr.ipv4;
+        msg->ct_match.ipv4.ipv4_dst  = ctx->key.dst.addr.ipv4;
+        msg->ct_match.ipv4.src_port  = ctx->key.src.port;
+        msg->ct_match.ipv4.dst_port  = ctx->key.dst.port;
+        msg->ct_match.ipv4.ipv4_proto  = ctx->key.nw_proto;
+    }
+}
+
+static void
+conntrack_fill_meta(struct ct_flow_offload_item *msg,
+                       struct conn_lookup_ctx *ctx)
+{
+    msg->setmark = ctx->conn->mark;
+}
+
+static void
+conntrack_off_put_flow(struct conntrack *ct, struct conn_lookup_ctx *ctx,
+                    struct dp_packet *packet, bool reply)
+{
+    struct ct_flow_offload_item off_msg;
+    memset(&off_msg,0,sizeof off_msg);
+    off_msg.op = CT_FLOW_OFFLOAD_OP_ADD;
+
+    if (!ct->off_class) {
+
+        off_msg.ct_ipv6 = (ctx->key.dl_type == htons(ETH_TYPE_IPV6));
+        conntrack_off_fill_key(&off_msg, packet);
+        conntrack_off_fill_match(&off_msg, ctx);
+        conntrack_off_fill_nat(&off_msg, packet, reply);
+        conntrack_fill_meta(&off_msg, ctx);
+    }
+}
+
+void
+conntrack_init_offload(struct conntrack *ct,struct conntrack_off_class *cls)
+{
+    ct->off_class = cls;
+}
+
+static void
+conntrack_add_ct_off_item(struct conntrack *ct,
+                               struct conn_lookup_ctx *ctx,
+                               struct dp_packet *packet)
+{
+    if (ctx->conn &&( (packet->md.ct_state & CS_ESTABLISHED)
+                  || ctx->conn->nat_info)) {
+
+        if (ctx->reply && !(ctx->conn->offload_flags & CT_OFF_REP)) {
+                conntrack_off_put_flow(ct, ctx, packet, ctx->reply);
+                ctx->conn->offload_flags |= CT_OFF_REP;
+            } else if (!ctx->reply &&
+                       !(ctx->conn->offload_flags & CT_OFF_INIT)) {
+                conntrack_off_put_flow(ct, ctx, packet, ctx->reply);
+                ctx->conn->offload_flags |= CT_OFF_INIT;
+            }
+    }
+}
+
 /* Sends the packets in '*pkt_batch' through the connection tracker 'ct'.  All
  * the packets must have the same 'dl_type' (IPv4 or IPv6) and should have
  * the l3 and and l4 offset properly set.  Performs fragment reassembly with
@@ -1387,11 +1506,11 @@ conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
 {
     ipf_preprocess_conntrack(ct->ipf, pkt_batch, now, dl_type, zone,
                              ct->hash_basis);
-
     struct dp_packet *packet;
     struct conn_lookup_ctx ctx;
 
     DP_PACKET_BATCH_FOR_EACH (i, packet, pkt_batch) {
+        
         if (packet->md.ct_state == CS_INVALID
             || !conn_key_extract(ct, packet, dl_type, &ctx, zone)) {
             packet->md.ct_state = CS_INVALID;
@@ -1400,6 +1519,21 @@ conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
         }
         process_one(ct, packet, &ctx, zone, force, commit, now, setmark,
                     setlabel, nat_action_info, tp_src, tp_dst, helper);
+
+        if(ct->off_class && ctx.conn &&
+           ((packet->md.ct_state & CS_ESTABLISHED) || ctx.conn->nat_info))
+        {
+            conntrack_add_ct_off_item(ct, &ctx, packet);
+        }
+/*
+        if(ctx.conn){
+    const struct ip_header *l3 = dp_packet_l3(packet);
+        VLOG_ERR("OIRG: ip src ip "IP_FMT" and dir %s",IP_ARGS(packet->md.ct_orig_tuple.ipv4.ipv4_src),packet->md.ct_state & CS_REPLY_DIR?"REP":"INI");
+        VLOG_ERR("ORIG: ip dst ip "IP_FMT,IP_ARGS(packet->md.ct_orig_tuple.ipv4.ipv4_dst));
+        VLOG_ERR("PKT: ip src "IP_FMT" dst"IP_FMT ,IP_ARGS( * ((__be32 *) &l3->ip_src)) , IP_ARGS( * ((__be32 *) &l3->ip_dst)) );
+        VLOG_ERR("CONN KEY: ip src "IP_FMT" dst"IP_FMT ,IP_ARGS( ctx.key.src.addr.ipv4) , IP_ARGS(ctx.key.dst.addr.ipv4));
+        }
+  */      
     }
 
     ipf_postprocess_conntrack(ct->ipf, pkt_batch, now, dl_type);
