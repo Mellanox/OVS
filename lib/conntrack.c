@@ -176,6 +176,8 @@ handle_tftp_ctl(struct conntrack *ct,
                 const struct conn *conn_for_expectation,
                 long long now OVS_UNUSED,
                 enum ftp_ctl_pkt ftp_ctl OVS_UNUSED, bool nat OVS_UNUSED);
+static void
+conntrack_off_del_conn(struct conntrack *ct, struct conn *conn);
 
 typedef void (*alg_helper)(struct conntrack *ct,
                            const struct conn_lookup_ctx *ctx,
@@ -850,6 +852,10 @@ conn_clean(struct conntrack *ct, struct conn *conn,
 {
     ovs_assert(conn->conn_type == CT_CONN_TYPE_DEFAULT);
 
+    if(netdev_is_flow_api_enabled() && ct->off_class){
+        conntrack_off_del_conn(ct, conn);
+    }
+
     if (conn->alg) {
         expectation_clean(ct, &conn->key, ct->hash_basis);
     }
@@ -1369,39 +1375,46 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
 
 
 static void
-conntrack_off_fill_nat(struct ct_flow_offload_item *msg,
+conntrack_off_fill_nat(struct ct_flow_offload_item *item,
                        struct dp_packet *packet,
                        bool reply)
 {
-    if (msg->ct_ipv6) {
+    if (item->ct_ipv6) {
         VLOG_DBG("IPV6 not supported yet");
     } else {
         const struct ip_header *l3 = dp_packet_l3(packet);
         if (reply) {
-            VLOG_DBG("going down packet");
-            if (get_16aligned_be32(&l3->ip_src) != msg->ct_key.ipv4.ipv4_dst) {
+            if (get_16aligned_be32(&l3->ip_src) != item->ct_key.ipv4.ipv4_dst) {
                 VLOG_DBG("have a nat, chnage src "IP_FMT" to "IP_FMT, IP_ARGS(
                          get_16aligned_be32(&l3->ip_src)),
-                         IP_ARGS(msg->ct_key.ipv4.ipv4_dst));
+                         IP_ARGS(item->ct_key.ipv4.ipv4_dst));
+                item->ct_modify.ipv4.ipv4_src = item->ct_key.ipv4.ipv4_dst;
+                item->mod_flags |= CT_OFFLOAD_MODIFY_SRC_IP;
             }
-            if (get_16aligned_be32(&l3->ip_dst) != msg->ct_key.ipv4.ipv4_src) {
+            if (get_16aligned_be32(&l3->ip_dst) != item->ct_key.ipv4.ipv4_src) {
                 VLOG_DBG("have a nat, chnage dst "IP_FMT" to "IP_FMT, IP_ARGS(
                            get_16aligned_be32(&l3->ip_dst)),
-                            IP_ARGS(msg->ct_key.ipv4.ipv4_src));
+                            IP_ARGS(item->ct_key.ipv4.ipv4_src));
+                item->ct_modify.ipv4.ipv4_dst = item->ct_key.ipv4.ipv4_src;
+                item->mod_flags |= CT_OFFLOAD_MODIFY_DST_IP;
             }
 
 
         } else {
-            VLOG_ERR("have to chnage packet %s",reply?"down":"up");
-            if (get_16aligned_be32(&l3->ip_src) != msg->ct_key.ipv4.ipv4_src) {
+            if (get_16aligned_be32(&l3->ip_src) != item->ct_key.ipv4.ipv4_src) {
                 VLOG_DBG("have a nat, chnage src "IP_FMT" from "IP_FMT,
                         IP_ARGS( get_16aligned_be32(&l3->ip_src)),
-                        IP_ARGS(msg->ct_key.ipv4.ipv4_src));
+                        IP_ARGS(item->ct_key.ipv4.ipv4_src));
+
+                item->ct_modify.ipv4.ipv4_src = get_16aligned_be32(&l3->ip_src);
+                item->mod_flags |= CT_OFFLOAD_MODIFY_SRC_IP;
             }
-            if (get_16aligned_be32(&l3->ip_dst) != msg->ct_key.ipv4.ipv4_dst) {
+            if (get_16aligned_be32(&l3->ip_dst) != item->ct_key.ipv4.ipv4_dst) {
                 VLOG_DBG("have a nat, chnage dst "IP_FMT" from "IP_FMT,
                         IP_ARGS( get_16aligned_be32(&l3->ip_dst)),
-                        IP_ARGS(msg->ct_key.ipv4.ipv4_dst));
+                        IP_ARGS(item->ct_key.ipv4.ipv4_dst));
+                item->ct_modify.ipv4.ipv4_dst = get_16aligned_be32(&l3->ip_dst);
+                item->mod_flags |= CT_OFFLOAD_MODIFY_DST_IP;
             }
 
         }
@@ -1415,10 +1428,21 @@ conntrack_off_fill_key(struct ct_flow_offload_item *msg,
                        struct dp_packet *packet)
 {
     if (msg->ct_ipv6) {
-        VLOG_ERR("IPV6 not supported yet");
+        VLOG_DBG("IPV6 not supported yet");
     } else {
         msg->ct_key.ipv4 = packet->md.ct_orig_tuple.ipv4;
     }
+}
+
+static inline void
+conntrack_fill_ipv4_ct_tuple_from_key(struct ovs_key_ct_tuple_ipv4 *tuple,
+                                 struct conn_key *key)
+{
+        tuple->ipv4_src  = key->src.addr.ipv4;
+        tuple->ipv4_dst  = key->dst.addr.ipv4;
+        tuple->src_port  = key->src.port;
+        tuple->dst_port  = key->dst.port;
+        tuple->ipv4_proto  = key->nw_proto;
 }
 
 static void
@@ -1426,38 +1450,44 @@ conntrack_off_fill_match(struct ct_flow_offload_item *msg,
                        struct conn_lookup_ctx *ctx)
 {
     if (msg->ct_ipv6) {
-        VLOG_ERR("not supported yet");
+        VLOG_DBG("not supported yet");
     } else {
-        msg->ct_match.ipv4.ipv4_src  = ctx->key.src.addr.ipv4;
-        msg->ct_match.ipv4.ipv4_dst  = ctx->key.dst.addr.ipv4;
-        msg->ct_match.ipv4.src_port  = ctx->key.src.port;
-        msg->ct_match.ipv4.dst_port  = ctx->key.dst.port;
-        msg->ct_match.ipv4.ipv4_proto  = ctx->key.nw_proto;
+        conntrack_fill_ipv4_ct_tuple_from_key(&msg->ct_match.ipv4, &ctx->key);
     }
 }
 
 static void
-conntrack_fill_meta(struct ct_flow_offload_item *msg,
-                       struct conn_lookup_ctx *ctx)
+conntrack_off_put_conn(struct conntrack *ct, struct conn_lookup_ctx *ctx,
+                    struct dp_packet *packet, bool reply)
 {
-    msg->setmark = ctx->conn->mark;
+    struct ct_flow_offload_item off_item;
+    memset(&off_item,0,sizeof off_item);
+    off_item.op = CT_OFFLOAD_OP_ADD;
+    off_item.ct_ipv6 = (ctx->key.dl_type == htons(ETH_TYPE_IPV6));
+
+    if(off_item.ct_ipv6){
+        VLOG_WARN("CT offload not supported for ipv6");
+        return;
+    }
+
+    if (ct->off_class && ct->off_class->conn_add) {
+        conntrack_off_fill_key(&off_item, packet);
+        conntrack_off_fill_match(&off_item, ctx);
+        conntrack_off_fill_nat(&off_item, packet, reply);
+        ct->off_class->conn_add(&off_item, &packet->md);
+    }
 }
 
 static void
-conntrack_off_put_flow(struct conntrack *ct, struct conn_lookup_ctx *ctx,
-                    struct dp_packet *packet, bool reply)
+conntrack_off_del_conn(struct conntrack *ct, struct conn *conn)
 {
-    struct ct_flow_offload_item off_msg;
-    memset(&off_msg,0,sizeof off_msg);
-    off_msg.op = CT_FLOW_OFFLOAD_OP_ADD;
-
-    if (!ct->off_class) {
-
-        off_msg.ct_ipv6 = (ctx->key.dl_type == htons(ETH_TYPE_IPV6));
-        conntrack_off_fill_key(&off_msg, packet);
-        conntrack_off_fill_match(&off_msg, ctx);
-        conntrack_off_fill_nat(&off_msg, packet, reply);
-        conntrack_fill_meta(&off_msg, ctx);
+    if (conn->offload_flags & (CT_OFF_REP | CT_OFF_INIT)
+            && ct->off_class && ct->off_class->conn_del) {
+        struct ct_flow_offload_item msg;
+        memset(&msg,0,sizeof msg);
+        msg.op = CT_OFFLOAD_OP_DEL;
+        conntrack_fill_ipv4_ct_tuple_from_key(&msg.ct_key.ipv4, &conn->key);
+        ct->off_class->conn_del(&msg);
     }
 }
 
@@ -1476,11 +1506,11 @@ conntrack_add_ct_off_item(struct conntrack *ct,
                   || ctx->conn->nat_info)) {
 
         if (ctx->reply && !(ctx->conn->offload_flags & CT_OFF_REP)) {
-                conntrack_off_put_flow(ct, ctx, packet, ctx->reply);
+                conntrack_off_put_conn(ct, ctx, packet, ctx->reply);
                 ctx->conn->offload_flags |= CT_OFF_REP;
             } else if (!ctx->reply &&
                        !(ctx->conn->offload_flags & CT_OFF_INIT)) {
-                conntrack_off_put_flow(ct, ctx, packet, ctx->reply);
+                conntrack_off_put_conn(ct, ctx, packet, ctx->reply);
                 ctx->conn->offload_flags |= CT_OFF_INIT;
             }
     }
@@ -1510,7 +1540,7 @@ conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
     struct conn_lookup_ctx ctx;
 
     DP_PACKET_BATCH_FOR_EACH (i, packet, pkt_batch) {
-        
+
         if (packet->md.ct_state == CS_INVALID
             || !conn_key_extract(ct, packet, dl_type, &ctx, zone)) {
             packet->md.ct_state = CS_INVALID;
@@ -1520,20 +1550,10 @@ conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
         process_one(ct, packet, &ctx, zone, force, commit, now, setmark,
                     setlabel, nat_action_info, tp_src, tp_dst, helper);
 
-        if(ct->off_class && ctx.conn &&
-           ((packet->md.ct_state & CS_ESTABLISHED) || ctx.conn->nat_info))
-        {
+        if (netdev_is_flow_api_enabled() && ct->off_class && ctx.conn &&
+           ((packet->md.ct_state & CS_ESTABLISHED) || ctx.conn->nat_info)) {
             conntrack_add_ct_off_item(ct, &ctx, packet);
         }
-/*
-        if(ctx.conn){
-    const struct ip_header *l3 = dp_packet_l3(packet);
-        VLOG_ERR("OIRG: ip src ip "IP_FMT" and dir %s",IP_ARGS(packet->md.ct_orig_tuple.ipv4.ipv4_src),packet->md.ct_state & CS_REPLY_DIR?"REP":"INI");
-        VLOG_ERR("ORIG: ip dst ip "IP_FMT,IP_ARGS(packet->md.ct_orig_tuple.ipv4.ipv4_dst));
-        VLOG_ERR("PKT: ip src "IP_FMT" dst"IP_FMT ,IP_ARGS( * ((__be32 *) &l3->ip_src)) , IP_ARGS( * ((__be32 *) &l3->ip_dst)) );
-        VLOG_ERR("CONN KEY: ip src "IP_FMT" dst"IP_FMT ,IP_ARGS( ctx.key.src.addr.ipv4) , IP_ARGS(ctx.key.dst.addr.ipv4));
-        }
-  */      
     }
 
     ipf_postprocess_conntrack(ct->ipf, pkt_batch, now, dl_type);

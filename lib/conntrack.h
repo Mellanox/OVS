@@ -253,13 +253,21 @@ struct conntrack_bucket {
 
 
 enum off_op {
-    CT_FLOW_OFFLOAD_OP_ADD = 1 << 0,
-    CT_FLOW_OFFLOAD_OP_DEL = 1 << 1,
+    CT_OFFLOAD_OP_ADD = 1 << 0,
+    CT_OFFLOAD_OP_DEL = 1 << 1,
+};
+
+enum {
+  CT_OFFLOAD_MODIFY_DST_IP   = 1 <<0, 
+  CT_OFFLOAD_MODIFY_DST_PORT = 1 <<1, 
+  CT_OFFLOAD_MODIFY_SRC_IP   = 1 <<2, 
+  CT_OFFLOAD_MODIFY_SRC_PORT = 1 <<3, 
 };
 
 struct ct_flow_offload_item {
     int  op;
     bool ct_ipv6;
+    uint8_t mod_flags;
     uint32_t setmark;
 
     union {                   
@@ -287,10 +295,10 @@ struct conntrack_off_class {
      *
      *  */
     const char *type;
-    int (*conn_add)(struct ct_flow_offload_item *item);
+    void (*conn_add)(struct ct_flow_offload_item *,struct pkt_metadata *);
  
 
-    int (*conn_del)(struct ct_flow_offload_item *item);
+    void (*conn_del)(struct ct_flow_offload_item *);
 
 };
 

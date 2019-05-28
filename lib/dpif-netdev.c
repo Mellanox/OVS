@@ -418,6 +418,11 @@ enum {
     DP_NETDEV_FLOW_OFFLOAD_OP_DEL,
 };
 
+enum {
+    DP_FLOW_OFFLOAD_ITEM = 1 << 0,
+    DP_CT_OFFLOAD_ITEM =  1 << 1
+};
+
 struct dp_flow_offload_item {
     struct dp_netdev_pmd_thread *pmd;
     struct dp_netdev_flow *flow;
@@ -426,8 +431,18 @@ struct dp_flow_offload_item {
     struct nlattr *actions;
     size_t actions_len;
 
-    struct ovs_list node;
 };
+
+struct dp_offload_item {
+    struct ovs_list node;
+    int type;
+
+    union {
+        struct dp_flow_offload_item flow_offload_item;
+        struct ct_flow_offload_item ct_offload_item;
+    };
+};
+
 
 struct dp_flow_offload {
     struct ovs_mutex mutex;
@@ -442,6 +457,20 @@ static struct dp_flow_offload dp_flow_offload = {
 
 static struct ovsthread_once offload_thread_once
     = OVSTHREAD_ONCE_INITIALIZER;
+
+static void
+ct_offload_add_ct(struct ct_flow_offload_item *item,struct pkt_metadata *md);
+
+static void
+ct_offload_del_ct(struct ct_flow_offload_item *item);
+
+
+static struct conntrack_off_class dpif_ct_off_class = {
+    .type = "dpif",
+    .conn_add = ct_offload_add_ct,
+    .conn_del = ct_offload_del_ct,
+};
+
 
 #define XPS_TIMEOUT 500000LL    /* In microseconds. */
 
@@ -1523,6 +1552,7 @@ create_dp_netdev(const char *name, const struct dpif_class *class,
     dp->upcall_cb = NULL;
 
     conntrack_init(&dp->conntrack);
+    conntrack_init_offload(&dp->conntrack, &dpif_ct_off_class);
 
     atomic_init(&dp->emc_insert_min, DEFAULT_EM_FLOW_INSERT_MIN);
     atomic_init(&dp->tx_flush_interval, DEFAULT_TX_FLUSH_INTERVAL);
@@ -2301,8 +2331,12 @@ dp_netdev_alloc_flow_offload(struct dp_netdev_pmd_thread *pmd,
                              int op)
 {
     struct dp_flow_offload_item *offload;
+    struct dp_offload_item *offload_item;
 
-    offload = xzalloc(sizeof(*offload));
+    offload_item = xzalloc(sizeof(*offload_item));
+    offload_item->type = DP_FLOW_OFFLOAD_ITEM;
+    offload = &offload_item->flow_offload_item;
+
     offload->pmd = pmd;
     offload->flow = flow;
     offload->op = op;
@@ -2320,17 +2354,30 @@ dp_netdev_free_flow_offload(struct dp_flow_offload_item *offload)
     dp_netdev_flow_unref(offload->flow);
 
     free(offload->actions);
-    free(offload);
 }
 
 static void
 dp_netdev_append_flow_offload(struct dp_flow_offload_item *offload)
 {
+    struct dp_offload_item *offload_item = container_of(offload,
+                          struct dp_offload_item ,flow_offload_item);
     ovs_mutex_lock(&dp_flow_offload.mutex);
-    ovs_list_push_back(&dp_flow_offload.list, &offload->node);
+    ovs_list_push_back(&dp_flow_offload.list, &offload_item->node);
     xpthread_cond_signal(&dp_flow_offload.cond);
     ovs_mutex_unlock(&dp_flow_offload.mutex);
 }
+
+static void
+dp_netdev_append_ct_offload(struct ct_flow_offload_item *offload)
+{
+    struct dp_offload_item *offload_item = container_of(offload,
+                           struct dp_offload_item ,ct_offload_item);
+    ovs_mutex_lock(&dp_flow_offload.mutex);
+    ovs_list_push_back(&dp_flow_offload.list, &offload_item->node);
+    xpthread_cond_signal(&dp_flow_offload.cond);
+    ovs_mutex_unlock(&dp_flow_offload.mutex);
+}
+
 
 static int
 dp_netdev_flow_offload_del(struct dp_flow_offload_item *offload)
@@ -2422,10 +2469,91 @@ dp_netdev_flow_offload_put(struct dp_flow_offload_item *offload)
     return 0;
 }
 
+static struct ct_flow_offload_item *
+dp_ct_alloc_ct_offload(struct ct_flow_offload_item *ct_offload,
+                       struct pkt_metadata *md)
+{
+    struct ct_flow_offload_item *offload;
+    struct dp_offload_item *offload_item;
+
+    offload_item = xzalloc(sizeof(*offload_item));
+    offload_item->type = DP_CT_OFFLOAD_ITEM;
+    offload = &offload_item->ct_offload_item;
+
+    memcpy(offload, ct_offload, sizeof *ct_offload);
+    if (md) {
+        offload->setmark = md->ct_mark;
+    }
+
+    return offload;
+}
+
+static void ct_offload_print_log(struct ct_flow_offload_item *item)
+{
+    struct ovs_key_ct_tuple_ipv4 * ipv4 = &item->ct_key.ipv4;
+    VLOG_ERR("key:"IP_FMT":%d "IP_FMT":%d",IP_ARGS(ipv4->ipv4_src),
+                                ntohs(ipv4->src_port),
+                                IP_ARGS(ipv4->ipv4_dst),
+                                ntohs(ipv4->dst_port));
+    ipv4 = &item->ct_match.ipv4;
+
+    VLOG_ERR("match:"IP_FMT":%d "IP_FMT":%d",IP_ARGS(ipv4->ipv4_src),
+            ntohs(ipv4->src_port),
+            IP_ARGS(ipv4->ipv4_dst),
+            ntohs(ipv4->dst_port));
+
+    ipv4 = &item->ct_modify.ipv4;
+
+    if(item->mod_flags){
+        VLOG_ERR("nat flags are on");
+    }
+
+    VLOG_ERR("nat:"IP_FMT":%d "IP_FMT":%d",IP_ARGS(ipv4->ipv4_src),
+            ntohs(ipv4->src_port),
+            IP_ARGS(ipv4->ipv4_dst),
+            ntohs(ipv4->dst_port));
+
+}
+/**
+ * callback
+ *
+ */
+static void
+ct_offload_add_ct(struct ct_flow_offload_item *item,struct pkt_metadata *md)
+{
+    struct ct_flow_offload_item *offload;
+
+    if (!netdev_is_flow_api_enabled()) {
+        return;
+    }
+    ct_offload_print_log(item);
+
+    offload = dp_ct_alloc_ct_offload(item, md);
+    dp_netdev_append_ct_offload(offload);
+}
+
+static void
+ct_offload_del_ct(struct ct_flow_offload_item *item)
+{
+    struct ct_flow_offload_item *offload;
+
+    if (!netdev_is_flow_api_enabled()) {
+        return;
+    }
+
+    offload = dp_ct_alloc_ct_offload(item, NULL);
+    dp_netdev_append_ct_offload(offload);
+}
+
+
+
+
 static void *
 dp_netdev_flow_offload_main(void *data OVS_UNUSED)
 {
+    struct dp_offload_item *offload_item;
     struct dp_flow_offload_item *offload;
+    struct ct_flow_offload_item *ct_offload;
     struct ovs_list *list;
     const char *op;
     int ret;
@@ -2439,29 +2567,49 @@ dp_netdev_flow_offload_main(void *data OVS_UNUSED)
             ovsrcu_quiesce_end();
         }
         list = ovs_list_pop_front(&dp_flow_offload.list);
-        offload = CONTAINER_OF(list, struct dp_flow_offload_item, node);
+        offload_item = CONTAINER_OF(list, struct dp_offload_item, node);
         ovs_mutex_unlock(&dp_flow_offload.mutex);
 
-        switch (offload->op) {
-        case DP_NETDEV_FLOW_OFFLOAD_OP_ADD:
-            op = "add";
-            ret = dp_netdev_flow_offload_put(offload);
-            break;
-        case DP_NETDEV_FLOW_OFFLOAD_OP_MOD:
-            op = "modify";
-            ret = dp_netdev_flow_offload_put(offload);
-            break;
-        case DP_NETDEV_FLOW_OFFLOAD_OP_DEL:
-            op = "delete";
-            ret = dp_netdev_flow_offload_del(offload);
-            break;
-        default:
-            OVS_NOT_REACHED();
-        }
+        switch (offload_item->type) {
+        case DP_FLOW_OFFLOAD_ITEM:
+            offload = &offload_item->flow_offload_item;
 
-        VLOG_DBG("%s to %s netdev flow\n",
-                 ret == 0 ? "succeed" : "failed", op);
-        dp_netdev_free_flow_offload(offload);
+            switch (offload->op) {
+            case DP_NETDEV_FLOW_OFFLOAD_OP_ADD:
+                op = "add";
+                ret = dp_netdev_flow_offload_put(offload);
+                break;
+            case DP_NETDEV_FLOW_OFFLOAD_OP_MOD:
+                op = "modify";
+                ret = dp_netdev_flow_offload_put(offload);
+                break;
+            case DP_NETDEV_FLOW_OFFLOAD_OP_DEL:
+                op = "delete";
+                ret = dp_netdev_flow_offload_del(offload);
+                break;
+            default:
+                OVS_NOT_REACHED();
+            }
+
+            VLOG_DBG("%s to %s netdev flow\n",
+                     ret == 0 ? "succeed" : "failed", op);
+
+            dp_netdev_free_flow_offload(offload);
+            free(offload_item);
+            break;
+        case DP_CT_OFFLOAD_ITEM:
+            ct_offload = &offload_item->ct_offload_item;
+            switch (ct_offload->op) {
+                case CT_OFFLOAD_OP_ADD:
+                    VLOG_ERR("CT FLOW ADD not supported yet");
+                    break;
+                case CT_OFFLOAD_OP_DEL:
+                    VLOG_ERR("CT FLOW DEL not supported yet");
+                    break;
+            }
+            free(offload_item);
+            break;
+        }
     }
 
     return NULL;
