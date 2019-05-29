@@ -258,10 +258,10 @@ enum off_op {
 };
 
 enum {
-  CT_OFFLOAD_MODIFY_DST_IP   = 1 <<0, 
-  CT_OFFLOAD_MODIFY_DST_PORT = 1 <<1, 
-  CT_OFFLOAD_MODIFY_SRC_IP   = 1 <<2, 
-  CT_OFFLOAD_MODIFY_SRC_PORT = 1 <<3, 
+  CT_OFFLOAD_MODIFY_DST_IP   = 1 <<0,
+  CT_OFFLOAD_MODIFY_DST_PORT = 1 <<1,
+  CT_OFFLOAD_MODIFY_SRC_IP   = 1 <<2,
+  CT_OFFLOAD_MODIFY_SRC_PORT = 1 <<3,
 };
 
 struct ct_flow_offload_item {
@@ -269,37 +269,36 @@ struct ct_flow_offload_item {
     bool ct_ipv6;
     uint8_t mod_flags;
     uint32_t setmark;
+    uint16_t zone;
 
-    union {                   
+    union {
         struct ovs_key_ct_tuple_ipv4 ipv4;
-        struct ovs_key_ct_tuple_ipv6 ipv6;  
-    } ct_key; 
+        struct ovs_key_ct_tuple_ipv6 ipv6;
+    } ct_key;
 
-    union {                   
+    union {
         struct ovs_key_ct_tuple_ipv4 ipv4;
-        struct ovs_key_ct_tuple_ipv6 ipv6;  
-    } ct_match; 
+        struct ovs_key_ct_tuple_ipv6 ipv6;
+    } ct_match;
 
-    union {                   
+    union {
         struct ovs_key_ct_tuple_ipv4 ipv4;
-        struct ovs_key_ct_tuple_ipv6 ipv6;  
-    } ct_modify; 
+        struct ovs_key_ct_tuple_ipv6 ipv6;
+    } ct_modify;
 
 };
 
 /* hw-offload callbacks.
- * 
- * */
+ *
+ **/
 struct conntrack_off_class {
-    /* 
+    /*
      *
      *  */
     const char *type;
     void (*conn_add)(struct ct_flow_offload_item *,struct pkt_metadata *);
- 
 
     void (*conn_del)(struct ct_flow_offload_item *);
-
 };
 
 struct conntrack {

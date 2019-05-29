@@ -123,8 +123,11 @@ enum ct_conn_type {
 
 enum ct_off_flag {
     CT_OFF_NONE = 0,
-    CT_OFF_INIT = 0x1,
-    CT_OFF_REP  = 0x2,
+    CT_OFF_INIT = 0x1 << 0,
+    CT_OFF_REP  = 0x1 << 1,
+    CT_OFF_SKIP = 0x1 << 2,
+
+    CT_OFF_BOTH = (CT_OFF_INIT | CT_OFF_REP),
 };
 
 struct ct_l4_proto {
