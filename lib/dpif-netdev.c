@@ -459,16 +459,16 @@ static struct ovsthread_once offload_thread_once
     = OVSTHREAD_ONCE_INITIALIZER;
 
 static void
-ct_offload_add_ct(struct ct_flow_offload_item *item,struct pkt_metadata *md);
+ct_offload_add_item(struct ct_flow_offload_item *item,struct pkt_metadata *md);
 
 static void
-ct_offload_del_ct(struct ct_flow_offload_item *item);
+ct_offload_del_item(struct ct_flow_offload_item *item);
 
 
 static struct conntrack_off_class dpif_ct_off_class = {
     .type = "dpif",
-    .conn_add = ct_offload_add_ct,
-    .conn_del = ct_offload_del_ct,
+    .conn_add = ct_offload_add_item,
+    .conn_del = ct_offload_del_item,
 };
 
 
@@ -2144,16 +2144,155 @@ struct megaflow_to_mark_data {
     uint32_t mark;
 };
 
+struct ct_to_mark_key {
+    union {    
+        struct ovs_key_ct_tuple_ipv4 ipv4;
+        struct ovs_key_ct_tuple_ipv6 ipv6; 
+    } ct_orig_tuple;    
+    uint16_t zone;
+    bool     is_ipv6;
+};
+
+struct ct_to_mark_data {
+    struct ct_to_mark_key key;
+    const struct cmap_node node;
+    uint32_t mark;
+};
+
 struct flow_mark {
     struct cmap megaflow_to_mark;
     struct cmap mark_to_flow;
+    struct cmap ct_to_mark;
     struct id_pool *pool;
 };
 
 static struct flow_mark flow_mark = {
     .megaflow_to_mark = CMAP_INITIALIZER,
     .mark_to_flow = CMAP_INITIALIZER,
+    .ct_to_mark = CMAP_INITIALIZER,
 };
+
+static inline uint32_t
+ct_item_key_hash(struct ct_to_mark_key *key)
+{
+    uint32_t hash = 0;
+    
+    if (!key->is_ipv6) {
+        struct ovs_key_ct_tuple_ipv4 * ipv4 = &key->ct_orig_tuple.ipv4;
+        hash+=hash_add(hash,ipv4->ipv4_src);
+        hash+=hash_add(hash,ipv4->ipv4_dst);
+        hash+=hash_add(hash,ipv4->src_port);
+        hash+=hash_add(hash,ipv4->dst_port);
+    } else {
+        struct ovs_key_ct_tuple_ipv6 * ipv6 = &key->ct_orig_tuple.ipv6;
+        uint32_t *srcip = (uint32_t *) &ipv6->ipv6_src;
+        uint32_t *dstip = (uint32_t *) &ipv6->ipv6_dst;
+        for(int i = 0 ; i < 4 ; i++){
+            hash+=hash_add(hash,srcip[i]);
+            hash+=hash_add(hash,dstip[i]);
+        }
+        hash+=hash_add(hash,ipv6->src_port);
+        hash+=hash_add(hash,ipv6->dst_port);
+    }
+
+    return hash;
+}
+
+static inline void
+ct_item_key_fill(struct ct_to_mark_key *key, struct ct_flow_offload_item *item)
+{
+    key->zone = item->zone;
+    key->is_ipv6 = item->ct_ipv6;
+    if (item->ct_ipv6) {
+        key->ct_orig_tuple.ipv4 = item->ct_key.ipv4;
+    } else {
+        key->ct_orig_tuple.ipv6 = item->ct_key.ipv6;
+    }
+}
+
+static void
+ct_to_mark_associate(struct ct_flow_offload_item *item , uint32_t mark)
+{
+    size_t hash = 0;
+    struct ct_to_mark_data *data = xzalloc(sizeof(*data));
+    
+    ct_item_key_fill(&data->key, item);
+    hash = ct_item_key_hash(&data->key);
+    data->mark = mark;
+
+    cmap_insert(&flow_mark.ct_to_mark,
+                CONST_CAST(struct cmap_node *, &data->node), hash);
+}
+
+static inline bool
+ct_to_mark_compare(struct ct_to_mark_key *key1, struct ct_to_mark_key *key2)
+{
+    if (!key1->is_ipv6 && !key2->is_ipv6) {
+        struct ovs_key_ct_tuple_ipv4 * kipv4 = &key1->ct_orig_tuple.ipv4;
+        struct ovs_key_ct_tuple_ipv4 * dipv4 = &key2->ct_orig_tuple.ipv4;
+         
+        return (kipv4->ipv4_src == dipv4->ipv4_src && 
+                kipv4->ipv4_dst == dipv4->ipv4_dst && 
+                kipv4->src_port == dipv4->src_port && 
+                kipv4->dst_port == dipv4->dst_port && 
+                kipv4->ipv4_proto == dipv4->ipv4_proto);
+    } else if (key1->is_ipv6 && key2->is_ipv6) {
+        struct ovs_key_ct_tuple_ipv6 * kipv6 = &key1->ct_orig_tuple.ipv6;
+        struct ovs_key_ct_tuple_ipv6 * dipv6 = &key2->ct_orig_tuple.ipv6;
+        return (!memcmp(&kipv6->ipv6_src,&dipv6->ipv6_src,
+                                 sizeof dipv6->ipv6_src) && 
+                !memcmp(&kipv6->ipv6_dst,&dipv6->ipv6_dst,
+                                 sizeof dipv6->ipv6_dst) &&
+                kipv6->src_port == dipv6->src_port &&
+                kipv6->dst_port == dipv6->dst_port &&
+                kipv6->ipv6_proto == dipv6->ipv6_proto);
+    }
+
+    return false;
+}
+
+static void
+ct_to_mark_disassociate(struct ct_flow_offload_item *item)
+{
+    size_t hash;
+    struct ct_to_mark_data *data;
+    struct ct_to_mark_key key;
+
+    memset(&key, 0, sizeof key);
+    ct_item_key_fill(&key, item);
+    hash = ct_item_key_hash(&key);
+
+    CMAP_FOR_EACH_WITH_HASH (data, node, hash, &flow_mark.ct_to_mark) {
+        if(ct_to_mark_compare(&key, &data->key)) {
+                cmap_remove(&flow_mark.ct_to_mark,
+                        CONST_CAST(struct cmap_node *, &data->node), hash);
+                ovsrcu_postpone(free, data);
+                return;
+        }
+    }
+}
+
+
+static inline uint32_t
+ct_to_mark_find(struct ct_flow_offload_item *item)
+{
+    size_t hash;
+    struct ct_to_mark_data *data;
+    struct ct_to_mark_key key;
+
+    memset(&key, 0, sizeof key);
+    ct_item_key_fill(&key, item);
+    hash = ct_item_key_hash(&key);
+
+    CMAP_FOR_EACH_WITH_HASH (data, node, hash, &flow_mark.ct_to_mark) {
+        if(ct_to_mark_compare(&key, &data->key)) {
+            return data->mark;
+        }
+    }
+
+    return INVALID_FLOW_MARK;
+}
+
 
 static uint32_t
 flow_mark_alloc(void)
@@ -2519,21 +2658,20 @@ static void ct_offload_print_log(struct ct_flow_offload_item *item)
  *
  */
 static void
-ct_offload_add_ct(struct ct_flow_offload_item *item,struct pkt_metadata *md)
+ct_offload_add_item(struct ct_flow_offload_item *item,struct pkt_metadata *md)
 {
     struct ct_flow_offload_item *offload;
 
     if (!netdev_is_flow_api_enabled()) {
         return;
     }
-    ct_offload_print_log(item);
 
     offload = dp_ct_alloc_ct_offload(item, md);
     dp_netdev_append_ct_offload(offload);
 }
 
 static void
-ct_offload_del_ct(struct ct_flow_offload_item *item)
+ct_offload_del_item(struct ct_flow_offload_item *item)
 {
     struct ct_flow_offload_item *offload;
 
@@ -2546,6 +2684,45 @@ ct_offload_del_ct(struct ct_flow_offload_item *item)
 }
 
 
+static int
+dp_ct_offload_add(struct ct_flow_offload_item *item)
+{
+    uint32_t mark;
+    int ret = 0;
+
+    mark = ct_to_mark_find(item);
+    if (mark == INVALID_FLOW_MARK) {
+        mark = flow_mark_alloc();
+        ct_to_mark_associate(item , mark);
+    } 
+
+    if (mark == INVALID_FLOW_MARK) {
+        VLOG_ERR("Failed to allocate flow mark!\n");
+        ret = -1;
+    }
+
+    return ret;
+}
+
+static int
+dp_ct_offload_del(struct ct_flow_offload_item *item)
+{
+    uint32_t mark;
+    int ret = 0;
+
+    mark = ct_to_mark_find(item);
+    if (mark == INVALID_FLOW_MARK) {
+        VLOG_WARN("CT del with no mark");
+        return ret;
+    } else {
+        ct_to_mark_disassociate(item);
+        flow_mark_free(mark);
+    }
+
+    VLOG_ERR("mark %d returned to poll",mark);
+
+    return ret;
+}
 
 
 static void *
@@ -2601,10 +2778,10 @@ dp_netdev_flow_offload_main(void *data OVS_UNUSED)
             ct_offload = &offload_item->ct_offload_item;
             switch (ct_offload->op) {
                 case CT_OFFLOAD_OP_ADD:
-                    VLOG_ERR("CT FLOW ADD not supported yet");
+                    ret = dp_ct_offload_add(ct_offload);
                     break;
                 case CT_OFFLOAD_OP_DEL:
-                    VLOG_ERR("CT FLOW DEL not supported yet");
+                    ret = dp_ct_offload_del(ct_offload);
                     break;
             }
             free(offload_item);
