@@ -1468,6 +1468,7 @@ conntrack_off_put_conn(struct conntrack *ct, struct conn_lookup_ctx *ctx,
     off_item.op = CT_OFFLOAD_OP_ADD;
     off_item.ct_ipv6 = (ctx->key.dl_type == htons(ETH_TYPE_IPV6));
     off_item.zone = ctx->key.zone;
+    off_item.reply = reply;
 
     if (off_item.ct_ipv6) {
         VLOG_WARN("CT offload not supported for ipv6");

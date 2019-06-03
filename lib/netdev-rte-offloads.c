@@ -2715,3 +2715,273 @@ netdev_rte_offloads_hw_pr_remove(int relay_id)
         VLOG_ERR("netdev_rte_offloads_remove_relay failed\n");
     }
 }
+
+/* Connection tracking code */
+
+#define INVALID_OUTER_ID  0Xffffffff
+#define MAX_OUTER_ID  0xffff
+
+struct tun_ctx_outer_id_data {
+    struct cmap_node node;
+    uint32_t outer_id;
+    ovs_be32 ip_dst;
+    ovs_be32 ip_src;
+    ovs_be64 tun_id;
+    int      ref_count;
+};
+
+struct tun_ctx_outer_id {
+    struct cmap outer_id_to_tun_map;
+    struct cmap tun_to_outer_id_map;
+    struct id_pool *pool;
+};
+
+struct tun_ctx_outer_id tun_ctx_outer_id = {
+    .outer_id_to_tun_map = CMAP_INITIALIZER,
+    .tun_to_outer_id_map = CMAP_INITIALIZER,
+};
+
+static struct
+tun_ctx_outer_id_data *netdev_dpdk_tun_data_find(uint32_t outer_id)
+{
+    size_t hash = hash_add(hash,outer_id);
+    struct tun_ctx_outer_id_data *data;
+
+    CMAP_FOR_EACH_WITH_HASH (data, node, hash,
+             &tun_ctx_outer_id.outer_id_to_tun_map) {
+        if (data->outer_id == outer_id) {
+            return data;
+        }
+    }
+
+    return NULL;
+}
+
+static void
+netdev_dpdk_tun_data_del(uint32_t outer_id)
+{
+    size_t hash = hash_add(hash,outer_id);
+    struct tun_ctx_outer_id_data *data;
+
+    CMAP_FOR_EACH_WITH_HASH (data, node, hash,
+            &tun_ctx_outer_id.outer_id_to_tun_map) {
+        if (data->outer_id == outer_id) {
+                cmap_remove(&tun_ctx_outer_id.outer_id_to_tun_map,
+                        CONST_CAST(struct cmap_node *, &data->node), hash);
+                ovsrcu_postpone(free, data);
+                return;
+        }
+    }
+}
+
+static void
+netdev_dpdk_tun_data_insert(uint32_t outer_id, ovs_be32 ip_dst,
+                               ovs_be32 ip_src, ovs_be64 tun_id)
+{
+    size_t hash = hash_add(hash,outer_id);
+    struct tun_ctx_outer_id_data *data = xzalloc(sizeof *data);
+
+    data->outer_id = outer_id;
+    data->ip_dst = ip_dst;
+    data->ip_src = ip_src;
+    data->tun_id = tun_id;
+
+    cmap_insert(&tun_ctx_outer_id.outer_id_to_tun_map,
+                CONST_CAST(struct cmap_node *, &data->node), hash);
+}
+
+static inline uint32_t netdev_dpdk_tun_hash(ovs_be32 ip_dst, ovs_be32 ip_src,
+                              ovs_be64 tun_id)
+{
+    uint32_t hash = 0;
+    hash = hash_add(hash,ip_dst);
+    hash = hash_add(hash,ip_src);
+    hash = hash_add64(hash,tun_id);
+    return hash;
+}
+
+
+static uint32_t
+netdev_dpdk_tun_outer_id_get_ref(ovs_be32 ip_dst, ovs_be32 ip_src,
+                              ovs_be64 tun_id)
+{
+    struct tun_ctx_outer_id_data *data;
+    uint32_t hash = netdev_dpdk_tun_hash(ip_dst, ip_src, tun_id);
+
+    CMAP_FOR_EACH_WITH_HASH (data, node, hash,
+                    &tun_ctx_outer_id.tun_to_outer_id_map) {
+        if (data->tun_id == tun_id && data->ip_dst == ip_dst
+                        && data->ip_src == ip_src) {
+            data->ref_count++;
+            return data->outer_id;
+        }
+    }
+
+    return INVALID_OUTER_ID;
+}
+
+static uint32_t
+netdev_dpdk_tun_outer_id_alloc(ovs_be32 ip_dst, ovs_be32 ip_src,
+                              ovs_be64 tun_id)
+{
+    struct tun_ctx_outer_id_data *data;
+    uint32_t outer_id;
+    uint32_t hash = 0;
+
+    if (!tun_ctx_outer_id.pool) {
+        tun_ctx_outer_id.pool = id_pool_create(1, MAX_OUTER_ID);
+    }
+
+    if (!id_pool_alloc_id(tun_ctx_outer_id.pool, &outer_id)) {
+        return INVALID_OUTER_ID;
+    }
+
+    hash = netdev_dpdk_tun_hash(ip_dst, ip_src, tun_id);
+
+    data = xzalloc(sizeof *data);
+    data->ip_dst = ip_dst;
+    data->ip_src = ip_src;
+    data->tun_id = tun_id;
+    data->outer_id = outer_id;
+    data->ref_count  = 1;
+
+    cmap_insert(&tun_ctx_outer_id.tun_to_outer_id_map,
+                CONST_CAST(struct cmap_node *, &data->node), hash);
+
+    netdev_dpdk_tun_data_insert(outer_id, ip_dst,ip_src, tun_id);
+
+    return outer_id;
+}
+
+
+static void
+netdev_dpdk_tun_outer_id_unref(ovs_be32 ip_dst, ovs_be32 ip_src,
+                                       ovs_be64 tun_id)
+{
+    struct tun_ctx_outer_id_data *data;
+    uint32_t hash = netdev_dpdk_tun_hash(ip_dst, ip_src, tun_id);
+
+    CMAP_FOR_EACH_WITH_HASH (data, node, hash,
+                    &tun_ctx_outer_id.tun_to_outer_id_map) {
+        if (data->tun_id == tun_id && data->ip_dst == ip_dst
+                        && data->ip_src == ip_src) {
+            data->ref_count--;
+            if (data->ref_count == 0) {
+                netdev_dpdk_tun_data_del(data->outer_id);
+                cmap_remove(&tun_ctx_outer_id.tun_to_outer_id_map,
+                        CONST_CAST(struct cmap_node *, &data->node), hash);
+                id_pool_free_id(tun_ctx_outer_id.pool, data->outer_id);
+                ovsrcu_postpone(free, data);
+            }
+            return;
+        }
+    }
+}
+
+/* A tunnel meta data has 3 tuple. src ip, dst ip and tun.
+ * We need to replace each 3-tuple with an id.
+ * If we have already allocated outer_id for the tun we just inc the refcnt.
+ * If no such tun exits we allocate a new outer id and set refcnt to 1.
+ * every offloaded flow that has tun on match (or tnl_pop), should use outer_id
+ */
+static uint32_t
+netdev_dpdk_tun_id_get_ref(ovs_be32 ip_dst, ovs_be32 ip_src,
+                                       ovs_be64 tun_id)
+{
+    uint32_t outer_id = netdev_dpdk_tun_outer_id_get_ref(ip_dst,
+                                                   ip_src, tun_id);
+    if (outer_id == INVALID_OUTER_ID) {
+        return netdev_dpdk_tun_outer_id_alloc(ip_dst, ip_src, tun_id);
+    }
+}
+
+/* Unref and a tun. if refcnt is zero we free the outer_id.
+ * Every offloaded flow that used outer_id should unref it when del called.
+ */
+static void
+netdev_dpdk_tun_id_unref(ovs_be32 ip_dst, ovs_be32 ip_src,
+                                       ovs_be64 tun_id)
+{
+    netdev_dpdk_tun_outer_id_unref(ip_dst, ip_src, tun_id);
+}
+
+enum ct_offload_dir {
+    CT_OFFLOAD_DIR_INIT,
+    CT_OFFLOAD_DIR_REP,
+    CT_OFFLOAD_NUM,
+};
+
+/*
+ * A mapping from ufid to to CT rte_flow.
+ */
+static struct cmap mark_to_ct_ctx = CMAP_INITIALIZER;
+
+struct mark_to_ct_ctx_data {
+    struct cmap_node node;
+    uint32_t mark;
+    uint32_t ct_mark;
+    uint16_t ct_zone;
+    uint8_t  ct_state;
+    uint16_t outer_id;
+    struct rte_flow *rte_flow[CT_OFFLOAD_NUM];
+};
+
+static struct
+mark_to_ct_ctx_data *netdev_dpdk_ct_find_ctx(uint32_t mark)
+{
+    size_t hash = hash_add(hash,mark);
+    struct mark_to_ct_ctx_data *data;
+
+    CMAP_FOR_EACH_WITH_HASH (data, node, hash, &mark_to_ct_ctx) {
+        if (data->mark == mark) {
+            return data;
+        }
+    }
+
+    return NULL;
+}
+
+static int
+netdev_dpdk_ct_save_ctx(uint32_t mark, struct rte_flow *flow,
+                        uint32_t ct_mark, uint16_t ct_zone,
+                        uint8_t  ct_state, uint8_t  outer_id, bool reply)
+{
+    struct mark_to_ct_ctx_data * data = netdev_dpdk_ct_find_ctx(mark);
+    int idx;
+
+    if (!data) {
+        size_t hash = hash_add(hash,mark);
+        data = xzalloc(sizeof *data);
+        cmap_insert(&mark_to_ct_ctx,
+                CONST_CAST(struct cmap_node *, &data->node), hash);
+    }
+
+    data->mark = mark;
+    data->ct_mark = ct_mark;
+    data->ct_zone = ct_zone;
+    data->ct_state = ct_state;
+    data->outer_id = outer_id;
+    idx = reply?CT_OFFLOAD_DIR_REP:CT_OFFLOAD_DIR_INIT;
+    if (data->rte_flow[idx]) {
+        VLOG_WARN("flow already exist");
+        return -1;
+    }
+    data->rte_flow[idx] = flow;
+    return 0;
+}
+
+static void
+netdev_dpdk_ct_del_ctx(uint32_t mark)
+{
+    size_t hash = hash_add(hash,mark);
+    struct mark_to_ct_ctx_data *data;
+
+    CMAP_FOR_EACH_WITH_HASH (data, node, hash, &mark_to_ct_ctx) {
+        if (data->mark == mark) {
+                cmap_remove(&mark_to_ct_ctx,
+                        CONST_CAST(struct cmap_node *, &data->node), hash);
+                ovsrcu_postpone(free, data);
+                return;
+        }
+    }
+}

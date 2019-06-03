@@ -270,6 +270,7 @@ struct ct_flow_offload_item {
     uint8_t mod_flags;
     uint32_t setmark;
     uint16_t zone;
+    bool     reply;
 
     union {
         struct ovs_key_ct_tuple_ipv4 ipv4;
