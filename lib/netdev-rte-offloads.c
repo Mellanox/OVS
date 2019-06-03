@@ -26,6 +26,7 @@
 
 #include "cmap.h"
 #include "dpif-netdev.h"
+#include "id-pool.h"
 #include "netdev-provider.h"
 #include "openvswitch/match.h"
 #include "openvswitch/vlog.h"
@@ -2744,7 +2745,7 @@ struct tun_ctx_outer_id tun_ctx_outer_id = {
 static struct
 tun_ctx_outer_id_data *netdev_dpdk_tun_data_find(uint32_t outer_id)
 {
-    size_t hash = hash_add(hash,outer_id);
+    size_t hash = hash_add(0,outer_id);
     struct tun_ctx_outer_id_data *data;
 
     CMAP_FOR_EACH_WITH_HASH (data, node, hash,
@@ -2760,7 +2761,7 @@ tun_ctx_outer_id_data *netdev_dpdk_tun_data_find(uint32_t outer_id)
 static void
 netdev_dpdk_tun_data_del(uint32_t outer_id)
 {
-    size_t hash = hash_add(hash,outer_id);
+    size_t hash = hash_add(0,outer_id);
     struct tun_ctx_outer_id_data *data;
 
     CMAP_FOR_EACH_WITH_HASH (data, node, hash,
@@ -2778,7 +2779,7 @@ static void
 netdev_dpdk_tun_data_insert(uint32_t outer_id, ovs_be32 ip_dst,
                                ovs_be32 ip_src, ovs_be64 tun_id)
 {
-    size_t hash = hash_add(hash,outer_id);
+    size_t hash = hash_add(0,outer_id);
     struct tun_ctx_outer_id_data *data = xzalloc(sizeof *data);
 
     data->outer_id = outer_id;
@@ -2799,7 +2800,6 @@ static inline uint32_t netdev_dpdk_tun_hash(ovs_be32 ip_dst, ovs_be32 ip_src,
     hash = hash_add64(hash,tun_id);
     return hash;
 }
-
 
 static uint32_t
 netdev_dpdk_tun_outer_id_get_ref(ovs_be32 ip_dst, ovs_be32 ip_src,
@@ -2911,34 +2911,60 @@ enum ct_offload_dir {
     CT_OFFLOAD_NUM,
 };
 
+enum mark_preprocess_type {
+    MARK_PREPROCESS_CT,
+    MARK_PREPROCESS_FLOW_CT,
+    MARK_PREPROCESS_VXLAN,
+};
+
 /*
  * A mapping from ufid to to CT rte_flow.
  */
 static struct cmap mark_to_ct_ctx = CMAP_INITIALIZER;
 
+struct mark_preprocess_info {
+    struct cmap mark_to_ct_ctx;
+};
+
+struct mark_preprocess_info mark_preprocess_info = {
+    .mark_to_ct_ctx = CMAP_INITIALIZER,
+};
+
 struct mark_to_ct_ctx_data {
     struct cmap_node node;
     uint32_t mark;
-    uint32_t ct_mark;
-    uint16_t ct_zone;
-    uint8_t  ct_state;
-    uint16_t outer_id;
-    struct rte_flow *rte_flow[CT_OFFLOAD_NUM];
+    int type;
+    union { 
+        struct {
+            uint32_t ct_mark;
+            uint16_t ct_zone;
+            uint8_t  ct_state;
+            uint16_t outer_id;
+            struct rte_flow *rte_flow[CT_OFFLOAD_NUM];
+         } ct;
+        struct {
+            uint16_t outer_id;
+            bool     has_ct;
+
+        }
+    };
 };
 
-static struct
-mark_to_ct_ctx_data *netdev_dpdk_ct_find_ctx(uint32_t mark)
+static bool
+netdev_dpdk_ct_find_ctx(uint32_t mark, struct mark_to_ct_ctx_data **ctx)
 {
     size_t hash = hash_add(hash,mark);
     struct mark_to_ct_ctx_data *data;
 
-    CMAP_FOR_EACH_WITH_HASH (data, node, hash, &mark_to_ct_ctx) {
+    CMAP_FOR_EACH_WITH_HASH (data, node, hash,
+            &mark_preprocess_info.mark_to_ct_ctx) {
         if (data->mark == mark) {
-            return data;
+            *ctx = data;
+            return true;
         }
     }
 
-    return NULL;
+    return false;
 }
 
 static int
@@ -2946,42 +2972,95 @@ netdev_dpdk_ct_save_ctx(uint32_t mark, struct rte_flow *flow,
                         uint32_t ct_mark, uint16_t ct_zone,
                         uint8_t  ct_state, uint8_t  outer_id, bool reply)
 {
-    struct mark_to_ct_ctx_data * data = netdev_dpdk_ct_find_ctx(mark);
+    struct mark_to_ct_ctx_data * data;
     int idx;
 
-    if (!data) {
+    if (!netdev_dpdk_ct_find_ctx(mark, &data)) {
         size_t hash = hash_add(hash,mark);
         data = xzalloc(sizeof *data);
         cmap_insert(&mark_to_ct_ctx,
                 CONST_CAST(struct cmap_node *, &data->node), hash);
     }
-
+    
+    data->type = MARK_PREPROCESS_CT;
     data->mark = mark;
-    data->ct_mark = ct_mark;
-    data->ct_zone = ct_zone;
-    data->ct_state = ct_state;
-    data->outer_id = outer_id;
+    data->ct.ct_mark = ct_mark;
+    data->ct.ct_zone = ct_zone;
+    data->ct.ct_state = ct_state;
+    data->ct.outer_id = outer_id;
     idx = reply?CT_OFFLOAD_DIR_REP:CT_OFFLOAD_DIR_INIT;
-    if (data->rte_flow[idx]) {
+    if (data->ct.rte_flow[idx]) {
         VLOG_WARN("flow already exist");
         return -1;
     }
-    data->rte_flow[idx] = flow;
+    data->ct.rte_flow[idx] = flow;
     return 0;
 }
 
 static void
-netdev_dpdk_ct_del_ctx(uint32_t mark)
+netdev_dpdk_preproces_del_ctx(uint32_t mark)
 {
     size_t hash = hash_add(hash,mark);
     struct mark_to_ct_ctx_data *data;
 
-    CMAP_FOR_EACH_WITH_HASH (data, node, hash, &mark_to_ct_ctx) {
+    CMAP_FOR_EACH_WITH_HASH (data, node, hash,
+                      &mark_preprocess_info.mark_to_ct_ctx) {
         if (data->mark == mark) {
                 cmap_remove(&mark_to_ct_ctx,
                         CONST_CAST(struct cmap_node *, &data->node), hash);
                 ovsrcu_postpone(free, data);
                 return;
+        }
+    }
+}
+
+static inline void
+netdev_dpdk_tun_recover_meta_data(struct dp_packet *p, uint32_t outer_id)
+{
+    struct tun_ctx_outer_id_data *data = netdev_dpdk_tun_data_find(outer_id);
+    if (data) {
+        p->md.tunnel.ip_dst = data->ip_dst;
+        p->md.tunnel.ip_src = data->ip_src;
+        p->md.tunnel.tun_id = data->tun_id;
+    }
+}
+
+static void
+netdev_dpdk_ct_recover_metadata(struct dp_packet *p,
+                           struct  mark_to_ct_ctx_data *ct_ctx)
+{
+    if (ct_ctx->ct.outer_id) {
+        netdev_dpdk_tun_recover_meta_data(p, ct_ctx->outer_id);
+    }
+
+    /*uint32_t recirc_id;*/
+    p->md.ct_state = ct_ctx->ct.ct_state;
+    p->md.ct_zone  = ct_ctx->ct.ct_zone;
+    p->md.ct_mark  = ct_ctx->ct.ct_mark;
+    p->md.ct_state = ct_ctx->ct.ct_state;
+}
+
+void
+netdev_dpdk_offload_preprocess(struct dp_packet *p)
+{
+    uint32_t mark; 
+    struct mark_to_ct_ctx_data *ct_ctx;
+
+    if (!dp_packet_has_flow_mark(p, &mark)) {
+        return;
+    }
+    
+    if (netdev_dpdk_ct_find_ctx(mark,&ct_ctx)) {
+        switch (ct_ctx->type) {
+            case MARK_PREPROCESS_CT:
+                netdev_dpdk_ct_recover_metadata(p,ct_ctx);
+                break;
+            case MARK_PREPROCESS_FLOW_CT:
+                VLOG_WARN("not supported yet");
+                break;
+            case MARK_PREPROCESS_VXLAN:
+                VLOG_WARN("not supported yet");
+                break;
         }
     }
 }

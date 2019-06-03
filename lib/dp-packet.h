@@ -701,6 +701,13 @@ dp_packet_set_flow_mark(struct dp_packet *p, uint32_t mark)
     p->flow_mark = mark;
     p->ol_flags |= DP_PACKET_OL_FLOW_MARK_MASK;
 }
+
+static inline void
+dp_packet_unset_flow_mark(struct dp_packet *p)
+{
+    p->ol_flags &= ~DP_PACKET_OL_FLOW_MARK_MASK;
+}
+
 #endif /* DPDK_NETDEV */
 
 static inline void
