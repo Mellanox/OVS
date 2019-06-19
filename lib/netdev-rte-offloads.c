@@ -49,6 +49,11 @@ enum rte_port_type {
     RTE_PORT_TYPE_VXLAN
 };
 
+static void
+netdev_dpdk_offload_put_handle(struct match *match, struct nlattr *actions,
+        size_t actions_len, uint32_t flow_mark);
+
+
 /*
  * A mapping from dp_port to flow parameters.
  */
@@ -1025,7 +1030,8 @@ out:
  * Check if any unsupported flow patterns are specified.
  */
 static int
-netdev_rte_offloads_validate_flow(const struct match *match, bool is_tun)
+netdev_rte_offloads_validate_flow(const struct match *match, bool ct_offload,
+                                 bool tun_offload)
 {
     struct match match_zero_wc;
     const struct flow *masks = &match->wc.masks;
@@ -1033,8 +1039,8 @@ netdev_rte_offloads_validate_flow(const struct match *match, bool is_tun)
     /* Create a wc-zeroed version of flow. */
     match_init(&match_zero_wc, &match->flow, &match->wc);
 
-    if (!is_tun && !is_all_zeros(&match_zero_wc.flow.tunnel,
-                                 sizeof match_zero_wc.flow.tunnel)) {
+    if (!tun_offload && !is_all_zeros(&match_zero_wc.flow.tunnel,
+                      sizeof match_zero_wc.flow.tunnel)) {
         goto err;
     }
 
@@ -1044,13 +1050,13 @@ netdev_rte_offloads_validate_flow(const struct match *match, bool is_tun)
     }
 
     /* recirc id must be zero. */
-    if (match_zero_wc.flow.recirc_id) {
+    if (!ct_offload && match_zero_wc.flow.recirc_id) {
         goto err;
     }
 
-    if (masks->ct_state || masks->ct_nw_proto ||
+    if (!ct_offload && (masks->ct_state || masks->ct_nw_proto ||
         masks->ct_zone  || masks->ct_mark     ||
-        !ovs_u128_is_zero(masks->ct_label)) {
+        !ovs_u128_is_zero(masks->ct_label))) {
         goto err;
     }
 
@@ -1137,13 +1143,15 @@ netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
     ufid_hw_offload_add(ufid_hw_offload, &rte_port->ufid_to_rte);
     ufid_to_portid_add(ufid, rte_port->dp_port);
 
-    ret = netdev_rte_offloads_validate_flow(match, false);
+    ret = netdev_rte_offloads_validate_flow(match, false, false);
     if (ret < 0) {
         VLOG_DBG("flow pattern is not supported");
         ret = EINVAL;
         goto err;
     }
-
+    // netdev_dpdk_offload_put_handle(match, actions,
+    //    actions_len,0);
+    
     rte_flow = netdev_rte_offloads_add_flow(netdev, match, actions,
                                             actions_len, ufid, info,
                                             &rte_flow0);
@@ -1578,7 +1586,7 @@ netdev_rte_vport_flow_put(struct netdev *netdev OVS_UNUSED,
                           struct offload_info *info,
                           struct dpif_flow_stats *stats)
 {
-    if (netdev_rte_offloads_validate_flow(match, true)) {
+    if (netdev_rte_offloads_validate_flow(match, false, true)) {
         VLOG_DBG("flow pattern is not supported");
         return EOPNOTSUPP;
     }
@@ -2720,7 +2728,9 @@ netdev_rte_offloads_hw_pr_remove(int relay_id)
 /* Connection tracking code */
 
 #define INVALID_OUTER_ID  0Xffffffff
+#define INVALID_HW_ID     0Xffffffff
 #define MAX_OUTER_ID  0xffff
+#define MAX_HW_TABLE (0xff00)
 
 struct tun_ctx_outer_id_data {
     struct cmap_node node;
@@ -2882,7 +2892,7 @@ netdev_dpdk_tun_outer_id_unref(ovs_be32 ip_dst, ovs_be32 ip_src,
  * We need to replace each 3-tuple with an id.
  * If we have already allocated outer_id for the tun we just inc the refcnt.
  * If no such tun exits we allocate a new outer id and set refcnt to 1.
- * every offloaded flow that has tun on match (or tnl_pop), should use outer_id
+ * every offloaded flow that has tun on match should use outer_id
  */
 static uint32_t
 netdev_dpdk_tun_id_get_ref(ovs_be32 ip_dst, ovs_be32 ip_src,
@@ -2893,6 +2903,7 @@ netdev_dpdk_tun_id_get_ref(ovs_be32 ip_dst, ovs_be32 ip_src,
     if (outer_id == INVALID_OUTER_ID) {
         return netdev_dpdk_tun_outer_id_alloc(ip_dst, ip_src, tun_id);
     }
+    return outer_id;
 }
 
 /* Unref and a tun. if refcnt is zero we free the outer_id.
@@ -2905,6 +2916,16 @@ netdev_dpdk_tun_id_unref(ovs_be32 ip_dst, ovs_be32 ip_src,
     netdev_dpdk_tun_outer_id_unref(ip_dst, ip_src, tun_id);
 }
 
+static void
+netdev_dpdk_outer_id_unref(uint32_t outer_id)
+{
+    struct tun_ctx_outer_id_data *data = netdev_dpdk_tun_data_find(outer_id);
+    if (data) {
+        netdev_dpdk_tun_outer_id_unref(data->ip_dst, data->ip_src,
+                                       data->tun_id);
+    }
+}
+
 enum ct_offload_dir {
     CT_OFFLOAD_DIR_INIT,
     CT_OFFLOAD_DIR_REP,
@@ -2912,9 +2933,10 @@ enum ct_offload_dir {
 };
 
 enum mark_preprocess_type {
-    MARK_PREPROCESS_CT,
-    MARK_PREPROCESS_FLOW_CT,
-    MARK_PREPROCESS_VXLAN,
+    MARK_PREPROCESS_CT = 1 << 0,
+    MARK_PREPROCESS_FLOW_CT = 1 << 1,
+    MARK_PREPROCESS_FLOW = 1 << 2,
+    MARK_PREPROCESS_VXLAN = 1 << 3
 };
 
 /*
@@ -2930,11 +2952,11 @@ struct mark_preprocess_info mark_preprocess_info = {
     .mark_to_ct_ctx = CMAP_INITIALIZER,
 };
 
-struct mark_to_ct_ctx_data {
+struct mark_to_miss_ctx_data {
     struct cmap_node node;
     uint32_t mark;
     int type;
-    union { 
+    union {
         struct {
             uint32_t ct_mark;
             uint16_t ct_zone;
@@ -2944,17 +2966,18 @@ struct mark_to_ct_ctx_data {
          } ct;
         struct {
             uint16_t outer_id;
-            bool     has_ct;
-
-        }
+            uint32_t hw_id;
+            bool     is_port;
+            uint32_t in_port;
+        } flow;
     };
 };
 
 static bool
-netdev_dpdk_ct_find_ctx(uint32_t mark, struct mark_to_ct_ctx_data **ctx)
+netdev_dpdk_find_miss_ctx(uint32_t mark, struct mark_to_miss_ctx_data **ctx)
 {
-    size_t hash = hash_add(hash,mark);
-    struct mark_to_ct_ctx_data *data;
+    size_t hash = hash_add(0,mark);
+    struct mark_to_miss_ctx_data *data;
 
     CMAP_FOR_EACH_WITH_HASH (data, node, hash,
             &mark_preprocess_info.mark_to_ct_ctx) {
@@ -2967,21 +2990,51 @@ netdev_dpdk_ct_find_ctx(uint32_t mark, struct mark_to_ct_ctx_data **ctx)
     return false;
 }
 
-static int
-netdev_dpdk_ct_save_ctx(uint32_t mark, struct rte_flow *flow,
-                        uint32_t ct_mark, uint16_t ct_zone,
-                        uint8_t  ct_state, uint8_t  outer_id, bool reply)
+static struct mark_to_miss_ctx_data *
+netdev_dpdk_get_flow_miss_ctx(uint32_t mark)
 {
-    struct mark_to_ct_ctx_data * data;
-    int idx;
+    struct mark_to_miss_ctx_data * data = NULL;
 
-    if (!netdev_dpdk_ct_find_ctx(mark, &data)) {
-        size_t hash = hash_add(hash,mark);
+    if (!netdev_dpdk_find_miss_ctx(mark, &data)) {
+        size_t hash = hash_add(0,mark);
         data = xzalloc(sizeof *data);
         cmap_insert(&mark_to_ct_ctx,
                 CONST_CAST(struct cmap_node *, &data->node), hash);
     }
-    
+
+   return data;
+}
+
+static int
+netdev_dpdk_save_flow_miss_ctx(uint32_t mark, uint32_t hw_id, bool is_port,
+                               uint32_t outer_id, uint32_t in_port,
+                               bool has_ct)
+{
+    struct mark_to_miss_ctx_data * data = netdev_dpdk_get_flow_miss_ctx(mark);
+    if (!data) {
+        return -1;
+    }
+
+    data->type = has_ct?MARK_PREPROCESS_FLOW_CT:MARK_PREPROCESS_FLOW;
+    data->mark = mark;
+    data->flow.outer_id = outer_id;
+    data->flow.hw_id = hw_id;
+    data->flow.is_port = is_port;
+    data->flow.in_port = in_port;
+    return 0;
+}
+
+static int
+netdev_dpdk_save_ct_miss_ctx(uint32_t mark, struct rte_flow *flow,
+                        uint32_t ct_mark, uint16_t ct_zone,
+                        uint8_t  ct_state, uint8_t  outer_id, bool reply)
+{
+    int idx;
+    struct mark_to_miss_ctx_data * data = netdev_dpdk_get_flow_miss_ctx(mark);
+    if (!data) {
+        return -1;
+    }
+
     data->type = MARK_PREPROCESS_CT;
     data->mark = mark;
     data->ct.ct_mark = ct_mark;
@@ -2998,10 +3051,10 @@ netdev_dpdk_ct_save_ctx(uint32_t mark, struct rte_flow *flow,
 }
 
 static void
-netdev_dpdk_preproces_del_ctx(uint32_t mark)
+netdev_dpdk_del_miss_ctx(uint32_t mark)
 {
-    size_t hash = hash_add(hash,mark);
-    struct mark_to_ct_ctx_data *data;
+    size_t hash = hash_add(0,mark);
+    struct mark_to_miss_ctx_data *data;
 
     CMAP_FOR_EACH_WITH_HASH (data, node, hash,
                       &mark_preprocess_info.mark_to_ct_ctx) {
@@ -3027,10 +3080,10 @@ netdev_dpdk_tun_recover_meta_data(struct dp_packet *p, uint32_t outer_id)
 
 static void
 netdev_dpdk_ct_recover_metadata(struct dp_packet *p,
-                           struct  mark_to_ct_ctx_data *ct_ctx)
+                           struct  mark_to_miss_ctx_data *ct_ctx)
 {
     if (ct_ctx->ct.outer_id) {
-        netdev_dpdk_tun_recover_meta_data(p, ct_ctx->outer_id);
+        netdev_dpdk_tun_recover_meta_data(p, ct_ctx->ct.outer_id);
     }
 
     /*uint32_t recirc_id;*/
@@ -3043,14 +3096,14 @@ netdev_dpdk_ct_recover_metadata(struct dp_packet *p,
 void
 netdev_dpdk_offload_preprocess(struct dp_packet *p)
 {
-    uint32_t mark; 
-    struct mark_to_ct_ctx_data *ct_ctx;
+    uint32_t mark;
+    struct mark_to_miss_ctx_data *ct_ctx;
 
     if (!dp_packet_has_flow_mark(p, &mark)) {
         return;
     }
-    
-    if (netdev_dpdk_ct_find_ctx(mark,&ct_ctx)) {
+
+    if (netdev_dpdk_find_miss_ctx(mark, &ct_ctx)) {
         switch (ct_ctx->type) {
             case MARK_PREPROCESS_CT:
                 netdev_dpdk_ct_recover_metadata(p,ct_ctx);
@@ -3064,3 +3117,616 @@ netdev_dpdk_offload_preprocess(struct dp_packet *p)
         }
     }
 }
+
+struct hw_table_id_node {
+    struct cmap_node node;
+    uint32_t id;
+    int      hw_id;
+    int      is_port;
+    int      ref_cnt;
+};
+
+struct hw_table_id {
+    struct cmap recirc_id_to_tbl_id_map;
+    struct cmap port_id_to_tbl_id_map;
+    struct id_pool *pool;
+    uint32_t hw_id_to_sw[MAX_OUTER_ID]
+};
+
+struct hw_table_id hw_table_id = {
+    .recirc_id_to_tbl_id_map = CMAP_INITIALIZER,
+    .port_id_to_tbl_id_map = CMAP_INITIALIZER,
+};
+
+static int
+netdev_dpdk_get_hw_id(uint32_t id, uint32_t *hw_id, bool is_port)
+{
+    size_t hash = hash_add(0,id);
+    struct hw_table_id_node *data;
+    struct cmap *smap = is_port ?&hw_table_id.port_id_to_tbl_id_map:
+                               &hw_table_id.recirc_id_to_tbl_id_map;
+
+    CMAP_FOR_EACH_WITH_HASH (data, node, hash, smap) {
+        if (data->id == id && data->is_port == is_port) {
+            *hw_id = data->hw_id;
+            data->ref_cnt++;
+            return 0;
+        }
+    }
+
+    return -1;
+}
+
+static void
+netdev_dpdk_put_hw_id(uint32_t id, bool is_port)
+{
+    size_t hash = hash_add(0,id);
+    struct hw_table_id_node *data;
+    struct cmap *smap = is_port? &hw_table_id.port_id_to_tbl_id_map:
+                               &hw_table_id.recirc_id_to_tbl_id_map;
+
+    CMAP_FOR_EACH_WITH_HASH (data, node, hash, smap) {
+        if (data->id == id && data->is_port == is_port) {
+            data->ref_cnt--;
+            if (data->ref_cnt == 0) {
+                /*TODO: delete table (if recirc_id*/
+                /*TODO: update mapping table.*/
+                id_pool_free_id(hw_table_id.pool, data->hw_id);
+                ovsrcu_postpone(free, data);
+            }
+            return;
+        }
+    }
+}
+
+static int
+netdev_dpdk_alloc_hw_id(uint32_t id, bool is_port)
+{
+    size_t hash = hash_add(0,id);
+    uint32_t hw_id;
+    struct cmap *smap = is_port? &hw_table_id.port_id_to_tbl_id_map:
+                               &hw_table_id.recirc_id_to_tbl_id_map;
+    struct hw_table_id_node *data;
+
+    if (!id_pool_alloc_id(hw_table_id.pool, &hw_id)) {
+        return INVALID_HW_ID;
+    }
+
+    data = xzalloc(sizeof *data);
+    data->hw_id = hw_id;
+    data->is_port = is_port;
+    data->id = id;
+    data->ref_cnt = 1;
+
+    cmap_insert(smap, CONST_CAST(struct cmap_node *, &data->node), hash);
+
+    /*  create HW table with the id. update mapping table */
+   /*TODO: create new table in HW with that id (if not port).*/
+   /*TODO: fill mapping table with the new informatio.*/
+
+
+    return hw_id;
+}
+
+static inline void
+netdev_dpdk_hw_id_init(void)
+{
+     if (!hw_table_id.pool) {
+        /*TODO: set it default, also make sure we don't overflow*/
+        hw_table_id.pool = id_pool_create(64, MAX_HW_TABLE);
+        memset(hw_table_id.hw_id_to_sw, 0, sizeof hw_table_id.hw_id_to_sw);
+    }
+}
+
+static int
+netdev_dpdk_get_recirc_id_hw_id(uint32_t recirc_id, uint32_t *hw_id)
+{
+    netdev_dpdk_hw_id_init();
+    if (netdev_dpdk_get_hw_id(recirc_id, hw_id, false)) {
+        return *hw_id;
+    }
+
+    return netdev_dpdk_alloc_hw_id(recirc_id, false);
+}
+
+static int
+netdev_dpdk_get_port_id_hw_id(uint32_t port_id, uint32_t *hw_id)
+{
+    netdev_dpdk_hw_id_init();
+
+    if (netdev_dpdk_get_hw_id(port_id, hw_id, true)) {
+        return *hw_id;
+    }
+
+    return netdev_dpdk_alloc_hw_id(port_id, true);
+}
+
+static void
+netdev_dpdk_put_recirc_id_hw_id(uint32_t recirc_id)
+{
+    netdev_dpdk_put_hw_id(recirc_id, false);
+}
+static void
+netdev_dpdk_put_port_id_hw_id(uint32_t port_id)
+{
+    netdev_dpdk_put_hw_id(port_id, true);
+}
+
+static int
+netdev_dpdk_get_sw_id_from_hw_id(uint16_t hw_id)
+{
+    return hw_table_id.hw_id_to_sw[hw_id];
+}
+
+enum {
+  MATCH_OFFLOAD_TYPE_UNDEFINED    =  0,
+  MATCH_OFFLOAD_TYPE_ROOT         =  1 << 0,
+  MATCH_OFFLOAD_TYPE_VPORT_ROOT   =  1 << 1,
+  MATCH_OFFLOAD_TYPE_RECIRC       =  1 << 2,
+  ACTION_OFFLOAD_TYPE_TNL_POP     =  1 << 3,
+  ACTION_OFFLOAD_TYPE_CT          =  1 << 4,
+  ACTION_OFFLOAD_TYPE_OUTPUT      =  1 << 5,
+};
+
+struct offload_item_cls_info {
+    struct {
+        uint32_t recirc_id;
+        ovs_be32 ip_dst;
+        ovs_be32 ip_src;
+        ovs_be64 tun_id;
+        int type;
+        bool vport;
+        uint32_t outer_id;
+        uint32_t hw_id;
+    } match;
+
+    struct {
+        bool has_ct;
+        bool has_nat;
+        uint32_t recirc_id;
+        uint32_t hw_id;
+        uint32_t odp_port;
+        bool valid;
+        int type;
+        bool pop_tnl;
+    } actions;
+};
+
+static void
+netdev_dpdk_offload_fill_cls_info(struct offload_item_cls_info *cls_info,
+                             struct match *match, struct nlattr *actions,
+                             size_t actions_len)
+
+{
+    unsigned int left;
+    const struct nlattr *a;
+    struct match match_zero_wc;
+
+    /*TODO: find if in_port is vport or not.*/
+    /* cls_info.match.vport = find_is_vport(match->flow.in_port.odp_port);*/
+    /* Create a wc-zeroed version of flow. */
+    match_init(&match_zero_wc, &match->flow, &match->wc);
+
+    /* if we have recirc_id in match */
+    if (match_zero_wc.flow.recirc_id) {
+        cls_info->match.recirc_id = match->flow.recirc_id;
+    }
+
+    if (!is_all_zeros(&match_zero_wc.flow.tunnel,
+                      sizeof match_zero_wc.flow.tunnel)) {
+        cls_info->match.ip_dst = match->flow.tunnel.ip_dst;
+        cls_info->match.ip_src = match->flow.tunnel.ip_src;
+        cls_info->match.tun_id = match->flow.tunnel.tun_id;
+    }
+
+    NL_ATTR_FOR_EACH_UNSAFE (a, left, actions, actions_len) {
+        int type = nl_attr_type(a);
+        bool last_action = (left <= NLA_ALIGN(a->nla_len));
+
+        switch ((enum ovs_action_attr) type) {
+            case OVS_ACTION_ATTR_CT: {
+                unsigned int left;
+                const struct nlattr *b;
+                cls_info->actions.has_ct = true;
+
+                NL_ATTR_FOR_EACH_UNSAFE (b, left, nl_attr_get(a),
+                                 nl_attr_get_size(a)) {
+                    enum ovs_ct_attr sub_type = nl_attr_type(b);
+
+                    switch (sub_type) {
+                            case OVS_CT_ATTR_NAT:
+                                cls_info->actions.has_nat = true;
+                                break;
+                            case OVS_CT_ATTR_FORCE_COMMIT:
+                            case OVS_CT_ATTR_COMMIT:
+                            case OVS_CT_ATTR_ZONE:
+                            case OVS_CT_ATTR_HELPER:
+                            case OVS_CT_ATTR_MARK:
+                            case OVS_CT_ATTR_LABELS:
+                            case OVS_CT_ATTR_EVENTMASK:
+                            case OVS_CT_ATTR_UNSPEC:
+                            case __OVS_CT_ATTR_MAX:
+                            default:
+                                break;
+                       }
+                    }
+                }
+                break;
+            case OVS_ACTION_ATTR_OUTPUT:
+                cls_info->actions.odp_port = nl_attr_get_odp_port(a);
+                if (!last_action) {
+                    cls_info->actions.valid = false;
+                }
+                break;
+            case OVS_ACTION_ATTR_RECIRC:
+                    cls_info->actions.recirc_id = nl_attr_get_u32(a);
+                if (!last_action) {
+                    cls_info->actions.valid = false;
+                }
+                break;
+
+                case OVS_ACTION_ATTR_PUSH_VLAN:
+                /*TODO: need it*/
+                    break;
+                case OVS_ACTION_ATTR_POP_VLAN:     /* No argument. */
+                /*TODO: need it*/
+                    break;
+                case OVS_ACTION_ATTR_TUNNEL_POP:    /* u32 port number. */
+                    cls_info->actions.pop_tnl = true;
+                    cls_info->actions.odp_port = nl_attr_get_odp_port(a);
+                    break;;
+                case OVS_ACTION_ATTR_SET:
+                /*TODO: set baidu eth here.*/
+
+                break;
+                case OVS_ACTION_ATTR_CLONE:
+                /*TODO: verify if tnl_pop or tnl_push,*/
+                break;
+                case OVS_ACTION_ATTR_HASH:
+                case OVS_ACTION_ATTR_UNSPEC:
+                case OVS_ACTION_ATTR_USERSPACE:
+                case OVS_ACTION_ATTR_SAMPLE:
+                case OVS_ACTION_ATTR_PUSH_MPLS:
+                case OVS_ACTION_ATTR_POP_MPLS:
+                case OVS_ACTION_ATTR_SET_MASKED:
+                case OVS_ACTION_ATTR_TRUNC:
+                case OVS_ACTION_ATTR_PUSH_ETH:
+                case OVS_ACTION_ATTR_POP_ETH:
+                case OVS_ACTION_ATTR_CT_CLEAR:
+                case OVS_ACTION_ATTR_PUSH_NSH:
+                case OVS_ACTION_ATTR_POP_NSH:
+                case OVS_ACTION_ATTR_METER:
+                case OVS_ACTION_ATTR_CHECK_PKT_LEN:
+                case OVS_ACTION_ATTR_TUNNEL_PUSH:
+                    break;
+                case __OVS_ACTION_ATTR_MAX:
+                default:
+                    VLOG_ERR("action %d",type);
+        }
+    }
+
+}
+
+
+static int
+netdev_dpdk_offload_classify(struct offload_item_cls_info *cls_info,
+                             struct match *match, struct nlattr *actions,
+                             size_t actions_len)
+
+{
+    int ret = 0;
+
+    if (!netdev_rte_offloads_validate_flow(match, false, false)) {
+        return -1;
+    }
+
+    netdev_dpdk_offload_fill_cls_info(cls_info, match, actions, actions_len);
+
+    /* some scenario we cannot support */
+    if (cls_info->actions.valid) {
+        return -1;
+    }
+
+    if (cls_info->match.recirc_id == 0) {
+        if (cls_info->match.vport) {
+            cls_info->match.type = MATCH_OFFLOAD_TYPE_VPORT_ROOT;
+            /*todo: NEED TO VALIDATE THIS IS VXLAN PORT OR ELSE */
+            /*OFFLOAD IS NOT VALID */
+        } else {
+            cls_info->match.type = MATCH_OFFLOAD_TYPE_ROOT;
+        }
+    } else {
+            cls_info->match.type = MATCH_OFFLOAD_TYPE_RECIRC;
+    }
+
+    if (cls_info->actions.pop_tnl) {
+        cls_info->actions.type = ACTION_OFFLOAD_TYPE_TNL_POP;
+        /*TODO: validate tnl pop type (VXLAN/GRE....) is supported and we*/
+    } else if (cls_info->actions.has_ct) {
+        cls_info->actions.type = ACTION_OFFLOAD_TYPE_CT;
+    } else if (cls_info->actions.odp_port) {
+        cls_info->actions.type = ACTION_OFFLOAD_TYPE_OUTPUT;
+    }
+    return ret;
+}
+
+static int
+netdev_dpdk_offload_add_root_patterns(struct flow_patterns *patterns,
+                             struct match *match)
+{
+    /*TODO: here we should add all eth/ip/....etc patterns*/
+    return 0;
+}
+
+static int
+netdev_dpdk_offload_add_vport_root_patterns(struct flow_patterns *patterns,
+                             struct match *match,
+                             struct offload_item_cls_info *cls_info)
+{
+    cls_info->match.outer_id = netdev_dpdk_tun_id_get_ref(
+                                       cls_info->match.ip_dst,
+                                       cls_info->match.ip_src,
+                                       cls_info->match.tun_id);
+
+    if (cls_info->match.outer_id == INVALID_OUTER_ID) {
+        return -1;
+    }
+
+    /*TODO: here we add all TUN info (match->flow.tnl....)*/
+    /*TODO: we then call the regulsr root to add the rest*/
+    netdev_dpdk_offload_add_root_patterns(patterns, match);
+    return 0;
+}
+
+static int
+netdev_dpdk_offload_add_recirc_patterns(struct flow_patterns *patterns,
+                             struct match *match,
+                             struct offload_item_cls_info *cls_info)
+{
+    const struct flow *masks = &match->wc.masks;
+
+    if (netdev_dpdk_get_recirc_id_hw_id(cls_info->match.recirc_id,
+                                        &cls_info->match.hw_id) ==
+                                        INVALID_HW_ID) {
+        return -1;
+    }
+
+    if (cls_info->match.tun_id) {
+        /* if we should match tun id */
+        cls_info->match.outer_id = netdev_dpdk_tun_id_get_ref(
+                                       cls_info->match.ip_dst,
+                                       cls_info->match.ip_src,
+                                       cls_info->match.tun_id);
+        if (cls_info->match.outer_id == INVALID_OUTER_ID) {
+            return -1;
+        }
+        /* TODO add match on tun_id register. */
+    }
+
+    /* TODO: here we add match on outer_id */
+    netdev_dpdk_offload_add_root_patterns(patterns, match);
+    /*TODO: add following patterns: */
+    if (masks->ct_state ||
+        masks->ct_zone  || masks->ct_mark) {
+        /*TODO: replace with matching right register */
+    }
+
+    return 0;
+}
+
+static int
+netdev_dpdk_offload_vxlan_actions(struct flow_actions *flow_actions,
+                                  struct offload_item_cls_info *cls_info)
+{
+    int ret = 0;
+    /*TODO: getv xlan portt id, create table for the port.*/
+    /*TODO: add counter on flow */
+    /*TODO: add jump to vport table. */
+    return ret;
+}
+
+static inline int
+netdev_dpdk_offload_get_hw_id(struct offload_item_cls_info *cls_info)
+{
+    int ret =0;
+    if (cls_info->actions.recirc_id) {
+        if (netdev_dpdk_get_recirc_id_hw_id(cls_info->actions.recirc_id,
+                                        &cls_info->actions.hw_id) ==
+                                        INVALID_HW_ID) {
+            ret = -1;
+        }
+    } else {
+        if (netdev_dpdk_get_port_id_hw_id(cls_info->actions.odp_port,
+                                        &cls_info->actions.hw_id) ==
+                                        INVALID_HW_ID) {
+            ret = -1;
+        }
+    }
+    return ret;
+}
+
+
+static int
+netdev_dpdk_offload_ct_actions(struct flow_actions *flow_actions,
+                               struct offload_item_cls_info *cls_info,
+                                                struct nlattr *actions,
+                                                size_t actions_len)
+{
+    int ret = 0;
+    /* match on vport recirc_id = 0, we must decap first */
+    if (cls_info->match.type == MATCH_OFFLOAD_TYPE_VPORT_ROOT) {
+        /*TODO: add decap */
+    }
+
+    /*TODO: set mark */
+    /*TODO: add counter */
+    /* translate recirc_id or port_id to hw_id */
+    if (!netdev_dpdk_offload_get_hw_id(cls_info)) {
+        return -1;
+    }
+    /* TODO: set recirc_id in register */
+    /* TODO: add all actions until CT */
+    if (cls_info->actions.has_nat) {
+        /* TODO: we need to create the table if doesn't exists */
+        /* TODO: jump to nat table */
+    } else {
+        /*TODO: we need to create the table if doesn't exists */
+        /*TODO: jump to CT table */
+    }
+    return ret;
+}
+
+static int
+netdev_dpdk_offload_output_actions(struct flow_actions *flow_actions,
+                               struct offload_item_cls_info *cls_info,
+                                                struct nlattr *actions,
+                                                size_t actions_len)
+{
+    int ret = 0;
+    /* match on vport recirc_id = 0, we must decap first */
+    if (cls_info->match.type == MATCH_OFFLOAD_TYPE_VPORT_ROOT) {
+        /*TODO: add decap */
+    }
+
+    /* TODO: add counter */
+    /* TODO: add all actions including output */
+    return ret;
+}
+
+static int
+netdev_dpdk_offload_put_add_patterns(struct flow_patterns *patterns,
+                                  struct match *match,
+                                  struct offload_item_cls_info *cls_info)
+{
+    switch (cls_info->match.type) {
+        case MATCH_OFFLOAD_TYPE_ROOT:
+            return netdev_dpdk_offload_add_root_patterns(patterns, match);
+        case MATCH_OFFLOAD_TYPE_VPORT_ROOT:
+            return netdev_dpdk_offload_add_vport_root_patterns(patterns, match,
+                                                              cls_info);
+        case MATCH_OFFLOAD_TYPE_RECIRC:
+            return netdev_dpdk_offload_add_recirc_patterns(patterns, match,
+                                                          cls_info);
+    }
+
+    VLOG_WARN("unexpected offload match type %d",cls_info->match.type);
+    return -1;
+}
+
+static int
+netdev_dpdk_offload_put_add_actions(struct flow_actions *flow_actions,
+                                    struct match *match,
+                                    struct nlattr *actions,
+                                    size_t actions_len,
+                                    struct offload_item_cls_info *cls_info)
+{
+    switch (cls_info->actions.type) {
+        case ACTION_OFFLOAD_TYPE_TNL_POP:
+            /*TODO: need to verify the POP is the only action here.*/
+            return  netdev_dpdk_offload_vxlan_actions(flow_actions, cls_info);
+        case ACTION_OFFLOAD_TYPE_CT:
+            return netdev_dpdk_offload_ct_actions(flow_actions, cls_info,
+                                                 actions, actions_len);
+            break;
+        case ACTION_OFFLOAD_TYPE_OUTPUT:
+            return netdev_dpdk_offload_output_actions(flow_actions, cls_info,
+                                                    actions, actions_len);
+    }
+    VLOG_WARN("unexpected offload action type %d",cls_info->actions.type);
+    return -1;
+}
+
+
+static void
+netdev_dpdk_offload_put_handle(struct match *match, struct nlattr *actions,
+                             size_t actions_len, uint32_t flow_mark)
+{
+    struct offload_item_cls_info cls_info;
+    memset(&cls_info, 0, sizeof cls_info);
+    int ret = 0;
+
+    struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
+    struct flow_actions  flow_actions = { .actions = NULL, .cnt = 0 };
+
+    if (!netdev_dpdk_offload_classify(&cls_info, match,
+                                       actions, actions_len)) {
+        return;
+    }
+
+    if (!netdev_dpdk_offload_put_add_patterns(&patterns, match, &cls_info)) {
+        goto roll_back;
+    }
+
+    if (!netdev_dpdk_offload_put_add_actions(&flow_actions, match,
+                                    actions, actions_len, &cls_info)) {
+        goto roll_back;
+    }
+
+    /* handle miss in HW in CT need special handling */
+    /* for all cases, we need to save all resources allocated */
+    if (cls_info.actions.type == ACTION_OFFLOAD_TYPE_CT) {
+            ret = netdev_dpdk_save_flow_miss_ctx(flow_mark,
+                             cls_info.actions.hw_id,
+                             !cls_info.actions.recirc_id,
+                             cls_info.match.outer_id,
+                             match->flow.in_port.odp_port,
+                             cls_info.actions.type == ACTION_OFFLOAD_TYPE_CT);
+    }
+
+    if (!ret) {
+        goto roll_back;
+    }
+
+    /* TODO: OFFLOAD FLOW HERE */
+    /* if fail goto roleback. */
+
+
+    return;
+roll_back:
+    /* release references that were allocated */
+    if (cls_info.match.outer_id != INVALID_OUTER_ID) {
+        netdev_dpdk_tun_outer_id_unref(cls_info.match.ip_dst,
+                                       cls_info.match.ip_src,
+                                       cls_info.match.tun_id);
+    }
+
+    if (cls_info.match.hw_id != INVALID_HW_ID) {
+        netdev_dpdk_put_recirc_id_hw_id(cls_info.match.hw_id);
+    }
+
+    if (cls_info.actions.hw_id != INVALID_HW_ID) {
+        if (cls_info.actions.recirc_id) {
+            netdev_dpdk_put_recirc_id_hw_id(cls_info.actions.hw_id);
+        } else {
+            netdev_dpdk_put_port_id_hw_id(cls_info.actions.hw_id);
+        }
+    }
+    netdev_dpdk_del_miss_ctx(flow_mark);
+}
+
+static void
+netdev_dpdk_offload_del_handle(uint32_t mark)
+{
+     /* from the mark we get also the in_port.. */
+     struct mark_to_miss_ctx_data *data = netdev_dpdk_get_flow_miss_ctx(mark);
+     if (!data) {
+        /* TODO: need to think if we need warn here. */
+        return;
+     }
+
+    if (data->flow.outer_id) {
+        netdev_dpdk_outer_id_unref(data->flow.outer_id);
+    }
+
+    if (data->flow.hw_id) {
+        uint32_t sw_id = netdev_dpdk_get_sw_id_from_hw_id(data->flow.hw_id);
+        if (data->flow.is_port) {
+            netdev_dpdk_put_port_id_hw_id(sw_id);
+        } else {
+            netdev_dpdk_put_recirc_id_hw_id(sw_id);
+        }
+    }
+
+    netdev_dpdk_del_miss_ctx(mark);
+}
+
