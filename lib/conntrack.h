@@ -271,6 +271,7 @@ struct ct_flow_offload_item {
     uint32_t setmark;
     uint16_t zone;
     bool     reply;
+    uint8_t ct_state;
 
     union {
         struct ovs_key_ct_tuple_ipv4 ipv4;
@@ -287,6 +288,13 @@ struct ct_flow_offload_item {
         struct ovs_key_ct_tuple_ipv6 ipv6;
     } ct_modify;
 
+    struct {
+        ovs_be32 ip_dst;
+        ovs_be32 ip_src;
+        ovs_be64 tun_id;
+    } tun;
+
+    uint32_t odp_port;
 };
 
 /* hw-offload callbacks.

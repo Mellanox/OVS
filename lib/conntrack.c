@@ -1460,6 +1460,16 @@ conntrack_off_fill_match(struct ct_flow_offload_item *msg,
 }
 
 static void
+conntrack_off_fill_tun(struct ct_flow_offload_item *msg,
+                       struct dp_packet *packet)
+{
+    msg->tun.ip_dst = packet->md.tunnel.ip_dst;
+    msg->tun.ip_src = packet->md.tunnel.ip_src;
+    msg->tun.tun_id = packet->md.tunnel.tun_id;
+    msg->odp_port = packet->md.in_port.odp_port;
+}
+
+static void
 conntrack_off_put_conn(struct conntrack *ct, struct conn_lookup_ctx *ctx,
                     struct dp_packet *packet, bool reply)
 {
@@ -1479,6 +1489,7 @@ conntrack_off_put_conn(struct conntrack *ct, struct conn_lookup_ctx *ctx,
         conntrack_off_fill_key(&off_item, packet);
         conntrack_off_fill_match(&off_item, ctx);
         conntrack_off_fill_nat(&off_item, packet, reply);
+        conntrack_off_fill_tun(&off_item, packet);
         ct->off_class->conn_add(&off_item, &packet->md);
     }
 }
@@ -1512,6 +1523,7 @@ conntrack_add_ct_off_item(struct conntrack *ct,
 
         if (ctx->conn->alg || ctx->conn->alg_related) {
             ctx->conn->offload_flags |= CT_OFF_SKIP;
+            return;
         }
 
         if (ctx->reply && !(ctx->conn->offload_flags & CT_OFF_REP)) {
@@ -1522,7 +1534,7 @@ conntrack_add_ct_off_item(struct conntrack *ct,
                 conntrack_off_put_conn(ct, ctx, packet, ctx->reply);
                 ctx->conn->offload_flags |= CT_OFF_INIT;
             }
-            if ((ctx->conn->offload_flags & CT_OFF_BOTH)  == CT_OFF_BOTH) {
+            if ((ctx->conn->offload_flags & CT_OFF_BOTH) == CT_OFF_BOTH) {
                 ctx->conn->offload_flags |= CT_OFF_SKIP;
             }
         }

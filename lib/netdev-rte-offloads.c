@@ -2863,7 +2863,6 @@ netdev_dpdk_tun_outer_id_alloc(ovs_be32 ip_dst, ovs_be32 ip_src,
     return outer_id;
 }
 
-
 static void
 netdev_dpdk_tun_outer_id_unref(ovs_be32 ip_dst, ovs_be32 ip_src,
                                        ovs_be64 tun_id)
@@ -2962,6 +2961,7 @@ struct mark_to_miss_ctx_data {
             uint16_t ct_zone;
             uint8_t  ct_state;
             uint16_t outer_id;
+            uint16_t in_port[CT_OFFLOAD_NUM];
             struct rte_flow *rte_flow[CT_OFFLOAD_NUM];
          } ct;
         struct {
@@ -3283,6 +3283,7 @@ struct offload_item_cls_info {
     struct {
         bool has_ct;
         bool has_nat;
+        uint16_t zone;
         uint32_t recirc_id;
         uint32_t hw_id;
         uint32_t odp_port;
@@ -3340,6 +3341,7 @@ netdev_dpdk_offload_fill_cls_info(struct offload_item_cls_info *cls_info,
                             case OVS_CT_ATTR_FORCE_COMMIT:
                             case OVS_CT_ATTR_COMMIT:
                             case OVS_CT_ATTR_ZONE:
+                                cls_info->actions.zone = nl_attr_get_u16(b);
                             case OVS_CT_ATTR_HELPER:
                             case OVS_CT_ATTR_MARK:
                             case OVS_CT_ATTR_LABELS:
@@ -3729,4 +3731,70 @@ netdev_dpdk_offload_del_handle(uint32_t mark)
 
     netdev_dpdk_del_miss_ctx(mark);
 }
+
+
+static int
+netdev_dpdk_ct_flow_add_patterns(struct flow_patterns  *patterns,
+                                 struct ct_flow_offload_item *ct_offload)
+{
+    /* TODO match on zone */
+    /* TODO add 5-tuple */
+
+    return 0;
+}
+
+static int
+netdev_dpdk_ct_flow_add_actions(struct flow_actions *actions,
+                                struct ct_flow_offload_item *ct_offload)
+{
+    /* TODO : jump to mapping table */
+    return 0;
+}
+
+int netdev_dpdk_create_ct_flow(struct ct_flow_offload_item *ct_offload)
+{
+    struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
+    struct flow_actions  actions = { .actions = NULL, .cnt = 0 };
+    if (!netdev_dpdk_ct_flow_add_patterns(&patterns, ct_offload)) {
+        goto roll_back;
+    }
+     
+    if (!netdev_dpdk_ct_flow_add_actions(&actions, ct_offload)) {
+        goto roll_back;
+    }
+
+roll_back:
+    return -1;
+}
+
+int
+netdev_dpdk_offload_ct_put(struct ct_flow_offload_item *ct_offload,
+                           struct offload_info *info)
+{
+    struct mark_to_miss_ctx_data *data = netdev_dpdk_get_flow_miss_ctx(info->flow_mark);
+    if(!data){
+/*        netdev_dpdk_save_ct_miss_ctx(info->flow_mark, NULL, ct_offload->setmark, 
+                        ct_offload->zone, ct_offload->ct_state)
+                        uint8_t  ct_state, uint8_t  outer_id, bool reply)
+*/
+
+        return -1;
+    }
+
+    return 0;
+}
+
+int netdev_dpdk_offload_ct_del(struct offload_info *info)
+{
+    struct mark_to_miss_ctx_data *data = netdev_dpdk_get_flow_miss_ctx(info->flow_mark);
+    if (!data) {
+        return 0;
+    }
+
+    /* Destroy FLOWS  from NAT and CT NAT */
+    netdev_dpdk_del_miss_ctx(info->flow_mark);
+
+    return 0;
+}
+
 

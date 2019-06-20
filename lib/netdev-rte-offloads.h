@@ -25,6 +25,7 @@ struct nlattr;
 struct offload_info;
 struct dpif_flow_stats;
 struct dp_packet;
+struct ct_flow_offload_item;
 
 /* Thread-safety
  * =============
@@ -66,6 +67,8 @@ int netdev_rte_offloads_vport_add(struct netdev *netdev, odp_port_t dp_port);
 int netdev_rte_offloads_vport_del(odp_port_t dp_port);
 
 void netdev_rte_offload_preprocess(struct dp_packet *packet, uint32_t mark);
+int netdev_rte_dpdk_ct_put(struct ct_flow_offload_item *,struct offload_info *info);
+int netdev_rte_dpdk_ct_del(struct offload_info *info);
 
 #define DPDK_FLOW_OFFLOAD_API                   \
     .flow_put = netdev_rte_offloads_flow_put,   \
