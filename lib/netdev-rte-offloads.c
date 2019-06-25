@@ -225,13 +225,12 @@ netdev_rte_port_ufid_hw_offload_free(struct ufid_hw_offload *hw_offload)
 
     for (int i = 0 ; i < hw_offload->curr_idx ; i++) {
         if (hw_offload->rte_flow_data[i].flow) {
-            VLOG_DBG("rte_destory for flow "UUID_FMT" is called."
-                    ,UUID_ARGS((struct uuid *)&hw_offload->ufid));
-            int ret = netdev_dpdk_rte_flow_destroy(
-                hw_offload->rte_flow_data[i].netdev,
-                hw_offload->rte_flow_data[i].flow,
-                &error);
-
+            VLOG_DBG("rte_destory for flow "UUID_FMT" is called.",
+                     UUID_ARGS((struct uuid *)&hw_offload->ufid));
+            int ret =
+                netdev_dpdk_rte_flow_destroy(hw_offload->rte_flow_data[i].netdev,
+                                             hw_offload->rte_flow_data[i].flow,
+                                             &error);
             if (ret) {
                 VLOG_ERR_RL(&error_rl,
                             "rte flow destroy error: %u : message : %s.\n",
@@ -322,8 +321,7 @@ ufid_to_portid_remove(const ovs_u128 *ufid)
 
     if (data != NULL) {
         cmap_remove(&ufid_to_portid_map,
-                        CONST_CAST(struct cmap_node *, &data->node),
-                        hash);
+                    CONST_CAST(struct cmap_node *, &data->node), hash);
         free(data);
     }
 }
@@ -358,9 +356,9 @@ static void
 free_flow_actions(struct flow_actions *actions)
 {
     /* When calling this function 'actions' must be valid */
-     free(actions->actions);
-     actions->actions = NULL;
-     actions->cnt = 0;
+    free(actions->actions);
+    actions->actions = NULL;
+    actions->cnt = 0;
 }
 
 static void
@@ -675,8 +673,7 @@ add_flow_patterns(struct flow_patterns *patterns,
         add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_ETH,
                          &spec->eth, &mask->eth);
     } else {
-        /*
-         * If user specifies a flow (like UDP flow) without L2 patterns,
+        /* If user specifies a flow (like UDP flow) without L2 patterns,
          * OVS will at least set the dl_type. Normally, it's enough to
          * create an eth pattern just with it. Unluckily, some Intel's
          * NIC (such as XL710) doesn't support that. Below is a workaround,
@@ -955,7 +952,7 @@ get_output_port(const struct nlattr *a,
 
     if (!output_rte_port) {
         VLOG_DBG("No rte port was found for odp_port %u",
-                odp_to_u32(odp_port));
+                 odp_to_u32(odp_port));
         return EINVAL;
     }
 
@@ -995,7 +992,6 @@ netdev_rte_add_clone_flow_action(const struct nlattr *nlattr,
         int clone_type = nl_attr_type(ca);
         if (clone_type == OVS_ACTION_ATTR_TUNNEL_PUSH) {
             netdev_rte_add_raw_encap_flow_action(ca, raw_encap, actions);
-
         } else if (clone_type == OVS_ACTION_ATTR_OUTPUT) {
             result = get_output_port(ca, output);
             if (result) {
@@ -1094,7 +1090,6 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
             netdev_rte_add_count_flow_action(&count, &actions);
             action_bitmap |= 1 << OVS_ACTION_ATTR_TUNNEL_POP;
             result = 0;
-
         } else if ((enum ovs_action_attr) type == OVS_ACTION_ATTR_OUTPUT) {
             result = get_output_port(a, &output);
             if (result) {
@@ -1103,7 +1098,6 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
             netdev_rte_add_count_flow_action(&count, &actions);
             netdev_rte_add_port_id_flow_action(&output, &actions);
             action_bitmap |= 1 << OVS_ACTION_ATTR_OUTPUT;
-
         } else if ((enum ovs_action_attr) type == OVS_ACTION_ATTR_CLONE) {
             result = netdev_rte_add_clone_flow_action(a, &clone_raw_encap,
                                                       &clone_count,
@@ -1112,7 +1106,6 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
                 break;
             }
             action_bitmap |= 1 << OVS_ACTION_ATTR_CLONE;
-
         } else {
             /* Unsupported action for offloading */
             result = -1;
@@ -1126,14 +1119,14 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
         flow = netdev_rte_offload_mark_rss(netdev, info, &patterns, &actions,
                                            NULL, &flow_attr);
         VLOG_DBG("Flow with Mark and RSS actions: NIC offload was %s",
-                flow ? "succeeded" : "failed");
+                 flow ? "succeeded" : "failed");
     } else {
         /* For better performance the clone action is offloaded to the
          * vport table, and a jump rule is added to table 0 */
         if (action_bitmap & (1 << OVS_ACTION_ATTR_CLONE)) {
             flow = netdev_dpdk_add_jump_to_non_root_table(netdev, info);
             VLOG_DBG("Flow with catch-all and jump actions: "
-                    "eSwitch offload was %s", flow ? "succeeded" : "failed");
+                     "eSwitch offload was %s", flow ? "succeeded" : "failed");
             if (!flow) {
                 goto out;
             }
@@ -1156,7 +1149,7 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
 
         /* If action is tunnel pop, create another table with a default
          * flow. Do it only once, if default rte flow doesn't exist
-         * */
+         */
         if ((action_bitmap & (1 << OVS_ACTION_ATTR_TUNNEL_POP)) &&
             (!rte_port->default_rte_flow[vport->table_id])) {
 
@@ -1164,9 +1157,9 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
                 netdev_rte_offload_add_default_flow(rte_port, vport);
 
             /* If default flow creation failed, need to clean up also
-             * the previous flow */
+             * the previous flow
+             */
             if (!rte_port->default_rte_flow[vport->table_id]) {
-
                 VLOG_ERR("ASAF Default flow is expected to fail "
                         "- no support for NIC and group 1 yet");
                 goto out; // ASAF TEMP
@@ -1280,8 +1273,7 @@ netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
         return EINVAL;
     }
 
-    /*
-     * If an old rte_flow exists, it means it's a flow modification.
+    /* If an old rte_flow exists, it means it's a flow modification.
      * Here destroy the old rte flow first before adding a new one.
      */
     struct ufid_hw_offload *ufid_hw_offload =
@@ -1336,8 +1328,8 @@ netdev_offloads_flow_del(const ovs_u128 *ufid)
 
     rte_port = netdev_rte_port_search(port_num, &port_map);
     if (!rte_port) {
-          VLOG_ERR("failed to find dpdk port for port %d",port_num);
-          return ENODEV;
+        VLOG_ERR("failed to find dpdk port for port %d",port_num);
+        return ENODEV;
     }
 
     ufid_to_portid_remove(ufid);
@@ -1456,7 +1448,7 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
                                         size_t actions_len,
                                         const ovs_u128 *ufid,
                                         struct offload_info *info,
-                                      struct dpif_flow_stats *stats OVS_UNUSED)
+                                        struct dpif_flow_stats *stats OVS_UNUSED)
 {
     if (!actions_len || !nl_actions) {
         VLOG_DBG("skip flow offload without actions\n");
@@ -1466,10 +1458,10 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
     int ret = 0;
 
     /* If an old rte_flow exists, it means it's a flow modification.
-    * Here destroy the old rte flow first before adding a new one.
-    */
+     * Here destroy the old rte flow first before adding a new one.
+     */
     struct ufid_hw_offload *ufid_hw_offload =
-            ufid_hw_offload_find(ufid, &rte_port->ufid_to_rte);
+        ufid_hw_offload_find(ufid, &rte_port->ufid_to_rte);
 
     if (ufid_hw_offload) {
         VLOG_DBG("got modification and destroying previous rte_flow");
@@ -1485,8 +1477,8 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
         return -1;
     }
 
-    ufid_hw_offload = netdev_rte_port_ufid_hw_offload_alloc(
-            dpdk_phy_ports_amount, ufid);
+    ufid_hw_offload =
+        netdev_rte_port_ufid_hw_offload_alloc(dpdk_phy_ports_amount, ufid);
     if (ufid_hw_offload == NULL) {
         VLOG_WARN("failed to allocate ufid_hw_offlaod, OOM");
         return -1;
@@ -1531,7 +1523,8 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
     struct rte_flow_action_count count;
 
     /* Actions in nl_actions will be asserted in this bitmap,
-     * according to their values in ovs_action_attr enum */
+     * according to their values in ovs_action_attr enum
+     */
     uint64_t action_bitmap = 0;
 
     const struct nlattr *a;
@@ -1579,12 +1572,13 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
                 info->is_hwol = true;
             } else {
                 VLOG_ERR("%s: rte flow create offload error: %u : "
-                        "message : %s\n", netdev_get_name(data->netdev),
-                        error.type, error.message);
+                         "message : %s\n", netdev_get_name(data->netdev),
+                         error.type, error.message);
 
                 /* In case flow cannot be offloaded with decap and output
                  * actions, try to offload decap with mark and rss, and output
-                 * will be done in SW */
+                 * will be done in SW
+                 */
                 free_flow_actions(&actions);
 
                 netdev_rte_add_decap_flow_action(&actions);
@@ -1612,12 +1606,12 @@ out:
 
 static int
 netdev_rte_vport_flow_put(struct netdev *netdev OVS_UNUSED,
-                 struct match *match,
-                 struct nlattr *actions,
-                 size_t actions_len,
-                 const ovs_u128 *ufid,
-                 struct offload_info *info,
-                 struct dpif_flow_stats *stats)
+                          struct match *match,
+                          struct nlattr *actions,
+                          size_t actions_len,
+                          const ovs_u128 *ufid,
+                          struct offload_info *info,
+                          struct dpif_flow_stats *stats)
 {
     if (netdev_rte_offloads_validate_flow(match, true)) {
         VLOG_DBG("flow pattern is not supported");
@@ -1632,8 +1626,10 @@ netdev_rte_vport_flow_put(struct netdev *netdev OVS_UNUSED,
         if (rte_port->rte_port_type == RTE_PORT_TYPE_VXLAN) {
             VLOG_DBG("vxlan offload ufid "UUID_FMT" \n",
                      UUID_ARGS((struct uuid *)ufid));
-             ret = netdev_vport_vxlan_add_rte_flow_offload(rte_port, match,
-                              actions, actions_len, ufid, info, stats);
+            ret = netdev_vport_vxlan_add_rte_flow_offload(rte_port, match,
+                                                          actions,
+                                                          actions_len, ufid,
+                                                          info, stats);
         } else {
             VLOG_DBG("unsupported tunnel type");
             ovs_assert(true);
@@ -1650,7 +1646,7 @@ netdev_rte_vport_flow_put(struct netdev *netdev OVS_UNUSED,
 static void
 netdev_rte_offloads_vxlan_init(struct netdev *netdev)
 {
-    struct netdev_class *cls = (struct netdev_class *) netdev->netdev_class;
+    struct netdev_class *cls = (struct netdev_class *)netdev->netdev_class;
     cls->flow_put = netdev_rte_vport_flow_put;
     cls->flow_del = netdev_rte_vport_flow_del;
     cls->flow_get = NULL;
@@ -1729,11 +1725,11 @@ netdev_rte_port_del_default_rules(struct netdev_rte_port *rte_port)
     for (i = 0 ; i < RTE_FLOW_MAX_TABLES ; i++) {
         if (rte_port->default_rte_flow[i]) {
             result = netdev_dpdk_rte_flow_destroy(rte_port->netdev,
-                                                rte_port->default_rte_flow[i],
-                                                &error);
+                                                  rte_port->default_rte_flow[i],
+                                                  &error);
             if (result) {
                  VLOG_ERR_RL(&error_rl, "rte flow destroy error: %u : "
-                         "message : %s\n", error.type, error.message);
+                             "message : %s\n", error.type, error.message);
             }
             rte_port->default_rte_flow[i] = NULL;
         }
@@ -1747,7 +1743,7 @@ int
 netdev_rte_offloads_port_del(odp_port_t dp_port)
 {
     struct netdev_rte_port *rte_port =
-        netdev_rte_port_search(dp_port,  &port_map);
+        netdev_rte_port_search(dp_port, &port_map);
     if (rte_port == NULL) {
         VLOG_DBG("port %d has no rte_port", dp_port);
         return ENODEV;
@@ -1784,7 +1780,8 @@ netdev_rte_port_preprocess(struct netdev_rte_port *rte_port,
     switch (rte_port->rte_port_type) {
         case RTE_PORT_TYPE_VXLAN:
             /* VXLAN table failed to match on HW, but according to port
-             * id it can be popped here */
+             * id it can be popped here
+             */
             if (rte_port->netdev->netdev_class->pop_header) {
                 rte_port->netdev->netdev_class->pop_header(packet);
                 packet->md.in_port.odp_port = rte_port->dp_port;
