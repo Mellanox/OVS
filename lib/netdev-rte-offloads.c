@@ -1394,8 +1394,10 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
             }
 
             if (flow) {
+                ufid_hw_offload_add(ufid_hw_offload, &rte_port->ufid_to_rte);
+                ufid_to_portid_add(ufid, rte_port->dp_port);
                 ufid_hw_offload_add_rte_flow(ufid_hw_offload, flow,
-                                             rte_port->netdev);
+                                             data->netdev);
             }
         }
     }
