@@ -51,7 +51,7 @@ int netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
 int netdev_rte_offloads_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
                                  struct dpif_flow_stats *stats);
 void netdev_rte_offloads_init(void);
-void netdev_rte_offloads_hw_pr_fwd(int queue_id, int relay_id);
+void netdev_rte_offloads_hw_pr_fwd(int queue_id, int relay_id, int *fwd_rx);
 void netdev_rte_offloads_hw_pr_remove(int relay_id);
 
 /*

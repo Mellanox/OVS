@@ -36,7 +36,7 @@ struct rte_mempool;
 void netdev_dpdk_register(void);
 struct rte_mempool *netdev_dpdk_hw_forwarder_get_mempool(const char *name);
 void netdev_dpdk_hw_forwarder_register(const char *name, int id,
-        void (*fwd_fp)(int queue_id, int relay_id),
+        void (*fwd_fp)(int queue_id, int relay_id, int *fwd_rx),
         void (*del_fp)(int relay_id));
 void free_dpdk_buf(struct dp_packet *);
 int
