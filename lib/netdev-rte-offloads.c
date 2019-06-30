@@ -3479,10 +3479,11 @@ netdev_dpdk_outer_id_unref(uint32_t outer_id)
 }
 
 enum ct_offload_dir {
-    CT_OFFLOAD_DIR_INIT,
-    CT_OFFLOAD_DIR_REP,
-    CT_OFFLOAD_NUM,
+    CT_OFFLOAD_DIR_INIT = 0,
+    CT_OFFLOAD_DIR_REP = 1,
+    CT_OFFLOAD_NUM = 2
 };
+
 
 enum mark_preprocess_type {
     MARK_PREPROCESS_CT = 1 << 0,
@@ -3504,6 +3505,8 @@ struct mark_preprocess_info mark_preprocess_info = {
     .mark_to_ct_ctx = CMAP_INITIALIZER,
 };
 
+#define INVALID_IN_PORT 0xffff
+
 struct mark_to_miss_ctx_data {
     struct cmap_node node;
     uint32_t mark;
@@ -3513,8 +3516,9 @@ struct mark_to_miss_ctx_data {
             uint32_t ct_mark;
             uint16_t ct_zone;
             uint8_t  ct_state;
-            uint16_t outer_id;
-            uint16_t in_port[CT_OFFLOAD_NUM];
+            struct ct_flow_offload_item *ct_offload[CT_OFFLOAD_NUM];
+            uint32_t outer_id[CT_OFFLOAD_NUM];
+            uint16_t odp_port[CT_OFFLOAD_NUM];
             struct rte_flow *rte_flow[CT_OFFLOAD_NUM];
          } ct;
         struct {
@@ -3525,6 +3529,25 @@ struct mark_to_miss_ctx_data {
         } flow;
     };
 };
+
+static inline void
+netdev_dpdk_release_ct_flow(struct mark_to_miss_ctx_data *data,
+                            enum ct_offload_dir dir)
+{
+    if (data->ct.rte_flow[dir]) {
+        /* TODO: destroy rte_flow */
+        data->ct.rte_flow[dir] = NULL;
+    }
+    data->ct.odp_port[dir] = INVALID_IN_PORT;
+    if (data->ct.outer_id[dir] != INVALID_OUTER_ID) {
+        netdev_dpdk_outer_id_unref(data->ct.outer_id[dir]);
+        data->ct.outer_id[dir] = INVALID_OUTER_ID;
+    }
+    if (data->ct.ct_offload[dir]) {
+        free(data->ct.ct_offload[dir]);
+        data->ct.ct_offload[dir] = NULL;
+    }
+}
 
 static bool
 netdev_dpdk_find_miss_ctx(uint32_t mark, struct mark_to_miss_ctx_data **ctx)
@@ -3551,6 +3574,11 @@ netdev_dpdk_get_flow_miss_ctx(uint32_t mark)
     if (!netdev_dpdk_find_miss_ctx(mark, &data)) {
         size_t hash = hash_add(0,mark);
         data = xzalloc(sizeof *data);
+        data->mark = mark;
+        data->ct.outer_id[CT_OFFLOAD_DIR_REP] = INVALID_OUTER_ID;
+        data->ct.outer_id[CT_OFFLOAD_DIR_INIT] = INVALID_OUTER_ID;
+        data->ct.odp_port[CT_OFFLOAD_DIR_REP] = INVALID_IN_PORT;
+        data->ct.odp_port[CT_OFFLOAD_DIR_INIT] = INVALID_IN_PORT;
         cmap_insert(&mark_to_ct_ctx,
                 CONST_CAST(struct cmap_node *, &data->node), hash);
     }
@@ -3580,7 +3608,7 @@ netdev_dpdk_save_flow_miss_ctx(uint32_t mark, uint32_t hw_id, bool is_port,
 static int
 netdev_dpdk_save_ct_miss_ctx(uint32_t mark, struct rte_flow *flow,
                         uint32_t ct_mark, uint16_t ct_zone,
-                        uint8_t  ct_state, uint8_t  outer_id, bool reply)
+                        uint8_t  ct_state, uint16_t  outer_id, bool reply)
 {
     int idx;
     struct mark_to_miss_ctx_data * data = netdev_dpdk_get_flow_miss_ctx(mark);
@@ -3593,7 +3621,7 @@ netdev_dpdk_save_ct_miss_ctx(uint32_t mark, struct rte_flow *flow,
     data->ct.ct_mark = ct_mark;
     data->ct.ct_zone = ct_zone;
     data->ct.ct_state = ct_state;
-    data->ct.outer_id = outer_id;
+    data->ct.outer_id[idx] = outer_id;
     idx = reply?CT_OFFLOAD_DIR_REP:CT_OFFLOAD_DIR_INIT;
     if (data->ct.rte_flow[idx]) {
         VLOG_WARN("flow already exist");
@@ -3635,8 +3663,12 @@ static void
 netdev_dpdk_ct_recover_metadata(struct dp_packet *p,
                            struct  mark_to_miss_ctx_data *ct_ctx)
 {
+    int dir = CT_OFFLOAD_DIR_INIT;
+    if (p->md.in_port.odp_port == ct_ctx->ct.odp_port[CT_OFFLOAD_DIR_REP]) {
+        dir = CT_OFFLOAD_DIR_REP;
+    }
     if (ct_ctx->ct.outer_id) {
-        netdev_dpdk_tun_recover_meta_data(p, ct_ctx->ct.outer_id);
+        netdev_dpdk_tun_recover_meta_data(p, ct_ctx->ct.outer_id[dir]);
     }
 
     /*uint32_t recirc_id;*/
@@ -4071,7 +4103,7 @@ netdev_dpdk_offload_add_vport_root_patterns(struct flow_data *fdata,
 
     add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_END, NULL, NULL);
     /*TODO: here we add all TUN info (match->flow.tnl....) (DONE)*/
-    /*TODO: we then call the regulsr root to add the rest (DONE)*/
+    /*TODO: we then call the regular root to add the rest (DONE)*/
     return 0;
 }
 
@@ -4205,7 +4237,7 @@ netdev_dpdk_offload_ct_actions(struct flow_data *fdata,
         netdev_rte_add_decap_flow_action(flow_actions);
     }
 
-    /*TODO: set mark -- DONE */
+    /*TODO: set mark cls_info->mark -- DONE */
     netdev_rte_add_mark_flow_action(&fdata->actions.mark, flow_mark, flow_actions);
 
     /*TODO: add counter -- DONE */
@@ -4214,7 +4246,7 @@ netdev_dpdk_offload_ct_actions(struct flow_data *fdata,
     if (!netdev_dpdk_offload_get_hw_id(cls_info)) {
         return -1;
     }
-    /* TODO: set recirc_id in register */
+    /* TODO: set hw_id in register */
     /* TODO: add all actions until CT */
     if (cls_info->actions.has_nat) {
         /* TODO: we need to create the table if doesn't exists -- will be done implicitly with the first flow */
@@ -4609,29 +4641,307 @@ roll_back:
     return -1;
 }
 
+static inline enum ct_offload_dir
+netdev_dpdk_offload_ct_opposite_dir(enum ct_offload_dir dir)
+{
+    return dir == CT_OFFLOAD_DIR_INIT?CT_OFFLOAD_DIR_REP:CT_OFFLOAD_DIR_INIT;
+}
+
+static struct ct_flow_offload_item *
+netdev_dpdk_offload_ct_dup(struct ct_flow_offload_item *ct_offload)
+{
+    struct ct_flow_offload_item *data = xzalloc(sizeof *data);
+    if (data) {
+        memcpy(data, ct_offload, sizeof *data);
+    }
+    return data;
+}
+
 static int
+netdev_dpdk_ct_add_ipv4_5tuple_pattern(struct flow_patterns *patterns,
+                                        struct ovs_key_ct_tuple_ipv4 *ct_match)
+{
+    struct flow_items {
+        struct rte_flow_item_ipv4 ipv4;
+        union {
+            struct rte_flow_item_tcp  tcp;
+            struct rte_flow_item_udp  udp;
+            struct rte_flow_item_icmp icmp;
+        };
+    } spec, mask;
+
+    spec.ipv4.hdr.next_proto_id   = ct_match->ipv4_proto;
+    spec.ipv4.hdr.src_addr        = ct_match->ipv4_src;
+    spec.ipv4.hdr.dst_addr        = ct_match->ipv4_dst;
+
+    /* TODO: this can be unified with other matches, providing mask */
+    mask.ipv4.hdr.type_of_service = 0;
+    mask.ipv4.hdr.time_to_live    = 0;
+    mask.ipv4.hdr.next_proto_id   = 0;
+    mask.ipv4.hdr.src_addr        = 0xffffffff;
+    mask.ipv4.hdr.dst_addr        = 0xffffffff;
+
+    add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV4,
+                     &spec.ipv4, &mask.ipv4);
+
+    switch (ct_match->ipv4_proto) {
+    case IPPROTO_TCP:
+        spec.tcp.hdr.src_port  = ct_match->src_port;
+        spec.tcp.hdr.dst_port  = ct_match->dst_port;
+        /* TODO: need to skip rst/fin */
+        /*spec.tcp.hdr.tcp_flags = ntohs(match->flow.tcp_flags) & 0xff;*/
+
+        mask.tcp.hdr.src_port  = 0xffff;
+        mask.tcp.hdr.dst_port  = 0xffff;
+        mask.tcp.hdr.data_off  = 0;
+        mask.tcp.hdr.tcp_flags = 0; /* FLAGS & 0xff */
+        mask.ipv4.hdr.next_proto_id = 0;
+
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_TCP,
+                     &spec.tcp, &mask.tcp);
+    break;
+
+    case IPPROTO_UDP:
+        spec.udp.hdr.src_port = ct_match->src_port;
+        spec.udp.hdr.dst_port = ct_match->dst_port;
+
+        mask.udp.hdr.src_port = 0xffff;
+        mask.udp.hdr.dst_port = 0xffff;
+
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_UDP,
+                         &spec.udp, &mask.udp);
+
+        /* proto == UDP and ITEM_TYPE_UDP, thus no need for proto match. */
+        break;
+
+    case IPPROTO_SCTP:
+        /* We don't support in CT */
+        return -1;
+       break;
+
+    case IPPROTO_ICMP:
+       /* We don't support, might need to */
+        return -1;
+        break;
+    }
+
+    add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_END, NULL, NULL);
+    return 0;
+}
+
+static int
+netdev_dpdk_add_jump_to_mapping_actions(struct flow_actions *actions
+                                        /*, rte_port */)
+{
+    /* each RTE_PORT has mapping table, we need to find its */
+    /* table number and add jump actuion */
+
+
+    return 0;
+}
+
+static inline void
+netdev_dpdk_reset_patterns(struct flow_patterns *patterns)
+{
+    free(patterns->items);
+    patterns->cnt = 0;
+    patterns->items = NULL;
+}
+
+static inline void
+netdev_dpdk_reset_actions(struct flow_actions *actions)
+{
+    free(actions->actions);
+    actions->cnt = 0;
+    actions->actions = NULL;
+}
+
+
+static struct rte_flow *
+netdev_dpdk_ct_build_session_offload(struct ct_flow_offload_item *item, 
+                                     uint16_t outer_id)
+{
+    struct rte_flow * flow = NULL;
+    int ret = 0;
+    struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
+    struct flow_actions  actions = { .actions = NULL, .cnt = 0 };
+
+    if (item->ct_ipv6) {
+        /* TODO: offload ipv6 */
+        VLOG_ERR("IPV6 not suppored yet");
+        return NULL;
+    } else {
+        ret |= netdev_dpdk_ct_add_ipv4_5tuple_pattern(&patterns,
+                                           &item->ct_match.ipv4);
+        /* if outer_id != INVALID we need to set register */
+        ret |= netdev_dpdk_add_jump_to_mapping_actions(&actions);
+    }
+
+    if (!ret) {
+    /* offload here
+    * offload the flow to the in_port if not a VXLAN , if
+    * it is vxlan port, we need to offload to pf!!!!
+    * TODO: offload rte flow in rte_port and with mark */
+    }
+    netdev_dpdk_reset_patterns(&patterns);
+    netdev_dpdk_reset_actions(&actions);
+
+    return flow;
+}
+
+static int
+netdev_dpdk_ct_ctx_get_ref_outer_id(struct mark_to_miss_ctx_data *data,
+                                    struct ct_flow_offload_item *ct_offload1,
+                                    struct ct_flow_offload_item *ct_offload2)
+{
+    int dir1 = ct_offload1->reply?CT_OFFLOAD_DIR_REP:CT_OFFLOAD_DIR_INIT;
+    int dir2 = ct_offload2->reply?CT_OFFLOAD_DIR_REP:CT_OFFLOAD_DIR_INIT;
+
+    if (ct_offload1->tun.ip_dst) {
+        data->ct.outer_id[dir1] = netdev_dpdk_tun_id_get_ref(
+                                       ct_offload1->tun.ip_dst,
+                                       ct_offload1->tun.ip_src,
+                                       ct_offload1->tun.tun_id);
+        if (data->ct.outer_id[dir1] == INVALID_OUTER_ID) {
+            /* TODO: warn or counter, we can't offload */
+            return -1;
+        }
+    }
+    if (ct_offload1->tun.ip_dst) {
+        data->ct.outer_id[dir2] = netdev_dpdk_tun_id_get_ref(
+                                       ct_offload2->tun.ip_dst,
+                                       ct_offload2->tun.ip_src,
+                                       ct_offload2->tun.tun_id);
+        if (data->ct.outer_id[dir2] == INVALID_OUTER_ID) {
+            /* TODO: warn or counter, we can't offload */
+            return -1;
+        }
+    }
+    return 0;
+}
+
+/* Build 2 HW flows, one per direction and offload to relevant port.
+ * (Each side of the flow will be offloded to different port id).
+ * If NAT is also configured than two additional flows should be
+ * configured.
+ *
+ * resource allocation:
+ * if offload has TUN data, an outer_id should be allocated and used.
+ *
+ */
+static int
+netdev_dpdk_offload_ct_session(struct mark_to_miss_ctx_data *data,
+                               struct ct_flow_offload_item *ct_offload1,
+                               struct ct_flow_offload_item *ct_offload2)
+{
+    struct rte_flow * flow = NULL;
+    int dir1 = ct_offload1->reply?CT_OFFLOAD_DIR_REP:CT_OFFLOAD_DIR_INIT;
+    int dir2 = ct_offload2->reply?CT_OFFLOAD_DIR_REP:CT_OFFLOAD_DIR_INIT;
+
+    if (dir1 == dir2) {
+        /* TODO: add warning */
+        goto fail;
+    }
+
+    if (!netdev_dpdk_ct_ctx_get_ref_outer_id(data, ct_offload1, ct_offload2)) {
+        goto fail;
+    }
+
+    flow = netdev_dpdk_ct_build_session_offload(ct_offload1, 
+                                                data->ct.outer_id[dir1]);
+    if (flow) {
+        goto fail;
+    }
+    data->ct.rte_flow[dir1] = flow;
+    data->ct.odp_port[dir1] = ct_offload1->odp_port;
+
+    flow = netdev_dpdk_ct_build_session_offload(ct_offload2, 
+                                                data->ct.outer_id[dir2]);
+    if (!flow) {
+        goto fail;
+    }
+    data->ct.rte_flow[dir2] = flow;
+    data->ct.odp_port[dir2] = ct_offload2->odp_port;
+
+    /* TODO: hanlde NAT */
+    return 0;
+fail:
+    netdev_dpdk_release_ct_flow(data, dir1);
+    netdev_dpdk_release_ct_flow(data, dir2);
+    return -1;
+}
+
+static void
+netdev_dpdk_offload_ct_ctx_update(struct mark_to_miss_ctx_data *data,
+                               struct ct_flow_offload_item *ct_offload1,
+                               struct ct_flow_offload_item *ct_offload2)
+{
+    /* all are paremeters of the session ctx, if it is not zero
+     * it is expedted that both will have same value */
+    data->ct.ct_zone = ct_offload1->zone?ct_offload1->zone:ct_offload2->zone;
+    data->ct.ct_mark = ct_offload1->setmark?
+                       ct_offload1->setmark:ct_offload2->setmark;
+    data->ct.ct_state = ct_offload1->ct_state | ct_offload2->ct_state;
+}
+
+
+/* Offload connection tracking session event.
+ * We offload both directions on same time, so
+ * first message on a session we just need to store.
+ * We don't allocate any resource before the offload.
+ * */
+int
 netdev_dpdk_offload_ct_put(struct ct_flow_offload_item *ct_offload,
                            struct offload_info *info)
 {
-    struct mark_to_miss_ctx_data *data = netdev_dpdk_get_flow_miss_ctx(info->flow_mark);
-    if(!data){
+    struct mark_to_miss_ctx_data *data =
+                        netdev_dpdk_get_flow_miss_ctx(info->flow_mark);
+    int dir = ct_offload->reply?CT_OFFLOAD_DIR_REP:CT_OFFLOAD_DIR_INIT;
+    int dir_opp = netdev_dpdk_offload_ct_opposite_dir(dir);
+    if (!data) {
 /*        netdev_dpdk_save_ct_miss_ctx(info->flow_mark, NULL, ct_offload->setmark, 
                         ct_offload->zone, ct_offload->ct_state)
                         uint8_t  ct_state, uint8_t  outer_id, bool reply)
 */
-
         return -1;
+    }
+
+    if (data->ct.rte_flow[dir]) {
+        /* TODO: maybe add warn here because it shouldn't happen */
+        /* TODO: we should offload once on established */
+        netdev_dpdk_release_ct_flow(data, dir);
+    }
+
+    /* we offload only when we have both sides */
+    /* this might need to change if we want to support single dir flow */
+    /* but then we should define established differently */
+    if (data->ct.ct_offload[dir_opp]) {
+        struct ct_flow_offload_item *ct_off_opp = data->ct.ct_offload[dir_opp];
+        data->ct.ct_offload[dir_opp] = NULL;
+
+        if (!netdev_dpdk_offload_ct_session(data, ct_off_opp, ct_offload)) {
+            free(ct_off_opp);
+            return -1;
+        }
+        netdev_dpdk_offload_ct_ctx_update(data, ct_off_opp, ct_offload);
+        free(ct_off_opp);
+
+    } else {
+        data->ct.ct_offload[dir] = netdev_dpdk_offload_ct_dup(ct_offload);
     }
 
     return 0;
 }
 
-int netdev_dpdk_offload_ct_del(struct offload_info *info)
+int
+netdev_dpdk_offload_ct_del(struct offload_info *info)
 {
-    struct mark_to_miss_ctx_data *data = netdev_dpdk_get_flow_miss_ctx(info->flow_mark);
-    if (!data) {
+    struct mark_to_miss_ctx_data *data;
+    if (!netdev_dpdk_find_miss_ctx(info->flow_mark, &data)) {
         return 0;
     }
+    netdev_dpdk_release_ct_flow(data, CT_OFFLOAD_DIR_REP);
+    netdev_dpdk_release_ct_flow(data, CT_OFFLOAD_DIR_INIT);
 
     /* Destroy FLOWS  from NAT and CT NAT */
     netdev_dpdk_del_miss_ctx(info->flow_mark);
