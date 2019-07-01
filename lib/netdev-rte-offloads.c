@@ -1339,7 +1339,7 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
         if ((enum ovs_action_attr)type == OVS_ACTION_ATTR_OUTPUT) {
             ret = get_output_port(a, &port_id);
             if (ret) {
-                continue;
+                goto out;
             }
             action_bitmap |= (1 << OVS_ACTION_ATTR_OUTPUT);
         } else {
