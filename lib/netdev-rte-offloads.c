@@ -1046,6 +1046,9 @@ err:
     return -1;
 }
 
+static int
+netdev_offloads_flow_del(const ovs_u128 *ufid);
+
 int
 netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
                              struct nlattr *actions, size_t actions_len,
@@ -1072,8 +1075,7 @@ netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
 
     if (ufid_hw_offload) {
         VLOG_DBG("got modification and destroying previous rte_flow");
-        ufid_hw_offload_remove(ufid, &rte_port->ufid_to_rte);
-        ret = netdev_rte_port_ufid_hw_offload_free(ufid_hw_offload);
+        ret = netdev_offloads_flow_del(ufid);
         if (ret < 0) {
             return -ret;
         }
@@ -1083,7 +1085,8 @@ netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
     ufid_hw_offload = netdev_rte_port_ufid_hw_offload_alloc(2, ufid);
     if (!ufid_hw_offload) {
         VLOG_WARN("failed to allocate ufid_hw_offlaod, OOM");
-        return ENOMEM;
+        ret = ENOMEM;
+        goto err;
     }
 
     ufid_hw_offload_add(ufid_hw_offload, &rte_port->ufid_to_rte);
@@ -1092,21 +1095,28 @@ netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
     ret = netdev_rte_offloads_validate_flow(match, false);
     if (ret < 0) {
         VLOG_DBG("flow pattern is not supported");
-        return EINVAL;
+        ret = EINVAL;
+        goto err;
     }
 
     rte_flow = netdev_rte_offloads_add_flow(netdev, match, actions,
                                             actions_len, ufid, info,
                                             &rte_flow0);
     if (!rte_flow) {
-        return ENODEV;
+        ret = ENODEV;
+        goto err;
     }
 
     if (rte_flow0) {
         ufid_hw_offload_add_rte_flow(ufid_hw_offload, rte_flow0, netdev);
     }
     ufid_hw_offload_add_rte_flow(ufid_hw_offload, rte_flow, netdev);
+
     return 0;
+
+err:
+    netdev_offloads_flow_del(ufid);
+    return ret;
 }
 
 static int
