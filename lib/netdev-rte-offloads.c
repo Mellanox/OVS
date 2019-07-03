@@ -25,6 +25,8 @@
 #include <rte_malloc.h>
 #include <rte_atomic.h>
 #include <rte_common.h>
+#include <rte_ether.h>
+#include <rte_byteorder.h>
 
 #include "cmap.h"
 #include "dpif-netdev.h"
@@ -1863,16 +1865,14 @@ static struct rte_eth_conf netdev_rte_offloads_port_conf = {
 struct qpair_stats {
     uint64_t packets;
     uint64_t bytes;
-    uint64_t cycles;
-    rte_spinlock_t stats_lock;
 };
 
 struct netdev_rte_offloads_qpair {
     uint16_t pid_rx;
     uint16_t pid_tx;
     uint16_t pr_queue;
-    uint16_t mbuf_head;
-    uint16_t mbuf_tail;
+    uint8_t mbuf_head;
+    uint8_t mbuf_tail;
     struct rte_mbuf *pkts[NETDEV_MAX_BURST * 2];
     struct qpair_stats qp_stats;
 };
@@ -1940,11 +1940,8 @@ netdev_rte_offloads_clear_relay(struct netdev_rte_offloads_relay *relay)
         relay->qpair[q].pid_rx = 0;
         relay->qpair[q].pid_tx = 0;
         relay->qpair[q].pr_queue = 0;
-        rte_spinlock_lock(&relay->qpair[q].qp_stats.stats_lock);
         relay->qpair[q].qp_stats.bytes = 0;
         relay->qpair[q].qp_stats.packets = 0;
-        relay->qpair[q].qp_stats.cycles = 0;
-        rte_spinlock_unlock(&relay->qpair[q].qp_stats.stats_lock);
     }
 
     memset(relay->vm_socket, 0, sizeof relay->vm_socket);
@@ -2151,6 +2148,12 @@ netdev_rte_offloads_port_init(uint16_t relay_id, uint16_t port, uint16_t queue_n
     rte_eth_dev_info_get(port, &dev_info);
     netdev_rte_offloads_port_conf.rxmode.offloads = 0;
 
+    /* enable tso for vf: */
+    netdev_rte_offloads_port_conf.txmode.offloads = 0;
+    if (!vm)
+        netdev_rte_offloads_port_conf.txmode.offloads = (DEV_TX_OFFLOAD_TCP_TSO |
+                DEV_TX_OFFLOAD_MULTI_SEGS);
+
     ret = rte_eth_dev_configure(port, queue_num, queue_num,
             &netdev_rte_offloads_port_conf);
     if (ret < 0) {
@@ -2233,7 +2236,6 @@ netdev_rte_offloads_update_relay(uint16_t relay_id,  uint32_t num_queues,
             relays[relay_id].qpair[q].pid_rx = *pid_vf;
             relays[relay_id].qpair[q].pid_tx = *pid_vm;
         }
-        rte_spinlock_init(&relays[relay_id].qpair[q].qp_stats.stats_lock);
         relays[relay_id].qpair[q].mbuf_head = 0;
         relays[relay_id].qpair[q].mbuf_tail = 0;
         memset(&relays[relay_id].qpair[q].qp_stats, 0, sizeof(struct qpair_stats));
@@ -2257,13 +2259,56 @@ netdev_rte_offloads_update_relay(uint16_t relay_id,  uint32_t num_queues,
     return 0;
 }
 
+static void
+parse_packet_fields(struct rte_mbuf *m)
+{
+    struct ipv4_hdr *ipv4_hdr;
+    struct ipv6_hdr *ipv6_hdr;
+    struct ether_hdr *eth_hdr;
+    struct tcp_hdr *tcp_hdr;
+    uint32_t l2_len = 0;
+    uint32_t l3_len = 0;
+    uint32_t l4_len = 0;
+
+    eth_hdr = rte_pktmbuf_mtod(m, struct ether_hdr *);
+    l2_len = sizeof(struct ether_hdr);
+
+    switch (rte_be_to_cpu_16(eth_hdr->ether_type)) {
+    case ETHER_TYPE_IPv4:
+        ipv4_hdr = (struct ipv4_hdr *) ((char *)eth_hdr + l2_len);
+        l3_len = (ipv4_hdr->version_ihl & 0x0f) * 4;
+        if (ipv4_hdr->next_proto_id == IPPROTO_TCP) {
+            tcp_hdr = (struct tcp_hdr *)((char *)ipv4_hdr + l3_len);
+            l4_len = (tcp_hdr->data_off & 0xf0) >> 2;
+        }
+        break;
+    case ETHER_TYPE_IPv6:
+        ipv6_hdr = (struct ipv6_hdr *) ((char *)eth_hdr + l2_len);
+        if (ipv6_hdr->proto == IPPROTO_TCP) {
+            l3_len = sizeof(struct ipv6_hdr);
+            tcp_hdr = (struct tcp_hdr *)((char *)ipv6_hdr + l3_len);
+            l4_len = (tcp_hdr->data_off & 0xf0) >> 2;
+        }
+        break;
+    }
+
+    m->l2_len = l2_len;
+    m->l3_len = l3_len;
+    m->l4_len = l4_len;
+    m->tso_segsz = 1460;
+    m->ol_flags |= PKT_TX_TCP_SEG;
+}
+
 static int
 netdev_rte_offloads_forward_traffic(struct netdev_rte_offloads_qpair *qpair,
         uint16_t queue_id, int *fwd_rx)
 {
     int burst_success;
     int diff;
+    int i;
+    bool tx_vf = (queue_id & 1) ? true : false;
 
+    queue_id = queue_id >> 1;
     diff = qpair->mbuf_tail - qpair->mbuf_head;
     if (diff >= NETDEV_MAX_BURST) {
         goto send;
@@ -2286,20 +2331,28 @@ netdev_rte_offloads_forward_traffic(struct netdev_rte_offloads_qpair *qpair,
 
     /*send:*/
 send:
+    if (diff == 0){
+        return 0;
+    }
+
+    diff = MIN(diff, NETDEV_MAX_BURST);
+    if (tx_vf) {
+        for (i = 0; i < diff; ++i) {
+            parse_packet_fields(qpair->pkts[qpair->mbuf_head+i]);
+        }
+    }
+
     burst_success = rte_eth_tx_burst(qpair->pid_tx, queue_id,
             qpair->pkts+qpair->mbuf_head, diff);
 
     /* update stats */
     if (likely(burst_success)) {
-        int i;
         unsigned bytes = 0;
         for (i = 0; i < burst_success; ++i) {
             bytes += qpair->pkts[qpair->mbuf_head+i]->pkt_len;
         }
-        rte_spinlock_lock(&qpair->qp_stats.stats_lock);
         qpair->qp_stats.packets += burst_success;
         qpair->qp_stats.bytes += bytes;
-        rte_spinlock_unlock(&qpair->qp_stats.stats_lock);
     }
 
     qpair->mbuf_head += burst_success;
@@ -2416,6 +2469,7 @@ netdev_rte_offloads_add_relay(const char *pci, const char *vhost_socket, const c
         netdev_close(netdev);
         return ret;
     }
+
     /* add the relay to the pr */
     netdev_dpdk_hw_forwarder_register(pr, relay_id, netdev_rte_offloads_hw_pr_fwd,
             netdev_rte_offloads_hw_pr_remove);
@@ -2647,7 +2701,7 @@ netdev_rte_offloads_hw_pr_fwd(int queue_id, int relay_id, int *fwd_rx)
     uint32_t q;
     for (q = 0; q < (relays[relay_id].num_queues * 2); ++q) {
         if (relays[relay_id].qpair[q].pr_queue == queue_id) {
-            netdev_rte_offloads_forward_traffic(&relays[relay_id].qpair[q], q>>1,
+            netdev_rte_offloads_forward_traffic(&relays[relay_id].qpair[q], q,
                     fwd_rx);
         }
     }
