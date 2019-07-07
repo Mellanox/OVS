@@ -35,7 +35,13 @@
 #include "unixctl.h"
 
 #define VXLAN_EXCEPTION_MARK (MIN_RESERVED_MARK + 0)
-#define VXLAN_TABLE_ID       1
+enum table_ids {
+    ROOT_TABLE_ID,
+    VXLAN_TABLE_ID,
+    CONNTRACK_TABLE_ID,
+    CONNTRACK_NAT_TABLE_ID,
+};
+
 
 VLOG_DEFINE_THIS_MODULE(netdev_rte_offloads);
 static struct vlog_rate_limit error_rl = VLOG_RATE_LIMIT_INIT(100, 5);
@@ -48,6 +54,11 @@ enum rte_port_type {
     RTE_PORT_TYPE_DPDK,
     RTE_PORT_TYPE_VXLAN
 };
+
+#define INVALID_OUTER_ID  0Xffffffff
+#define INVALID_HW_ID     0Xffffffff
+#define MAX_OUTER_ID  0xffff
+#define MAX_HW_TABLE (0xff00)
 
 static void
 netdev_dpdk_offload_put_handle(struct match *match, struct nlattr *actions,
@@ -640,6 +651,15 @@ add_flow_patterns(struct flow_patterns *patterns,
     return 0;
 }
 
+static void
+netdev_rte_add_jmp_flow_action(uint32_t table_id,
+                               struct rte_flow_action_jump *jump,
+                               struct flow_actions *actions)
+{
+    jump->group = table_id;
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_JUMP, jump);
+}
+
 static struct netdev_rte_port *
 netdev_rte_add_jump_flow_action(const struct nlattr *nlattr,
                                 struct rte_flow_action_jump *jump,
@@ -856,7 +876,8 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
                              size_t actions_len,
                              const ovs_u128 *ufid,
                              struct offload_info *info,
-                             struct rte_flow **rte_flow0)
+                             struct rte_flow **rte_flow0,
+                             bool is_vport)
 {
     struct rte_flow_attr flow_attr = {
         .group = 0,
@@ -904,11 +925,28 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
     NL_ATTR_FOR_EACH_UNSAFE (a, left, nl_actions, actions_len) {
         int type = nl_attr_type(a);
         if ((enum ovs_action_attr) type == OVS_ACTION_ATTR_TUNNEL_POP) {
+            /*
+             * 1. Tunnel pop action must be unique with no other actions.
+             * 2. It is not a vport.
+             * 3. Recirc_id must be 0.
+             * 4. Tunnel must be of vxlan type.
+             *    OMREVIEW - TBD. Look in lib/dpif-netlink.c for examples
+             * 5. Tunnel pop must be the last action.
+             * 6. Tunnel pop must be on physical port.
+             */
+            if (action_bitmap ||
+                match->flow.recirc_id ||
+                is_vport ||
+                (left > NLA_ALIGN(a->nla_len))) {
+                result = -1;
+                break;
+            }
+
             vport = netdev_rte_add_jump_flow_action(a, &jump, &actions);
             if (!vport) {
                 result = -1;
                 break;
-            }
+            }			
             netdev_rte_add_count_flow_action(&count, &actions);
             action_bitmap |= 1 << OVS_ACTION_ATTR_TUNNEL_POP;
             result = 0;
@@ -1049,11 +1087,12 @@ netdev_rte_offloads_validate_flow(const struct match *match, bool ct_offload,
         goto err;
     }
 
+#if 0
     /* recirc id must be zero. */
     if (!ct_offload && match_zero_wc.flow.recirc_id) {
         goto err;
     }
-
+#endif
     if (!ct_offload && (masks->ct_state || masks->ct_nw_proto ||
         masks->ct_zone  || masks->ct_mark     ||
         !ovs_u128_is_zero(masks->ct_label))) {
@@ -1151,10 +1190,10 @@ netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
     }
     // netdev_dpdk_offload_put_handle(match, actions,
     //    actions_len,0);
-    
+
     rte_flow = netdev_rte_offloads_add_flow(netdev, match, actions,
                                             actions_len, ufid, info,
-                                            &rte_flow0);
+                                            &rte_flow0, false);
     if (!rte_flow) {
         ret = ENODEV;
         goto err;
@@ -1293,6 +1332,9 @@ netdev_rte_vport_flow_del(struct netdev *netdev OVS_UNUSED,
     return netdev_offloads_flow_del(ufid);
 }
 
+static uint32_t netdev_dpdk_tun_id_get_ref(ovs_be32 ip_dst, ovs_be32 ip_src,
+                                           ovs_be64 tun_id);
+
 static int
 add_vport_vxlan_flow_patterns(struct flow_patterns *patterns,
                               struct flow_items *spec,
@@ -1324,6 +1366,10 @@ add_vport_vxlan_flow_patterns(struct flow_patterns *patterns,
         mask->ipv4.hdr.dst_addr        = match->wc.masks.tunnel.ip_dst;
         add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV4, &spec->ipv4,
                          &mask->ipv4);
+
+        ovs_be64 tun_id = match->flow.tunnel.tun_id;
+        ovs_be64 tun_id_mask = match->wc.masks.tunnel.tun_id;
+        // OMREVIEW: add_flow_pattern(patterns, RTE_FLOW_ITEM_MD, (tun_id & tun_id_mask));
 
         /* Save proto for L4 protocol setup */
         proto = spec->ipv4.hdr.next_proto_id &
@@ -1399,6 +1445,16 @@ add_vport_vxlan_flow_patterns(struct flow_patterns *patterns,
     add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_VXLAN, &spec->vxlan,
                      &mask->vxlan);
 
+    uint32_t outer_id =
+        netdev_dpdk_tun_id_get_ref(match->flow.tunnel.ip_dst,
+                                   match->flow.tunnel.ip_src,
+                                   match->flow.tunnel.tun_id);
+
+    if (outer_id == INVALID_OUTER_ID) {
+        return -1;
+    }
+    // OMREVIEW: add_flow_pattern(patterns, RTE_FLOW_MD, outer_id);
+
     return 0;
 }
 
@@ -1406,6 +1462,36 @@ static void
 netdev_rte_add_decap_flow_action(struct flow_actions *actions)
 {
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_VXLAN_DECAP, NULL);
+}
+
+static uint32_t
+get_output_table_id(struct match *match, uint64_t action_bitmap, bool vport)
+{
+    /* If no CT action:
+     * 1. If recirc_id == 0 and no vport ==> ROOT table
+     * 2. If recirc_id == 0 and vport exists ==> VXLAN table
+     * 3. If recirc_id != 0 ==> table id from recirc_id
+     *
+     * With CT action:
+     * 4. Regardless of recirc_id or vport ==> table id from output port id
+     */
+    if (action_bitmap & (1 << OVS_ACTION_ATTR_CT)) {
+        if (!match->flow.recirc_id) {
+            if (vport) {
+                return VXLAN_TABLE_ID;
+            } else {
+                return ROOT_TABLE_ID;
+            }
+        } else {
+            // return recirc_id_to_table_id(match->flow.recirc_id);
+            return ROOT_TABLE_ID;
+        }
+    } else {
+            // return recirc_id_to_table_id(GLOBAL OUTPUT "recirc_id");
+            return ROOT_TABLE_ID;
+    }
+
+    return ROOT_TABLE_ID;
 }
 
 static int
