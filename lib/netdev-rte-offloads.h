@@ -65,4 +65,6 @@ void netdev_rte_offload_preprocess(struct dp_packet *packet, uint32_t mark);
     .flow_put = netdev_rte_offloads_flow_put,   \
     .flow_del = netdev_rte_offloads_flow_del
 
+#define DPDK_ETH_PORT_ID_INVALID    RTE_MAX_ETHPORTS
+
 #endif /* netdev-rte-offloads.h */
