@@ -251,6 +251,7 @@ struct ufid_to_odp {
 };
 
 static struct cmap ufid_to_portid_map = CMAP_INITIALIZER;
+static struct ovs_mutex ufid_to_portid_mutex = OVS_MUTEX_INITIALIZER;
 
 /*
  * Search for ufid mapping
@@ -319,11 +320,13 @@ ufid_to_portid_remove(const ovs_u128 *ufid)
     size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
     struct ufid_to_odp *data = ufid_to_portid_get(ufid);
 
+    ovs_mutex_lock(&ufid_to_portid_mutex);
     if (data != NULL) {
         cmap_remove(&ufid_to_portid_map,
                     CONST_CAST(struct cmap_node *, &data->node), hash);
         free(data);
     }
+    ovs_mutex_unlock(&ufid_to_portid_mutex);
 }
 
 /*
@@ -1151,6 +1154,84 @@ err:
     return ret;
 }
 
+int
+netdev_rte_offloads_flow_stats_get(struct netdev *netdev OVS_UNUSED,
+                                   const ovs_u128 *ufid,
+                                   struct dpif_flow_stats *stats)
+{
+    struct flow_actions actions = { .actions = NULL, .cnt = 0 };
+    struct rte_flow_action_count count = {0};
+    struct rte_flow_query_count query;
+    struct netdev_rte_port *rte_port;
+    struct rte_flow_error error;
+    struct ufid_hw_offload *uho;
+    struct rte_flow *rte_flow;
+    dpdk_port_t dpdk_port_id;
+    struct ufid_to_odp *uto;
+    struct netdev *netd;
+    int i, ret;
+
+    memset(stats, 0, sizeof *stats);
+
+    ovs_mutex_lock(&ufid_to_portid_mutex);
+
+    uto = ufid_to_portid_get(ufid);
+    if (!uto) {
+        ret = EINVAL;
+        goto err;
+    }
+    rte_port = netdev_rte_port_search(uto->dp_port, &port_map);
+    if (!rte_port) {
+        ret = EINVAL;
+        goto err;
+    }
+    uho = ufid_hw_offload_find(ufid, &rte_port->ufid_to_rte);
+    if (!uho) {
+        ret = EINVAL;
+        goto err;
+    }
+
+    netdev_rte_add_count_flow_action(&count, &actions);
+    add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_END, NULL);
+
+    /*
+     * Several HW flows may be related for one ufid. For example for one vport
+     * flow we may have created a HW flow per each physical port. Therefore we
+     * need to loop over all HW flows related to this ufid and accumulate the
+     * statitistics related to it.
+     */
+    for (i = 0 ; i < uho->curr_idx ; i++) {
+        netd = uho->rte_flow_data[i].netdev;
+        rte_flow = uho->rte_flow_data[i].flow;
+        if (rte_flow) {
+            dpdk_port_id = netdev_dpdk_get_port(netd);
+            if (dpdk_port_id != DPDK_ETH_PORT_ID_INVALID) {
+                memset(&query, 0, sizeof query);
+                /* reset counters after query */
+                query.reset = 1;
+                ret = rte_flow_query(dpdk_port_id, rte_flow,
+                                     actions.actions, &query, &error);
+                if (ret) {
+                    VLOG_DBG("ufid "UUID_FMT
+                             " flow %p query for port %d failed\n",
+                             UUID_ARGS((struct uuid *)ufid), rte_flow,
+                             dpdk_port_id);
+                    continue;
+                }
+                stats->n_packets += (query.hits_set) ? query.hits : 0;
+                stats->n_bytes += (query.bytes_set) ? query.bytes : 0;
+            }
+        }
+    }
+
+    free_flow_actions(&actions);
+    ret = 0;
+
+err:
+    ovs_mutex_unlock(&ufid_to_portid_mutex);
+    return ret;
+}
+
 static int
 netdev_offloads_flow_del(const ovs_u128 *ufid)
 {
@@ -1523,6 +1604,7 @@ netdev_rte_offloads_vxlan_init(struct netdev *netdev)
     struct netdev_class *cls = (struct netdev_class *)netdev->netdev_class;
     cls->flow_put = netdev_rte_vport_flow_put;
     cls->flow_del = netdev_rte_vport_flow_del;
+    cls->flow_stats_get = netdev_rte_offloads_flow_stats_get;
     cls->flow_get = NULL;
     cls->init_flow_api = NULL;
 }
