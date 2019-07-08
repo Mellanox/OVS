@@ -869,6 +869,41 @@ netdev_rte_add_clone_flow_action(const struct nlattr *nlattr,
     return result;
 }
 
+static int
+handle_tunnel_pop_action(uint64_t *action_bitmap, const struct match *match,
+                         const struct nlattr *a, unsigned int left,
+                         struct netdev_rte_port **vport,
+                         struct rte_flow_action_jump *jump,
+                         struct rte_flow_action_count *count,
+                         struct flow_actions *actions,
+                         bool is_vport, uint32_t *table_id)
+{
+    /*
+     * 1. Tunnel pop action must be unique with no other actions.
+     * 2. It is not a vport.
+     * 3. Recirc_id must be 0.
+     * 4. Tunnel must be of vxlan type.
+     *    OMREVIEW - TBD. Look in lib/dpif-netlink.c for examples
+     * 5. Tunnel pop must be the last action.
+     * 6. Tunnel pop must be on physical port.
+     */
+    if (*action_bitmap ||
+        match->flow.recirc_id ||
+        is_vport ||
+        (left > NLA_ALIGN(a->nla_len))) {
+        return -1;
+    }
+
+    *vport = netdev_rte_add_jump_flow_action(a, jump, actions);
+    if (!*vport) {
+        return -1;
+    }
+    netdev_rte_add_count_flow_action(count, actions);
+    *table_id = ROOT_TABLE_ID;
+    *action_bitmap |= 1 << OVS_ACTION_ATTR_TUNNEL_POP;
+    return 0;
+}
+
 static struct rte_flow *
 netdev_rte_offloads_add_flow(struct netdev *netdev,
                              const struct match *match,
@@ -891,6 +926,7 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
     struct rte_flow_error error;
     int result = 0;
     struct flow_items spec, mask;
+    uint32_t table_id;
 
     VLOG_DBG("Adding rte offload for flow ufid "UUID_FMT,
         UUID_ARGS((struct uuid *)ufid));
@@ -925,31 +961,12 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
     NL_ATTR_FOR_EACH_UNSAFE (a, left, nl_actions, actions_len) {
         int type = nl_attr_type(a);
         if ((enum ovs_action_attr) type == OVS_ACTION_ATTR_TUNNEL_POP) {
-            /*
-             * 1. Tunnel pop action must be unique with no other actions.
-             * 2. It is not a vport.
-             * 3. Recirc_id must be 0.
-             * 4. Tunnel must be of vxlan type.
-             *    OMREVIEW - TBD. Look in lib/dpif-netlink.c for examples
-             * 5. Tunnel pop must be the last action.
-             * 6. Tunnel pop must be on physical port.
-             */
-            if (action_bitmap ||
-                match->flow.recirc_id ||
-                is_vport ||
-                (left > NLA_ALIGN(a->nla_len))) {
-                result = -1;
+            result = handle_tunnel_pop_action(&action_bitmap, match, a, left,
+                                              &vport, &jump, &count, &actions,
+                                              is_vport, &table_id);
+            if (result) {
                 break;
             }
-
-            vport = netdev_rte_add_jump_flow_action(a, &jump, &actions);
-            if (!vport) {
-                result = -1;
-                break;
-            }			
-            netdev_rte_add_count_flow_action(&count, &actions);
-            action_bitmap |= 1 << OVS_ACTION_ATTR_TUNNEL_POP;
-            result = 0;
         } else if ((enum ovs_action_attr) type == OVS_ACTION_ATTR_OUTPUT) {
             result = get_output_port(a, &output);
             if (result) {
