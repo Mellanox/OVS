@@ -2099,6 +2099,12 @@ netdev_rte_offloads_port_init(uint16_t relay_id,
     rte_eth_dev_info_get(port, &dev_info);
     netdev_rte_offloads_port_conf.rxmode.offloads = 0;
 
+    /* enable tso for vf: */
+    netdev_rte_offloads_port_conf.txmode.offloads = 0;
+    if (!vm)
+        netdev_rte_offloads_port_conf.txmode.offloads = (DEV_TX_OFFLOAD_TCP_TSO |
+                DEV_TX_OFFLOAD_MULTI_SEGS);
+
     ret = rte_eth_dev_configure(port, queue_num, queue_num,
             &netdev_rte_offloads_port_conf);
     if (ret < 0) {
@@ -2209,6 +2215,66 @@ netdev_rte_offloads_update_relay(uint16_t relay_id,
     return 0;
 }
 
+static void
+parse_packet_fields(struct rte_mbuf *m, uint16_t port_id)
+{
+    struct ipv4_hdr *ipv4_hdr;
+    struct ipv6_hdr *ipv6_hdr;
+    struct ether_hdr *eth_hdr;
+    struct tcp_hdr *tcp_hdr;
+    uint32_t l2_len = 0;
+    uint32_t l3_len = 0;
+    uint32_t l4_len = 0;
+    uint64_t ol_flags = 0;
+    uint8_t l4_proto_id = 0;
+    uint16_t mtu = 0;
+    int ret = 0;
+
+    if (m->pkt_len < 1400)
+        return;
+
+    eth_hdr = rte_pktmbuf_mtod(m, struct ether_hdr *);
+    l2_len = sizeof(struct ether_hdr);
+
+    switch (rte_be_to_cpu_16(eth_hdr->ether_type)) {
+    case ETHER_TYPE_IPv4:
+        ipv4_hdr = (struct ipv4_hdr *) ((char *)eth_hdr + l2_len);
+        l3_len = (ipv4_hdr->version_ihl & 0x0f) * 4;
+        l4_proto_id = ipv4_hdr->next_proto_id;
+        if (l4_proto_id == IPPROTO_TCP) {
+            tcp_hdr = (struct tcp_hdr *)((char *)ipv4_hdr + l3_len);
+            l4_len = (tcp_hdr->data_off & 0xf0) >> 2;
+            ol_flags |= (PKT_TX_IPV4 | PKT_TX_IP_CKSUM);
+        }
+        break;
+    case ETHER_TYPE_IPv6:
+        ipv6_hdr = (struct ipv6_hdr *) ((char *)eth_hdr + l2_len);
+        l4_proto_id = ipv6_hdr->proto;
+        if (l4_proto_id == IPPROTO_TCP) {
+            l3_len = sizeof(struct ipv6_hdr);
+            tcp_hdr = (struct tcp_hdr *)((char *)ipv6_hdr + l3_len);
+            l4_len = (tcp_hdr->data_off & 0xf0) >> 2;
+            ol_flags |= PKT_TX_IPV6;
+        }
+        break;
+    default:
+        return;
+    }
+
+    if (l4_proto_id == IPPROTO_TCP) {
+        ol_flags |= (PKT_TX_TCP_SEG | PKT_TX_TCP_CKSUM);
+        m->l2_len = l2_len;
+        m->l3_len = l3_len;
+        m->l4_len = l4_len;
+        m->ol_flags = ol_flags;
+        ret = rte_eth_dev_get_mtu(port_id, &mtu);
+        if (ret < 0) {
+            mtu = 1500;
+        }
+        m->tso_segsz = mtu - l3_len - l4_len;
+    }
+}
+
 static int
 netdev_rte_offloads_forward_traffic(struct netdev_rte_offloads_qpair *qpair,
                                     uint16_t queue_id)
@@ -2216,7 +2282,10 @@ netdev_rte_offloads_forward_traffic(struct netdev_rte_offloads_qpair *qpair,
     int burst_success;
     int diff;
     uint32_t fwd_rx = 0;
+    int i;
+    bool tx_vf = (queue_id & 1) ? true : false;
 
+    queue_id = queue_id >> 1;
     diff = qpair->mbuf_tail - qpair->mbuf_head;
     if (diff >= NETDEV_MAX_BURST) {
         goto send;
@@ -2232,22 +2301,33 @@ netdev_rte_offloads_forward_traffic(struct netdev_rte_offloads_qpair *qpair,
 
     /*receive burst:*/
     burst_success = rte_eth_rx_burst(qpair->port_id_rx, queue_id,
-            qpair->pkts+qpair->mbuf_tail, NETDEV_MAX_BURST);
+                                     qpair->pkts + qpair->mbuf_tail,
+                                     NETDEV_MAX_BURST);
     qpair->mbuf_tail += burst_success;
     diff += burst_success;
     fwd_rx += burst_success;
 
     /*send:*/
 send:
+    if (diff == 0){
+        return 0;
+    }
+
+    diff = MIN(diff, NETDEV_MAX_BURST);
+    if (tx_vf) {
+        for (i = 0; i < diff; ++i) {
+            parse_packet_fields(qpair->pkts[qpair->mbuf_head + i], qpair->port_id_tx);
+        }
+    }
+
     burst_success = rte_eth_tx_burst(qpair->port_id_tx, queue_id,
             qpair->pkts+qpair->mbuf_head, diff);
 
     /* update stats */
     if (likely(burst_success)) {
-        int i;
         unsigned bytes = 0;
         for (i = 0; i < burst_success; ++i) {
-            bytes += qpair->pkts[qpair->mbuf_head+i]->pkt_len;
+            bytes += qpair->pkts[qpair->mbuf_head + i]->pkt_len;
         }
         qpair->qp_stats.packets += burst_success;
         qpair->qp_stats.bytes += bytes;
@@ -2376,6 +2456,7 @@ netdev_rte_offloads_add_relay(const char *pci,
                   relay_id, vhost_socket, vhost_name, pci);
         goto err_update_relay;
     }
+
     /* add the relay to the pr */
     netdev_dpdk_hw_forwarder_update(pr, relay_id, netdev_rte_offloads_hw_pr_fwd,
                                     netdev_rte_offloads_hw_pr_remove);
@@ -2621,8 +2702,7 @@ netdev_rte_offloads_hw_pr_fwd(int queue_id, int relay_id)
     uint32_t fwd_rx = 0;
     for (q = 0; q < (relays[relay_id].num_queues * 2); ++q) {
         if (relays[relay_id].qpair[q].pr_queue == queue_id) {
-            fwd_rx = netdev_rte_offloads_forward_traffic(&relays[relay_id].qpair[q],
-                                                         q>>1);
+            fwd_rx = netdev_rte_offloads_forward_traffic(&relays[relay_id].qpair[q], q);
         }
     }
     return fwd_rx;
