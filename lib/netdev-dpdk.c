@@ -472,7 +472,7 @@ struct netdev_dpdk {
         uint64_t *rte_xstats_ids;
     );
     /* Start and set forwarder application for the given device. */
-    void (*fwd_operate)(int queue_id, int relay_id);
+    int (*fwd_operate)(int queue_id, int relay_id);
     void (*del_relay)(int relay_id);
     uint16_t relay_id;
 };
@@ -2239,19 +2239,23 @@ netdev_dpdk_rxq_recv(struct netdev_rxq *rxq, struct dp_packet_batch *batch,
     struct ingress_policer *policer = netdev_dpdk_get_ingress_policer(dev);
     int nb_rx;
     int dropped = 0;
+    int fwd_rx = 0;
 
     if (OVS_UNLIKELY(!(dev->flags & NETDEV_UP))) {
         return EAGAIN;
     }
 
     if (dev->fwd_operate) {
-        dev->fwd_operate(rxq->queue_id, dev->relay_id);
+        fwd_rx = dev->fwd_operate(rxq->queue_id, dev->relay_id);
     }
 
     nb_rx = rte_eth_rx_burst(rx->port_id, rxq->queue_id,
                              (struct rte_mbuf **) batch->packets,
                              NETDEV_MAX_BURST);
     if (!nb_rx) {
+        if (fwd_rx) {
+            return 0;
+        }
         return EAGAIN;
     }
 
@@ -4678,10 +4682,11 @@ netdev_dpdk_hw_forwarder_get_mempool(const char *name)
     return dev->dpdk_mp->mp;
 }
 
+
 void
 netdev_dpdk_hw_forwarder_update(const char *name,
                                 int id,
-                                void (*fwd_fp)(int queue_id, int relay_id),
+                                int (*fwd_fp)(int queue_id, int relay_id),
                                 void (*del_fp)(int relay_id))
 {
     struct netdev *netdev = NULL;

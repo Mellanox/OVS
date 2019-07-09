@@ -2209,12 +2209,13 @@ netdev_rte_offloads_update_relay(uint16_t relay_id,
     return 0;
 }
 
-static void
+static int
 netdev_rte_offloads_forward_traffic(struct netdev_rte_offloads_qpair *qpair,
                                     uint16_t queue_id)
 {
     int burst_success;
     int diff;
+    uint32_t fwd_rx = 0;
 
     diff = qpair->mbuf_tail - qpair->mbuf_head;
     if (diff >= NETDEV_MAX_BURST) {
@@ -2234,6 +2235,7 @@ netdev_rte_offloads_forward_traffic(struct netdev_rte_offloads_qpair *qpair,
             qpair->pkts+qpair->mbuf_tail, NETDEV_MAX_BURST);
     qpair->mbuf_tail += burst_success;
     diff += burst_success;
+    fwd_rx += burst_success;
 
     /*send:*/
 send:
@@ -2256,6 +2258,7 @@ send:
         qpair->mbuf_head = 0;
         qpair->mbuf_tail = 0;
     }
+    return fwd_rx;
 }
 
 static int
@@ -2611,15 +2614,18 @@ netdev_rte_offloads_init(void)
     initialized = 1;
 }
 
-void
+int
 netdev_rte_offloads_hw_pr_fwd(int queue_id, int relay_id)
 {
     uint32_t q;
+    uint32_t fwd_rx = 0;
     for (q = 0; q < (relays[relay_id].num_queues * 2); ++q) {
         if (relays[relay_id].qpair[q].pr_queue == queue_id) {
-            netdev_rte_offloads_forward_traffic(&relays[relay_id].qpair[q], q>>1);
+            fwd_rx = netdev_rte_offloads_forward_traffic(&relays[relay_id].qpair[q],
+                                                         q>>1);
         }
     }
+    return fwd_rx;
 }
 
 void
