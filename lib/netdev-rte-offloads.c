@@ -957,7 +957,7 @@ handle_output_action(uint64_t *action_bitmap,
 {
     int ret = 0;
 
-    /* Verify for the OUTPUT action that it is the last action to perform. */
+    /* Verify that the OUTPUT action is the last action to perform. */
     if (left > NLA_ALIGN(a->nla_len)) {
         return -1;
     }
@@ -969,6 +969,39 @@ handle_output_action(uint64_t *action_bitmap,
     netdev_rte_add_count_flow_action(count, actions);
     netdev_rte_add_port_id_flow_action(port_id, actions);
     *action_bitmap |= 1 << OVS_ACTION_ATTR_OUTPUT;
+    return ret;
+}
+
+static int
+handle_recirc_action(uint64_t *action_bitmap,
+                     const struct nlattr *a, unsigned int left,
+                     struct rte_flow_action_count *count,
+                     struct flow_actions *actions)
+{
+    int ret = 0;
+
+    /*
+     * Verify that:
+     * 1. The RECIRC action was preceded by a CT action.
+     * 2. The RECIRC action is the last action to perform.
+     * 3. The recird_id is non-zero
+     */
+    if (!(*action_bitmap & (1 << OVS_ACTION_ATTR_CT)) ||
+       (left > NLA_ALIGN(a->nla_len))) {
+        return -1;
+    }
+    uint32_t recirc_id = nl_attr_get_u32(a);
+    if (!recirc_id) {
+        return -1;
+    }
+
+    netdev_rte_add_count_flow_action(count, actions);
+#if CONTINEUE_CODING
+    // netdev_rte_add_port_id_flow_action(port_id, actions);
+    // OMTODO netdev_rte_add_meta_data(recirc_id);
+    // Add jump to CT or CT(NAT)
+#endif
+    *action_bitmap |= 1 << OVS_ACTION_ATTR_RECIRC;
     return ret;
 }
 
@@ -1043,6 +1076,12 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
         } else if ((enum ovs_action_attr) type == OVS_ACTION_ATTR_OUTPUT) {
             result = handle_output_action(&action_bitmap, a, left,
                                           &count, &output, &actions);
+            if (result) {
+                break;
+            }
+        } else if ((enum ovs_action_attr) type == OVS_ACTION_ATTR_RECIRC) {
+            result = handle_recirc_action(&action_bitmap, a, left,
+                                          &count, &actions);
             if (result) {
                 break;
             }
