@@ -36,10 +36,12 @@
 
 #define VXLAN_EXCEPTION_MARK (MIN_RESERVED_MARK + 0)
 enum table_ids {
+    UNKNOWN_TABLE_ID = -1,
     ROOT_TABLE_ID,
     VXLAN_TABLE_ID,
     CONNTRACK_TABLE_ID,
     CONNTRACK_NAT_TABLE_ID,
+    MAPPING_TABLE_ID,
 };
 
 
@@ -869,6 +871,46 @@ netdev_rte_add_clone_flow_action(const struct nlattr *nlattr,
     return result;
 }
 
+static int netdev_dpdk_get_recirc_id_hw_id(uint32_t recirc_id, uint32_t *hw_id);
+static int netdev_dpdk_get_port_id_hw_id(uint32_t port_id, uint32_t *hw_id);
+
+static uint32_t
+get_output_table_id(const struct match *match, uint64_t action_bitmap,
+                    bool vport, uint32_t port_id, uint32_t *table_id)
+{
+    int ret = 0;
+
+    /* If no CT action:
+     * 1. If recirc_id == 0 and no vport ==> ROOT table
+     * 2. If recirc_id == 0 and vport exists ==> VXLAN table
+     * 3. If recirc_id != 0 ==> table id from recirc_id
+     *
+     * With CT action:
+     * 4. Regardless of recirc_id or vport ==> table id from output port id
+     */
+    if (action_bitmap & (1 << OVS_ACTION_ATTR_CT)) {
+        uint32_t recirc_id = !match->flow.recirc_id;
+        if (!recirc_id) {
+            if (vport) {
+                *table_id = VXLAN_TABLE_ID;
+            } else {
+                *table_id = ROOT_TABLE_ID;
+            }
+        } else {
+            /* The table id is the mapping of recicr_id to HW id */
+            netdev_dpdk_get_recirc_id_hw_id(recirc_id, table_id);
+        }
+    } else {
+            /* The table id is the mapping of port_id to HW id */
+            netdev_dpdk_get_port_id_hw_id(port_id, table_id);
+    }
+    if (*table_id == INVALID_HW_ID) {
+        *table_id = UNKNOWN_TABLE_ID;
+        ret = -1;
+    }
+    return ret;
+}
+
 static int
 handle_tunnel_pop_action(uint64_t *action_bitmap, const struct match *match,
                          const struct nlattr *a, unsigned int left,
@@ -878,14 +920,12 @@ handle_tunnel_pop_action(uint64_t *action_bitmap, const struct match *match,
                          struct flow_actions *actions,
                          bool is_vport, uint32_t *table_id)
 {
-    /*
-     * 1. Tunnel pop action must be unique with no other actions.
-     * 2. It is not a vport.
-     * 3. Recirc_id must be 0.
-     * 4. Tunnel must be of vxlan type.
+    /* Verify for the TUNNEL POP action to be offloaded:
+     * 1. It must be single with no other actions.
+     * 2. It must appear in a dpdk related flow and not in a vport related flow
+     * 3. Matched recirc_id must be 0.
+     * 4. Offloaded tunnel: vxlan
      *    OMREVIEW - TBD. Look in lib/dpif-netlink.c for examples
-     * 5. Tunnel pop must be the last action.
-     * 6. Tunnel pop must be on physical port.
      */
     if (*action_bitmap ||
         match->flow.recirc_id ||
@@ -902,6 +942,37 @@ handle_tunnel_pop_action(uint64_t *action_bitmap, const struct match *match,
     *table_id = ROOT_TABLE_ID;
     *action_bitmap |= 1 << OVS_ACTION_ATTR_TUNNEL_POP;
     return 0;
+}
+
+static int
+handle_output_action(uint64_t *action_bitmap, const struct match *match,
+                         const struct nlattr *a, unsigned int left,
+                         struct rte_flow_action_count *count,
+                         struct rte_flow_action_port_id *port_id,
+                         struct flow_actions *actions,
+                         bool is_vport,
+                         uint32_t *table_id)
+{
+    int ret = 0;
+
+    /* Verify for the OUTPUT action that it is the last action to perform. */
+    if (left > NLA_ALIGN(a->nla_len)) {
+        return -1;
+    }
+
+    ret = get_output_port(a, port_id);
+    if (ret) {
+        return ret;
+    }
+    netdev_rte_add_count_flow_action(count, actions);
+    netdev_rte_add_port_id_flow_action(port_id, actions);
+    ret = get_output_table_id(match, *action_bitmap, is_vport,
+                              port_id->id, table_id);
+    if (ret) {
+        return ret;
+    }
+    *action_bitmap |= 1 << OVS_ACTION_ATTR_OUTPUT;
+    return ret;
 }
 
 static struct rte_flow *
@@ -968,13 +1039,12 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
                 break;
             }
         } else if ((enum ovs_action_attr) type == OVS_ACTION_ATTR_OUTPUT) {
-            result = get_output_port(a, &output);
+            result = handle_output_action(&action_bitmap, match, a, left,
+                                          &count, &output, &actions,
+                                          is_vport, &table_id);
             if (result) {
                 break;
             }
-            netdev_rte_add_count_flow_action(&count, &actions);
-            netdev_rte_add_port_id_flow_action(&output, &actions);
-            action_bitmap |= 1 << OVS_ACTION_ATTR_OUTPUT;
         } else if ((enum ovs_action_attr) type == OVS_ACTION_ATTR_CLONE) {
             result = netdev_rte_add_clone_flow_action(a, &clone_raw_encap,
                                                       &clone_count,
@@ -1479,36 +1549,6 @@ static void
 netdev_rte_add_decap_flow_action(struct flow_actions *actions)
 {
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_VXLAN_DECAP, NULL);
-}
-
-static uint32_t
-get_output_table_id(struct match *match, uint64_t action_bitmap, bool vport)
-{
-    /* If no CT action:
-     * 1. If recirc_id == 0 and no vport ==> ROOT table
-     * 2. If recirc_id == 0 and vport exists ==> VXLAN table
-     * 3. If recirc_id != 0 ==> table id from recirc_id
-     *
-     * With CT action:
-     * 4. Regardless of recirc_id or vport ==> table id from output port id
-     */
-    if (action_bitmap & (1 << OVS_ACTION_ATTR_CT)) {
-        if (!match->flow.recirc_id) {
-            if (vport) {
-                return VXLAN_TABLE_ID;
-            } else {
-                return ROOT_TABLE_ID;
-            }
-        } else {
-            // return recirc_id_to_table_id(match->flow.recirc_id);
-            return ROOT_TABLE_ID;
-        }
-    } else {
-            // return recirc_id_to_table_id(GLOBAL OUTPUT "recirc_id");
-            return ROOT_TABLE_ID;
-    }
-
-    return ROOT_TABLE_ID;
 }
 
 static int
