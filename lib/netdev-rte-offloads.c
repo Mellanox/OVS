@@ -931,16 +931,18 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
         VLOG_DBG("Flow with Mark and RSS actions: NIC offload was %s",
                  flow ? "succeeded" : "failed");
     } else {
-        /* Table 0 does not support encap. Set the encap action in table #1,
-         * and the same matches and jump to table #1 in table #0.
-         * This is bad for performance and insertion rate but as a WA for
-         * SW-STR.
+        /* Table 0 does not support forwarding (SW steering limitation). As a
+         * WA set the output action in table #1 with the same matches from
+         * table #0 and replace the output action from table #0 with a jump
+         * action to table #1.
+         * This is bad...
          */
 
         /* Actions are supported, offload the flow */
         flow_attr.transfer = 1;
-        /* The flows for encap should be added to group 1 */
-        if (action_bitmap & (1 << OVS_ACTION_ATTR_CLONE)) {
+        /* The flows for output should be added to group 1 */
+        if (action_bitmap & (1 << OVS_ACTION_ATTR_CLONE) ||
+            action_bitmap & (1 << OVS_ACTION_ATTR_OUTPUT)) {
             flow_attr.group = 1;
         }
         flow = netdev_rte_offload_flow(netdev, info, &patterns, &actions,
@@ -950,7 +952,8 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
             goto out;
         }
 
-        if (action_bitmap & (1 << OVS_ACTION_ATTR_CLONE)) {
+        if (action_bitmap & (1 << OVS_ACTION_ATTR_CLONE) ||
+            action_bitmap & (1 << OVS_ACTION_ATTR_OUTPUT)) {
             struct flow_actions jump_actions = { .actions = NULL, .cnt = 0 };
 
             jump.group = 1;
