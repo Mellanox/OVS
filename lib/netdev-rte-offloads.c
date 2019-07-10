@@ -874,41 +874,36 @@ netdev_rte_add_clone_flow_action(const struct nlattr *nlattr,
 static int netdev_dpdk_get_recirc_id_hw_id(uint32_t recirc_id, uint32_t *hw_id);
 static int netdev_dpdk_get_port_id_hw_id(uint32_t port_id, uint32_t *hw_id);
 
-static uint32_t
-get_output_table_id(const struct match *match, uint64_t action_bitmap,
-                    bool vport, uint32_t port_id, uint32_t *table_id)
-{
-    int ret = 0;
 
-    /* If no CT action:
+static void
+get_table_id(const struct match *match, enum rte_port_type port_type, uint32_t *table_id)
+{
+    /*
      * 1. If recirc_id == 0 and no vport ==> ROOT table
-     * 2. If recirc_id == 0 and vport exists ==> VXLAN table
-     * 3. If recirc_id != 0 ==> table id from recirc_id
-     *
-     * With CT action:
-     * 4. Regardless of recirc_id or vport ==> table id from output port id
+     * 2. If recirc_id == 0 and vport exists ==> VPORT table (VXLAN,...)
+     * 3. If recirc_id != 0 ==> table id based on recirc_id mapping
      */
-    if (action_bitmap & (1 << OVS_ACTION_ATTR_CT)) {
-        uint32_t recirc_id = !match->flow.recirc_id;
-        if (!recirc_id) {
-            if (vport) {
-                *table_id = VXLAN_TABLE_ID;
-            } else {
-                *table_id = ROOT_TABLE_ID;
-            }
-        } else {
-            /* The table id is the mapping of recicr_id to HW id */
-            netdev_dpdk_get_recirc_id_hw_id(recirc_id, table_id);
+    uint32_t recirc_id = !match->flow.recirc_id;
+    if (!recirc_id) {
+        switch (port_type) {
+        case RTE_PORT_TYPE_DPDK:
+            *table_id = ROOT_TABLE_ID;
+            break;
+        case RTE_PORT_TYPE_VXLAN:
+            *table_id = VXLAN_TABLE_ID;
+            break;
+        case RTE_PORT_TYPE_UNINIT:
+        default:
+            *table_id = UNKNOWN_TABLE_ID;
+            break;
         }
     } else {
-            /* The table id is the mapping of port_id to HW id */
-            netdev_dpdk_get_port_id_hw_id(port_id, table_id);
+        /* The table id is the mapping of recicr_id to HW id */
+        netdev_dpdk_get_recirc_id_hw_id(recirc_id, table_id);
+        if (*table_id == INVALID_HW_ID) {
+            *table_id = UNKNOWN_TABLE_ID;
+        }
     }
-    if (*table_id == INVALID_HW_ID) {
-        *table_id = UNKNOWN_TABLE_ID;
-        ret = -1;
-    }
-    return ret;
 }
 
 static int
@@ -918,40 +913,47 @@ handle_tunnel_pop_action(uint64_t *action_bitmap, const struct match *match,
                          struct rte_flow_action_jump *jump,
                          struct rte_flow_action_count *count,
                          struct flow_actions *actions,
-                         bool is_vport, uint32_t *table_id)
+                         enum rte_port_type port_type)
 {
     /* Verify for the TUNNEL POP action to be offloaded:
      * 1. It must be single with no other actions.
-     * 2. It must appear in a dpdk related flow and not in a vport related flow
+     * 2. It must appear in a dpdk type flow
      * 3. Matched recirc_id must be 0.
      * 4. Offloaded tunnel: vxlan
      *    OMREVIEW - TBD. Look in lib/dpif-netlink.c for examples
      */
     if (*action_bitmap ||
         match->flow.recirc_id ||
-        is_vport ||
+        (port_type |= RTE_PORT_TYPE_DPDK) ||
         (left > NLA_ALIGN(a->nla_len))) {
         return -1;
     }
 
-    *vport = netdev_rte_add_jump_flow_action(a, jump, actions);
-    if (!*vport) {
+    /* Find the vport rte_port */
+    odp_port_t odp_port;
+    struct netdev_rte_port *rte_port;
+
+    odp_port = nl_attr_get_odp_port(a);
+    rte_port = netdev_rte_port_search(odp_port, &port_map);
+    *vport = rte_port;
+    if (!rte_port) {
+        VLOG_DBG("No rte port was found for odp_port %u",
+                odp_to_u32(odp_port));
         return -1;
     }
+
+    netdev_rte_add_jmp_flow_action(rte_port->table_id, jump, actions);
     netdev_rte_add_count_flow_action(count, actions);
-    *table_id = ROOT_TABLE_ID;
     *action_bitmap |= 1 << OVS_ACTION_ATTR_TUNNEL_POP;
     return 0;
 }
 
 static int
-handle_output_action(uint64_t *action_bitmap, const struct match *match,
+handle_output_action(uint64_t *action_bitmap,
                          const struct nlattr *a, unsigned int left,
                          struct rte_flow_action_count *count,
                          struct rte_flow_action_port_id *port_id,
-                         struct flow_actions *actions,
-                         bool is_vport,
-                         uint32_t *table_id)
+                         struct flow_actions *actions)
 {
     int ret = 0;
 
@@ -966,11 +968,6 @@ handle_output_action(uint64_t *action_bitmap, const struct match *match,
     }
     netdev_rte_add_count_flow_action(count, actions);
     netdev_rte_add_port_id_flow_action(port_id, actions);
-    ret = get_output_table_id(match, *action_bitmap, is_vport,
-                              port_id->id, table_id);
-    if (ret) {
-        return ret;
-    }
     *action_bitmap |= 1 << OVS_ACTION_ATTR_OUTPUT;
     return ret;
 }
@@ -983,7 +980,7 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
                              const ovs_u128 *ufid,
                              struct offload_info *info,
                              struct rte_flow **rte_flow0,
-                             bool is_vport)
+                             enum rte_port_type port_type)
 {
     struct rte_flow_attr flow_attr = {
         .group = 0,
@@ -1002,6 +999,11 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
     VLOG_DBG("Adding rte offload for flow ufid "UUID_FMT,
         UUID_ARGS((struct uuid *)ufid));
 
+    /* Find the dpdk table id where to add the flow */
+    get_table_id(match, port_type, &table_id);
+    if (table_id == UNKNOWN_TABLE_ID) {
+        goto out;
+    }
     memset(&spec, 0, sizeof spec);
     memset(&mask, 0, sizeof mask);
 
@@ -1034,14 +1036,13 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
         if ((enum ovs_action_attr) type == OVS_ACTION_ATTR_TUNNEL_POP) {
             result = handle_tunnel_pop_action(&action_bitmap, match, a, left,
                                               &vport, &jump, &count, &actions,
-                                              is_vport, &table_id);
+                                              port_type);
             if (result) {
                 break;
             }
         } else if ((enum ovs_action_attr) type == OVS_ACTION_ATTR_OUTPUT) {
-            result = handle_output_action(&action_bitmap, match, a, left,
-                                          &count, &output, &actions,
-                                          is_vport, &table_id);
+            result = handle_output_action(&action_bitmap, a, left,
+                                          &count, &output, &actions);
             if (result) {
                 break;
             }
@@ -1280,7 +1281,7 @@ netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
 
     rte_flow = netdev_rte_offloads_add_flow(netdev, match, actions,
                                             actions_len, ufid, info,
-                                            &rte_flow0, false);
+                                            &rte_flow0, RTE_PORT_TYPE_DPDK);
     if (!rte_flow) {
         ret = ENODEV;
         goto err;
