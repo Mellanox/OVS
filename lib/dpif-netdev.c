@@ -2694,13 +2694,37 @@ dp_ct_offload_add(struct ct_flow_offload_item *item)
     if (mark == INVALID_FLOW_MARK) {
         mark = flow_mark_alloc();
         ct_to_mark_associate(item , mark);
-    } 
+    }
 
     if (mark == INVALID_FLOW_MARK) {
         VLOG_ERR("Failed to allocate flow mark!\n");
         ret = -1;
     }
+    struct match match;
+    memset(&match, 0, sizeof match);
+    /* Fill in match struct */
+    match.flow.nw_proto = item->ct_match.ipv4.ipv4_proto;
+    match.wc.masks.nw_proto = 0xFF;
+    match.flow.nw_src = item->ct_match.ipv4.ipv4_src;
+    match.flow.nw_dst = item->ct_match.ipv4.ipv4_dst;
+    match.wc.masks.nw_src = 0xFFFFFFFF;
+    match.wc.masks.nw_dst = 0xFFFFFFFF;
+    match.flow.tp_src = item->ct_match.ipv4.src_port;
+    match.flow.tp_dst = item->ct_match.ipv4.dst_port;
+    match.wc.masks.tp_src = 0xFFFF;
+    match.wc.masks.tp_dst = 0xFFFF;
+    match.flow.ct_zone = item->zone;
+    match.wc.masks.ct_zone = 0xFFFF;
 
+    struct nlattr *nl_actions = NULL;
+    size_t actions_len = 0;
+
+    /* Use the mark as connection identifier */
+    ovs_u128 uctid;
+    memset(&uctid, 0, sizeof uctid);
+    uctid.u32[0] = mark;
+    ret = ct_put(item->odp_port, &match, nl_actions,
+                 actions_len, &uctid, mark);
     return ret;
 }
 
@@ -2715,6 +2739,7 @@ dp_ct_offload_del(struct ct_flow_offload_item *item)
         VLOG_WARN("CT del with no mark");
         return ret;
     } else {
+        // OMREVIEW - Add ct_flow_del()
         ct_to_mark_disassociate(item);
         flow_mark_free(mark);
     }
@@ -7120,12 +7145,12 @@ dp_netdev_input__(struct dp_netdev_pmd_thread *pmd,
 
     /* All the flow batches need to be reset before any call to
      * packet_batch_per_flow_execute() as it could potentially trigger
-     * recirculation. When a packet matching flow ‘j’ happens to be
+     * recirculation. When a packet matching flow ???j??? happens to be
      * recirculated, the nested call to dp_netdev_input__() could potentially
      * classify the packet as matching another flow - say 'k'. It could happen
      * that in the previous call to dp_netdev_input__() that same flow 'k' had
      * already its own batches[k] still waiting to be served.  So if its
-     * ‘batch’ member is not reset, the recirculated packet would be wrongly
+     * ???batch??? member is not reset, the recirculated packet would be wrongly
      * appended to batches[k] of the 1st call to dp_netdev_input__(). */
     for (i = 0; i < n_batches; i++) {
         batches[i].flow->batch = NULL;

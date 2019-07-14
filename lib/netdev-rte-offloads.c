@@ -28,6 +28,7 @@
 #include "dpif-netdev.h"
 #include "id-pool.h"
 #include "netdev-provider.h"
+#include "conntrack.h"
 #include "openvswitch/match.h"
 #include "openvswitch/vlog.h"
 #include "packets.h"
@@ -83,7 +84,9 @@ struct netdev_rte_port {
     uint32_t table_id; /* Flow table id per related to this port. */
     uint16_t dpdk_num_queues; /* Number of dpdk queues of this port. */
     uint32_t exception_mark; /* Exception SW handling for this port type. */
-    struct cmap ufid_to_rte;
+    struct cmap ufid_to_rte; /* flows id to dpdk rte flows */
+    struct cmap hwid_to_rte; /* HW id in mapping table to dpdk rte flows */
+    struct cmap ctid_to_rte; /* CT id in CT table to dpdk rte flows */
     struct rte_flow *default_rte_flow[RTE_FLOW_MAX_TABLES];
     struct cmap_node mark_node;
 };
@@ -148,6 +151,8 @@ netdev_rte_port_set(struct netdev *netdev, odp_port_t dp_port,
     cmap_insert(&port_map,
                 CONST_CAST(struct cmap_node *, &(*rte_port)->node), hash);
     cmap_init(&((*rte_port)->ufid_to_rte));
+    cmap_init(&((*rte_port)->hwid_to_rte));
+    cmap_init(&((*rte_port)->ctid_to_rte));
 
 next:
     (*rte_port)->netdev = netdev;
@@ -171,7 +176,7 @@ struct ufid_hw_offload {
 /*
  * fuid hw offload struct contains array of pointers to rte flows.
  * There may be a one OVS flow to many rte flows. For example in case
- * of vxlan OVS flow we add an rte flow per each phsical port.
+ * of vxlan OVS flow we add an rte flow per each physical port.
  *
  * max_flows - number of expected max rte flows for this ufid.
  * ufid - the ufid.
@@ -501,6 +506,7 @@ struct flow_items {
 struct flow_action_items {
     struct rte_flow_action_jump jump;
     struct rte_flow_action_count count;
+    struct rte_flow_action_mark mark;
     struct rte_flow_action_port_id output;
     struct rte_flow_action_port_id clone_output;
     struct rte_flow_action_count clone_count;
@@ -989,14 +995,16 @@ static int netdev_dpdk_get_port_id_hw_id(uint32_t port_id, uint32_t *hw_id);
 
 
 static void
-get_table_id(const struct match *match, enum rte_port_type port_type, uint32_t *table_id)
+get_table_id(const struct match *match, enum rte_port_type port_type,
+             uint32_t *table_id, bool *recirc)
 {
     /*
      * 1. If recirc_id == 0 and no vport ==> ROOT table
      * 2. If recirc_id == 0 and vport exists ==> VPORT table (VXLAN,...)
      * 3. If recirc_id != 0 ==> table id based on recirc_id mapping
      */
-    uint32_t recirc_id = !match->flow.recirc_id;
+    uint32_t recirc_id = match->flow.recirc_id;
+    *recirc = false;
     if (!recirc_id) {
         switch (port_type) {
         case RTE_PORT_TYPE_DPDK:
@@ -1015,7 +1023,9 @@ get_table_id(const struct match *match, enum rte_port_type port_type, uint32_t *
         netdev_dpdk_get_recirc_id_hw_id(recirc_id, table_id);
         if (*table_id == INVALID_HW_ID) {
             *table_id = UNKNOWN_TABLE_ID;
+            return;
         }
+        *recirc = true;
     }
 }
 
@@ -1109,9 +1119,9 @@ handle_recirc_action(uint64_t *action_bitmap,
     }
 
     netdev_rte_add_count_flow_action(count, actions);
-#if CONTINEUE_CODING
-    // netdev_rte_add_port_id_flow_action(port_id, actions);
-    // OMTODO netdev_rte_add_meta_data(recirc_id);
+#if 0
+    // to be implemented:
+    // netdev_rte_add_meta_data(recirc_id);
     // Add jump to CT or CT(NAT)
 #endif
     *action_bitmap |= 1 << OVS_ACTION_ATTR_RECIRC;
@@ -1142,12 +1152,13 @@ netdev_rte_offloads_add_flow(struct netdev *netdev,
     int result = 0;
     struct flow_items spec, mask;
     uint32_t table_id;
+    bool recirc;
 
     VLOG_DBG("Adding rte offload for flow ufid "UUID_FMT,
         UUID_ARGS((struct uuid *)ufid));
 
     /* Find the dpdk table id where to add the flow */
-    get_table_id(match, port_type, &table_id);
+    get_table_id(match, port_type, &table_id, &recirc);
     if (table_id == UNKNOWN_TABLE_ID) {
         goto out;
     }
@@ -1424,8 +1435,18 @@ netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
         goto err;
     }
 
+#if 0
+    /* Create hwid_to_rte map for the hwid */
+    hwid_hw_offload = netdev_rte_port_hwid_hw_offload_alloc(1, hwid);
+    if (!hwid_hw_offload) {
+        VLOG_WARN("failed to allocate hwid_hw_offlaod, OOM");
+        ret = ENOMEM;
+        goto err;
+    }
+#endif
     ufid_hw_offload_add(ufid_hw_offload, &rte_port->ufid_to_rte);
     ufid_to_portid_add(ufid, rte_port->dp_port);
+    // hwid_hw_offload_add(hwid_hw_offload, &rte_port->hwid_to_rte);
 
     ret = netdev_rte_offloads_validate_flow(match, false, false);
     if (ret < 0) {
@@ -1441,7 +1462,7 @@ netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
 /*    rte_flow = netdev_rte_offloads_add_flow(netdev, match, actions,
                                             actions_len, ufid, info,
                                             &rte_flow0); Roni*/
-        
+
 /*    rte_flow = netdev_rte_offloads_add_flow(netdev, match, actions,
                                             actions_len, ufid, info,
                                             &rte_flow0, RTE_PORT_TYPE_DPDK);
@@ -1875,6 +1896,240 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
     return ret;
 }
 
+// <<<<<<<
+static void
+netdev_rte_add_ipv4_header_rewrite_flow_action(
+    struct ct_flow_offload_item *ct_offload,
+    struct rte_flow_action_set_ipv4 *ipv4_src,
+    struct rte_flow_action_set_ipv4 *ipv4_dst,
+    struct rte_flow_action_set_tp *port_src,
+    struct rte_flow_action_set_tp *port_dst,
+    struct flow_actions *actions)
+{
+    /* All values are in network order (BE) */
+
+    /* Rewrite ipv4 src address */
+    ipv4_src->ipv4_addr = ct_offload->ct_modify.ipv4.ipv4_src;
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_IPV4_SRC, ipv4_src);
+    /* Rewrite ipv4 dst address */
+    ipv4_dst->ipv4_addr = ct_offload->ct_modify.ipv4.ipv4_dst;
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_IPV4_DST, ipv4_dst);
+    /* Rewrite transport port src */
+    port_src->port = ct_offload->ct_modify.ipv4.src_port;
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_TP_SRC, port_src);
+    /* Rewrite transport port dst */
+    port_dst->port = ct_offload->ct_modify.ipv4.dst_port;
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_TP_DST, port_dst);
+}
+
+static void
+netdev_rte_add_ipv6_header_rewrite_flow_action(
+    struct ct_flow_offload_item *ct_offload,
+    struct rte_flow_action_set_ipv6 *ipv6_src,
+    struct rte_flow_action_set_ipv6 *ipv6_dst,
+    struct rte_flow_action_set_tp *port_src,
+    struct rte_flow_action_set_tp *port_dst,
+    struct flow_actions *actions)
+{
+    /* Rewrite ipv6 src address */
+    memcpy(&ipv6_src->ipv6_addr, &ct_offload->ct_modify.ipv6.ipv6_src,
+           sizeof ipv6_src->ipv6_addr);
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_IPV6_SRC, ipv6_src);
+    /* Rewrite ipv6 dst address */
+    memcpy(&ipv6_dst->ipv6_addr, &ct_offload->ct_modify.ipv6.ipv6_dst,
+           sizeof ipv6_src->ipv6_addr);
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_IPV6_DST, ipv6_dst);
+    /* Port values are in network order (short BE) */
+    /* Rewrite transport port src */
+    port_src->port = ct_offload->ct_modify.ipv6.src_port;
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_TP_SRC, port_src);
+    /* Rewrite transport port dst */
+    port_dst->port = ct_offload->ct_modify.ipv6.dst_port;
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_TP_DST, port_dst);
+}
+
+static int
+ct_add_rte_flow_offload(struct netdev_rte_port *rte_port,
+                        struct match *match,
+                        struct ct_flow_offload_item *ct_offload,
+                        const ovs_u128 *ufid,
+                        struct ct_stats *stats OVS_UNUSED)
+{
+    int ret = 0;
+
+    /* If an old rte_flow exists, it means it's a flow modification.
+     * Here destroy the old rte flow first before adding a new one.
+     */
+    struct ufid_hw_offload *ufid_hw_offload =
+        ufid_hw_offload_find(ufid, &rte_port->ctid_to_rte);
+
+    if (ufid_hw_offload) {
+        VLOG_DBG("got modification and destroying previous rte_flow");
+        ufid_hw_offload_remove(ufid, &rte_port->ctid_to_rte);
+        ret = netdev_rte_port_ufid_hw_offload_free(ufid_hw_offload);
+        if (ret < 0) {
+            return ret;
+        }
+    }
+
+    uint32_t num_ports = 0;
+    if (rte_port->rte_port_type == RTE_PORT_TYPE_DPDK) {
+        num_ports = 1;
+    } else {
+        if (rte_port->rte_port_type == RTE_PORT_TYPE_VXLAN) {
+            num_ports = dpdk_phy_ports_amount;
+        }
+    }
+    if (!num_ports) {
+        VLOG_WARN("offload while no phy ports %u", num_ports);
+        return -1;
+    }
+    ufid_hw_offload =
+        netdev_rte_port_ufid_hw_offload_alloc(num_ports, ufid);
+    if (ufid_hw_offload == NULL) {
+        VLOG_WARN("failed to allocate ufid_hw_offlaod, OOM");
+        return -1;
+    }
+
+    ufid_hw_offload_add(ufid_hw_offload, &rte_port->ctid_to_rte);
+    // ufid_to_portid_add(ufid, rte_port->dp_port);
+
+    struct rte_flow_attr flow_attr = {
+        .group = rte_port->table_id,
+        .priority = 0,
+        .ingress = 1,
+        .egress = 0,
+        .transfer = 0
+    };
+
+    struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
+
+    struct flow_items spec, mask;
+    memset(&spec, 0, sizeof spec);
+    memset(&mask, 0, sizeof mask);
+
+    ret = add_flow_patterns(&patterns, &spec, &mask, match);
+    if (ret) {
+        goto out;
+    }
+    add_flow_pattern(&patterns, RTE_FLOW_ITEM_TYPE_END, NULL, NULL);
+
+    /*
+     * Actions for a CT-NAT flow: header rewrite
+     * Additional actions for both CT and CT-NAT:
+     *   1. COUNT
+     *   2. JUMP to mapping table.
+     */
+    struct flow_actions actions = { .actions = NULL, .cnt = 0 };
+    struct rte_flow_action_set_ipv4 ipv4_src;
+    struct rte_flow_action_set_ipv4 ipv4_dst;
+    struct rte_flow_action_set_ipv6 ipv6_src;
+    struct rte_flow_action_set_ipv6 ipv6_dst;
+    struct rte_flow_action_set_tp port_src;
+    struct rte_flow_action_set_tp port_dst;
+    struct rte_flow_action_count count;
+    struct rte_flow_action_jump jump;
+    if (!ct_offload->ct_ipv6 && ct_offload->ct_modify.ipv4.ipv4_proto) {
+        /* Do ipv4 header rewrite due to NAT */
+        netdev_rte_add_ipv4_header_rewrite_flow_action(ct_offload, &ipv4_src,
+                                                       &ipv4_dst, &port_src,
+                                                       &port_dst, &actions);
+    }
+    if (ct_offload->ct_ipv6 && ct_offload->ct_modify.ipv6.ipv6_proto) {
+        /* Do ipv6 header rewrite due to NAT */
+        netdev_rte_add_ipv6_header_rewrite_flow_action(ct_offload, &ipv6_src,
+                                                       &ipv6_dst, &port_src,
+                                                       &port_dst, &actions);
+    }
+
+    netdev_rte_add_count_flow_action(&count, &actions);
+    netdev_rte_add_jump_flow_action(&jump, MAPPING_TABLE_ID, &actions);
+    add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_END, NULL);
+
+    struct netdev_rte_port *data;
+    struct rte_flow_error error;
+    struct rte_flow *flow;
+    struct flow_data fdata;
+
+    if (rte_port->rte_port_type == RTE_PORT_TYPE_DPDK) {
+    }
+    CMAP_FOR_EACH (data, node, &port_map) {
+        if (data->rte_port_type == RTE_PORT_TYPE_DPDK) {
+            memset(&fdata, 0, sizeof fdata);
+
+            flow_attr.transfer = 1;
+            flow = netdev_dpdk_rte_flow_create(data->netdev,
+                                               &flow_attr, patterns.items,
+                                               actions.actions, &error);
+            VLOG_DBG("eSwitch offload was %s", flow ? "succeeded" : "failed");
+
+            if (!flow) {
+                VLOG_ERR("%s: rte flow create offload error: %u : "
+                         "message : %s\n", netdev_get_name(data->netdev),
+                         error.type, error.message);
+            }
+#if 0 
+info unknown
+            if (flow) {
+                info->is_hwol = true;
+            } else {
+                VLOG_ERR("%s: rte flow create offload error: %u : "
+                         "message : %s\n", netdev_get_name(data->netdev),
+                         error.type, error.message);
+            }
+
+
+            flow = netdev_dpdk_offload_put_handle(data->netdev, rte_port, &fdata, 
+                                              match, nl_actions,
+                                              actions_len, info->flow_mark);
+            if (flow) {
+                info->is_hwol = false;
+            }
+#endif
+            if (flow) {
+                ufid_hw_offload_add_rte_flow(ufid_hw_offload, flow,
+                                             data->netdev);
+            }
+        }
+    }
+
+out:
+    free_flow_patterns(&patterns);
+    free_flow_actions(&actions);
+    return ret;
+}
+
+static struct mark_to_miss_ctx_data *
+    netdev_dpdk_get_flow_miss_ctx(uint32_t mark);
+
+int 
+ct_put(odp_port_t odp_port,
+       struct match *match,
+       struct ct_flow_offload_item *ct_offload,
+       const ovs_u128 *uctid,
+       uint32_t mark)
+{
+    struct netdev_rte_port *rte_port =
+        netdev_rte_port_search(odp_port, &port_map);
+    if (!rte_port) {
+        VLOG_DBG("port %d has no rte_port", odp_port);
+        return -1;
+    }
+
+    struct mark_to_miss_ctx_data *data = netdev_dpdk_get_flow_miss_ctx(mark);
+    if(!data){
+/*        netdev_dpdk_save_ct_miss_ctx(mark, NULL, ct_offload->setmark, 
+                        ct_offload->zone, ct_offload->ct_state)
+                        uint8_t  ct_state, uint8_t  outer_id, bool reply)
+*/
+
+    }
+
+    return ct_add_rte_flow_offload(rte_port, match, ct_offload,
+                        uctid,
+                        NULL /*struct ct_stats *stats OVS_UNUSED*/);
+}
+// >>>>>>
 static int
 netdev_rte_vport_flow_put(struct netdev *netdev OVS_UNUSED,
                           struct match *match,
@@ -3467,8 +3722,9 @@ netdev_dpdk_put_hw_id(uint32_t id, bool is_port)
         if (data->id == id && data->is_port == is_port) {
             data->ref_cnt--;
             if (data->ref_cnt == 0) {
-                /*TODO: delete table (if recirc_id*/
+                /*TODO: delete table (if recirc_id).*/
                 /*TODO: update mapping table.*/
+                /* Both tables should be updated under flow_del() */
                 id_pool_free_id(hw_table_id.pool, data->hw_id);
                 ovsrcu_postpone(free, data);
             }
@@ -3500,7 +3756,8 @@ netdev_dpdk_alloc_hw_id(uint32_t id, bool is_port)
 
     /*  create HW table with the id. update mapping table */
    /*TODO: create new table in HW with that id (if not port).*/
-   /*TODO: fill mapping table with the new informatio.*/
+   /*TODO: fill mapping table with the new information.*/
+   /* Both tables should be filled in during flow_put() */
 
 
     return hw_id;
@@ -3510,7 +3767,11 @@ static inline void
 netdev_dpdk_hw_id_init(void)
 {
      if (!hw_table_id.pool) {
-        /*TODO: set it default, also make sure we don't overflow*/
+        /*TODO: set it default, also make sure we don't overflow - see below */
+        /* OMREVIEW: why is the minimum 64? */
+        /* we don't overflow by this check:
+         * if (!id_pool_alloc_id(hw_table_id.pool, &hw_id)) 
+         */
         hw_table_id.pool = id_pool_create(64, MAX_HW_TABLE);
         memset(hw_table_id.hw_id_to_sw, 0, sizeof hw_table_id.hw_id_to_sw);
     }
@@ -3680,7 +3941,7 @@ netdev_dpdk_offload_fill_cls_info(struct netdev_rte_port *rte_port,
                     cls_info->actions.odp_port = nl_attr_get_odp_port(a);
                     break;;
                 case OVS_ACTION_ATTR_SET:
-                /*TODO: set baidu eth here.*/
+                /*TODO: set baidu eth here. Requirement is not understood */
 
                 break;
                 /*TODO: verify if tnl_pop or tnl_push, (DONE)*/
@@ -3868,7 +4129,7 @@ netdev_dpdk_offload_tnl_push(struct flow_data *fdata,
     /* TODO: count (Done) */
     netdev_rte_add_count_flow_action(&fdata->actions.count, flow_actions);
 
-    /* TODO: OUTPUT */
+    /* TODO: OUTPUT (Done) */
     return add_jump_to_port_id_action(cls_info->actions.odp_port,
                 flow_actions,
                 &fdata->actions.output);
@@ -3910,21 +4171,45 @@ netdev_dpdk_offload_get_hw_id(struct offload_item_cls_info *cls_info)
     return ret;
 }
 
+static void
+netdev_rte_add_mark_flow_action(struct rte_flow_action_mark *mark,
+                                uint32_t mark_id,
+                                struct flow_actions *actions)
+{
+    memset(mark, 0, sizeof *mark);
+    mark->id = mark_id;
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_MARK, mark);
+}
+
+netdev_rte_add_jump_flow_action(struct rte_flow_action_jump *jump,
+                                uint32_t group,
+                                struct flow_actions *actions)
+{
+    memset(jump, 0, sizeof *jump);
+    jump->group = group;
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_JUMP, jump);
+}
 
 static int
-netdev_dpdk_offload_ct_actions(struct flow_actions *flow_actions,
+netdev_dpdk_offload_ct_actions(struct flow_data *fdata,
+                               struct flow_actions *flow_actions,
                                struct offload_item_cls_info *cls_info,
-                                                struct nlattr *actions,
-                                                size_t actions_len)
+                               struct nlattr *actions,
+                               size_t actions_len,
+                               uint32_t flow_mark)
 {
     int ret = 0;
     /* match on vport recirc_id = 0, we must decap first */
     if (cls_info->match.type == MATCH_OFFLOAD_TYPE_VPORT_ROOT) {
-        /*TODO: add decap */
+        /* TODO: add decap -- DONE */
+        netdev_rte_add_decap_flow_action(flow_actions);
     }
 
-    /*TODO: set mark */
-    /*TODO: add counter */
+    /*TODO: set mark -- DONE */
+    netdev_rte_add_mark_flow_action(&fdata->actions.mark, flow_mark, flow_actions);
+
+    /*TODO: add counter -- DONE */
+    netdev_rte_add_count_flow_action(&fdata->actions.count, flow_actions);
     /* translate recirc_id or port_id to hw_id */
     if (!netdev_dpdk_offload_get_hw_id(cls_info)) {
         return -1;
@@ -3932,11 +4217,17 @@ netdev_dpdk_offload_ct_actions(struct flow_actions *flow_actions,
     /* TODO: set recirc_id in register */
     /* TODO: add all actions until CT */
     if (cls_info->actions.has_nat) {
-        /* TODO: we need to create the table if doesn't exists */
-        /* TODO: jump to nat table */
+        /* TODO: we need to create the table if doesn't exists -- will be done implicitly with the first flow */
+        /* TODO: jump to nat table -- DONE */
+        netdev_rte_add_jump_flow_action(&fdata->actions.jump,
+                                        CONNTRACK_NAT_TABLE_ID,
+                                        flow_actions);
     } else {
-        /*TODO: we need to create the table if doesn't exists */
-        /*TODO: jump to CT table */
+        /*TODO: we need to create the table if doesn't exists -- will be done implicitly with the first flow */
+        /*TODO: jump to CT table -- DONE */
+        netdev_rte_add_jump_flow_action(&fdata->actions.jump,
+                                CONNTRACK_TABLE_ID,
+                                flow_actions);
     }
     return ret;
 }
@@ -3965,7 +4256,7 @@ netdev_dpdk_offload_output_actions(struct flow_data *fdata,
 }
 
 static int
-netdev_dpdk_offload_put_add_patterns(struct flow_data *fdata, 
+netdev_dpdk_offload_put_add_patterns(struct flow_data *fdata,
                                   struct flow_patterns *patterns,
                                   struct match *match,
                                   struct offload_item_cls_info *cls_info)
@@ -3975,7 +4266,7 @@ netdev_dpdk_offload_put_add_patterns(struct flow_data *fdata,
             return netdev_dpdk_offload_add_root_patterns(fdata, patterns,
                                                           match);
         case MATCH_OFFLOAD_TYPE_VPORT_ROOT:
-            return netdev_dpdk_offload_add_vport_root_patterns(fdata, 
+            return netdev_dpdk_offload_add_vport_root_patterns(fdata,
                                             patterns, match,cls_info);
         case MATCH_OFFLOAD_TYPE_RECIRC:
             return netdev_dpdk_offload_add_recirc_patterns(fdata, patterns,
@@ -3993,7 +4284,8 @@ netdev_dpdk_offload_put_add_actions(struct netdev_rte_port *rte_port,
                                     struct match *match,
                                     struct nlattr *actions,
                                     size_t actions_len,
-                                    struct offload_item_cls_info *cls_info)
+                                    struct offload_item_cls_info *cls_info,
+                                    uint32_t flow_mark)
 {
     int ret;
 
@@ -4004,8 +4296,8 @@ netdev_dpdk_offload_put_add_actions(struct netdev_rte_port *rte_port,
                                                  flow_actions,cls_info);
             break;
         case ACTION_OFFLOAD_TYPE_CT:
-            ret = netdev_dpdk_offload_ct_actions(flow_actions, cls_info,
-                                                 actions, actions_len);
+            return netdev_dpdk_offload_ct_actions(fdata, flow_actions, cls_info,
+                                                 actions, actions_len, flow_mark);
             break;
         case ACTION_OFFLOAD_TYPE_TNL_PUSH:
             ret = netdev_dpdk_offload_tnl_push(fdata, flow_actions,
@@ -4051,30 +4343,73 @@ netdev_dpdk_offload_add_wa(struct netdev *netdev,
         return flow;
 }
 
-
+#if 1
 static int
 netdev_dpdk_offload_set_group_id(struct netdev_rte_port *rte_port,
                                  struct offload_item_cls_info *cls_info,
                                  struct rte_flow_attr *flow_attr,
                                  bool workaround_needed)
 {
+    enum rte_port_type port_type = rte_port->rte_port_type;
     switch (cls_info->match.type) {
         case MATCH_OFFLOAD_TYPE_ROOT:
-              flow_attr->group = 0;
-              if (workaround_needed) {
-                  flow_attr->group = 1;
+              flow_attr->group = ROOT_TABLE_ID;
+              if (!flow_attr->group && workaround_needed) {
+                  flow_attr->group++; 
               }
               return 0;
         case MATCH_OFFLOAD_TYPE_VPORT_ROOT:
-              flow_attr->group = rte_port->table_id;
+              if (port_type == RTE_PORT_TYPE_VXLAN) {
+                  flow_attr->group = VXLAN_TABLE_ID; // rte_port->table_id;
+              } else {
+                  return -1;
+              }
               return 0;
         case MATCH_OFFLOAD_TYPE_RECIRC:
-            //TODO: return the hw_id once we want to support.
-            return -1;
+            flow_attr->group = cls_info->match.hw_id;
+            return 0;
     }
 
     return -1;
 }
+#else
+static int
+netdev_dpdk_offload_set_group_id(struct netdev_rte_port *rte_port,
+                                 struct offload_item_cls_info *cls_info,
+                                 struct rte_flow_attr *flow_attr,
+                                 bool workaround_needed)
+{
+    /*
+     * 1. If recirc_id == 0 and no vport ==> ROOT table
+     * 2. If recirc_id == 0 and vport exists ==> VPORT table (VXLAN,...)
+     * 3. If recirc_id != 0 ==> table id based on recirc_id mapping
+     */
+    enum rte_port_type port_type = rte_port->rte_port_type;
+    uint32_t recirc_id = cls_info->match.recirc_id;
+    if (!recirc_id) {
+        switch (port_type) {
+        case RTE_PORT_TYPE_DPDK:
+            *table_id = ROOT_TABLE_ID;
+            break;
+        case RTE_PORT_TYPE_VXLAN:
+            *table_id = VXLAN_TABLE_ID;
+            break;
+        case RTE_PORT_TYPE_UNINIT:
+        default:
+            *table_id = UNKNOWN_TABLE_ID;
+            break;
+        }
+    } else {
+        /* The table id is the mapping of recicr_id to HW id */
+        // netdev_dpdk_get_recirc_id_hw_id(recirc_id, table_id);
+        *table_id = cls_info->match.hw_id;
+        if (*table_id == INVALID_HW_ID) {
+            *table_id = UNKNOWN_TABLE_ID;
+            return;
+        }
+    }
+}
+#endif
 
 
 static struct rte_flow *
@@ -4113,7 +4448,8 @@ netdev_dpdk_offload_put_handle(struct netdev *netdev,
     }
 
     if (netdev_dpdk_offload_put_add_actions(rte_port, fdata, &flow_actions,
-                                    match, actions, actions_len, &cls_info)) {
+                                    match, actions, actions_len, &cls_info,
+                                    info->flow_mark)) {
         goto roll_back;
     }
 
@@ -4123,7 +4459,10 @@ netdev_dpdk_offload_put_handle(struct netdev *netdev,
     if(netdev_dpdk_offload_set_group_id(rte_port, &cls_info, &flow_attr, workaround_needed)) {
         goto roll_back;
     }
-
+    if (cls_info.match.type == MATCH_OFFLOAD_TYPE_RECIRC) {
+        /* flow is going to be added to a recirc_id table. Update MAPPING table per port */
+        // netdev_dpdk_update_mapping_table(rte_port, table_id);
+    }
     /* handle miss in HW in CT need special handling */
     /* for all cases, we need to save all resources allocated */
     if (cls_info.actions.type == ACTION_OFFLOAD_TYPE_CT) {
@@ -4139,7 +4478,7 @@ netdev_dpdk_offload_put_handle(struct netdev *netdev,
         goto roll_back;
     }
 
-    /* TODO: OFFLOAD FLOW HERE */
+    /* TODO: OFFLOAD FLOW HERE -- DONE in calling API? */
     /* if fail goto roleback. */
     flow = netdev_rte_offload_flow(netdev, NULL, &patterns, &flow_actions,
                                        &flow_attr);
@@ -4202,12 +4541,14 @@ roll_back:
 }
 
 static void
-netdev_dpdk_offload_del_handle(uint32_t mark)
+netdev_dpdk_offload_del_handle(uint32_t mark) // OMREVIEW - no call to this function
 {
      /* from the mark we get also the in_port.. */
      struct mark_to_miss_ctx_data *data = netdev_dpdk_get_flow_miss_ctx(mark);
      if (!data) {
-        /* TODO: need to think if we need warn here. */
+        /* TODO: need to think if we need warn here.
+         * DBG instead. May consider rate limit */
+        VLOG_DBG("No data found for miss context with mark %u.", mark);
         return;
      }
 
@@ -4220,6 +4561,12 @@ netdev_dpdk_offload_del_handle(uint32_t mark)
         if (data->flow.is_port) {
             netdev_dpdk_put_port_id_hw_id(sw_id);
         } else {
+#if 0
+            uint32_t in_port = data->flow.in_port;
+            struct netdev_rte_port *rte_port =
+                netdev_rte_port_search(in_port, &port_map);
+            // netdev_dpdk_put_recirc_id_hw_id(rte_port, sw_id);
+#endif                                                
             netdev_dpdk_put_recirc_id_hw_id(sw_id);
         }
     }
@@ -4233,7 +4580,7 @@ netdev_dpdk_ct_flow_add_patterns(struct flow_patterns  *patterns,
                                  struct ct_flow_offload_item *ct_offload)
 {
     /* TODO match on zone */
-    /* TODO add 5-tuple */
+    /* TODO add 5-tuple -- DONE in a call from ct_put() */
 
     return 0;
 }
@@ -4242,11 +4589,11 @@ static int
 netdev_dpdk_ct_flow_add_actions(struct flow_actions *actions,
                                 struct ct_flow_offload_item *ct_offload)
 {
-    /* TODO : jump to mapping table */
+    /* TODO : jump to mapping table -- DONE in ct_add_rte_flow_offload() */
     return 0;
 }
 
-int netdev_dpdk_create_ct_flow(struct ct_flow_offload_item *ct_offload)
+int netdev_dpdk_create_ct_flow(struct ct_flow_offload_item *ct_offload) // OMREVIEW - should use ct_flow_put() API
 {
     struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
     struct flow_actions  actions = { .actions = NULL, .cnt = 0 };
