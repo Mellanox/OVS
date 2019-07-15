@@ -2700,6 +2700,9 @@ dp_ct_offload_add(struct ct_flow_offload_item *item)
         VLOG_ERR("Failed to allocate flow mark!\n");
         ret = -1;
     }
+    ret = netdev_dpdk_offload_ct_put(item, mark);
+    return ret;
+    // Delete below:
     struct match match;
     memset(&match, 0, sizeof match);
     /* Fill in match struct */
@@ -2716,15 +2719,11 @@ dp_ct_offload_add(struct ct_flow_offload_item *item)
     match.flow.ct_zone = item->zone;
     match.wc.masks.ct_zone = 0xFFFF;
 
-    struct nlattr *nl_actions = NULL;
-    size_t actions_len = 0;
-
     /* Use the mark as connection identifier */
     ovs_u128 uctid;
     memset(&uctid, 0, sizeof uctid);
     uctid.u32[0] = mark;
-    ret = ct_put(item->odp_port, &match, nl_actions,
-                 actions_len, &uctid, mark);
+    ret = ct_put(item->odp_port, &match, item, &uctid, mark);
     return ret;
 }
 

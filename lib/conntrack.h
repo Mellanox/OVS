@@ -295,6 +295,7 @@ struct ct_flow_offload_item {
     } tun;
 
     uint32_t odp_port;
+    bool has_nat;
 };
 
 /* hw-offload callbacks.
