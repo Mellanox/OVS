@@ -191,9 +191,12 @@
     </column>
 
       <column name="other_config" key="hw-offload"
-              type='{"type": "boolean"}'>
+              type='{"type": "string",
+                     "enum": ["set", ["false", "true", "debug"]]}'>
         <p>
-          Set this value to <code>true</code> to enable netdev flow offload.
+          Set this value to <code>true</code> or <code>debug</code> to enable
+          netdev flow offload. <code>debug</code> emulates HW offload for
+          debug purposes, applicable for netdev datapath only.
         </p>
         <p>
           The default value is <code>false</code>. Changing this value requires

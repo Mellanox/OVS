@@ -44,6 +44,8 @@ void netdev_dpdk_hw_forwarder_update(const char *name,
                                      int (*fwd_fp)(int queue_id, int relay_id),
                                      void (*del_fp)(int relay_id));
 void free_dpdk_buf(struct dp_packet *);
+void
+netdev_dpdk_rte_flow_set_debug_mode(bool debug);
 int
 netdev_dpdk_rte_flow_destroy(struct netdev *netdev,
                              struct rte_flow *rte_flow,
@@ -69,6 +71,12 @@ netdev_dpdk_register(void)
 }
 static inline void
 free_dpdk_buf(struct dp_packet *buf OVS_UNUSED)
+{
+    /* Nothing */
+}
+
+static inline void
+netdev_dpdk_rte_flow_set_debug_mode(bool debug OVS_UNUSED)
 {
     /* Nothing */
 }

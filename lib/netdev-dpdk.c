@@ -4639,6 +4639,68 @@ dump_flow_info(const char *title,
     ds_destroy(&s);
 }
 
+static struct rte_flow *
+(*ovs_rte_flow_create)(uint16_t port_id,
+                       const struct rte_flow_attr *attr,
+                       const struct rte_flow_item pattern[],
+                       const struct rte_flow_action actions[],
+                       struct rte_flow_error *error) = &rte_flow_create;
+
+static int
+(*ovs_rte_flow_destroy)(uint16_t port_id,
+                        struct rte_flow *flow,
+                        struct rte_flow_error *error) = &rte_flow_destroy;
+
+int
+(*ovs_rte_flow_query)(uint16_t port_id,
+                      struct rte_flow *flow,
+                      const struct rte_flow_action *action,
+                      void *data,
+                      struct rte_flow_error *error) = &rte_flow_query;
+
+static struct rte_flow *
+debug_rte_flow_create(uint16_t port_id OVS_UNUSED,
+                      const struct rte_flow_attr *attr OVS_UNUSED,
+                      const struct rte_flow_item pattern[] OVS_UNUSED,
+                      const struct rte_flow_action actions[] OVS_UNUSED,
+                      struct rte_flow_error *error OVS_UNUSED)
+{
+    int *flow;
+
+    flow = dpdk_rte_mzalloc(sizeof *flow);
+    return (struct rte_flow *)flow;
+}
+
+static int
+debug_rte_flow_destroy(uint16_t port_id OVS_UNUSED,
+                       struct rte_flow *flow,
+                       struct rte_flow_error *error OVS_UNUSED)
+{
+    if (!flow) {
+        return -1;
+    }
+    rte_free(flow);
+    return 0;
+}
+
+static int
+debug_rte_flow_query(uint16_t port_id OVS_UNUSED,
+                     struct rte_flow *flow OVS_UNUSED,
+                     const struct rte_flow_action *action OVS_UNUSED,
+                     void *data OVS_UNUSED,
+                     struct rte_flow_error *error OVS_UNUSED)
+{
+    return ENODEV;
+}
+
+void
+netdev_dpdk_rte_flow_set_debug_mode(bool debug)
+{
+    ovs_rte_flow_create = (!debug) ? &rte_flow_create : debug_rte_flow_create;
+    ovs_rte_flow_destroy = (!debug) ? &rte_flow_destroy : debug_rte_flow_destroy;
+    ovs_rte_flow_query = (!debug) ? &rte_flow_query : debug_rte_flow_query;
+}
+
 int
 netdev_dpdk_rte_flow_destroy(struct netdev *netdev,
                              struct rte_flow *rte_flow,
@@ -4648,7 +4710,7 @@ netdev_dpdk_rte_flow_destroy(struct netdev *netdev,
     int ret;
 
     ovs_mutex_lock(&dev->mutex);
-    ret = rte_flow_destroy(dev->port_id, rte_flow, error);
+    ret = ovs_rte_flow_destroy(dev->port_id, rte_flow, error);
     dump_flow_info("Destroy", netdev, NULL, NULL, NULL, rte_flow, &ret);
     ovs_mutex_unlock(&dev->mutex);
     return ret;
@@ -4665,7 +4727,7 @@ netdev_dpdk_rte_flow_create(struct netdev *netdev,
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
 
     ovs_mutex_lock(&dev->mutex);
-    flow = rte_flow_create(dev->port_id, attr, items, actions, error);
+    flow = ovs_rte_flow_create(dev->port_id, attr, items, actions, error);
     dump_flow_info("Create", netdev, attr, items, actions, flow, NULL);
     ovs_mutex_unlock(&dev->mutex);
     return flow;

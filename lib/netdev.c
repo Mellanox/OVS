@@ -2600,13 +2600,17 @@ netdev_ports_flow_init(void)
 void
 netdev_set_flow_api_enabled(const struct smap *ovs_other_config)
 {
-    if (smap_get_bool(ovs_other_config, "hw-offload", false)) {
+    const char *hwol = smap_get_def(ovs_other_config, "hw-offload", "");
+
+    if (!strcasecmp("true", hwol) || !strcasecmp("debug", hwol)) {
         static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
 
         if (ovsthread_once_start(&once)) {
             netdev_flow_api_enabled = true;
+            netdev_dpdk_rte_flow_set_debug_mode(!strcasecmp("debug", hwol));
 
-            VLOG_INFO("netdev: Flow API Enabled");
+            VLOG_INFO("netdev: Flow API Enabled%s",
+                      !strcasecmp("debug", hwol) ? " (DEBUG)" : "");
 
             tc_set_policy(smap_get_def(ovs_other_config, "tc-policy",
                                        TC_POLICY_DEFAULT));
