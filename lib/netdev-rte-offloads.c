@@ -35,6 +35,13 @@
 #include "uuid.h"
 #include "unixctl.h"
 
+extern int
+(*ovs_rte_flow_query)(uint16_t port_id,
+                      struct rte_flow *flow,
+                      const struct rte_flow_action *action,
+                      void *data,
+                      struct rte_flow_error *error);
+
 struct flow_data;
 
 #define VXLAN_EXCEPTION_MARK (MIN_RESERVED_MARK + 0)
@@ -1319,8 +1326,8 @@ netdev_rte_offloads_flow_stats_get(struct netdev *netdev OVS_UNUSED,
                 memset(&query, 0, sizeof query);
                 /* reset counters after query */
                 query.reset = 1;
-                ret = rte_flow_query(dpdk_port_id, rte_flow,
-                                     actions.actions, &query, &error);
+                ret = ovs_rte_flow_query(dpdk_port_id, rte_flow,
+                                         actions.actions, &query, &error);
                 if (ret) {
                     VLOG_DBG("ufid "UUID_FMT
                              " flow %p query for port %d failed\n",
