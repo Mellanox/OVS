@@ -3717,7 +3717,7 @@ netdev_dpdk_save_flow_miss_ctx(uint32_t mark, uint32_t hw_id, bool is_port,
     data->mark = mark;
     data->flow.outer_id = outer_id;
     data->flow.hw_id = hw_id;
-    data->flow.is_port = is_port;
+   data->flow.is_port = is_port;
     data->flow.in_port = in_port;
     return 0;
 }
@@ -3813,6 +3813,10 @@ netdev_dpdk_offload_preprocess(struct dp_packet *p)
                 break;
             case MARK_PREPROCESS_FLOW_CT:
                 /* TODO - preprocess flow CT */
+                VLOG_WARN("not supported yet");
+                break;
+            case MARK_PREPROCESS_FLOW:
+                /* TODO - preprocess flow (no CT) */
                 VLOG_WARN("not supported yet");
                 break;
             case MARK_PREPROCESS_VXLAN:
@@ -5007,7 +5011,7 @@ fill_match(struct match *match, struct ct_flow_offload_item *item,
  * configured.
  *
  * resource allocation:
- * if offload has TUN data, an outer_id should be allocated and used.
+ * TODO: if offload has TUN data, an outer_id should be allocated and used.
  *
  */
 static int
@@ -5034,7 +5038,7 @@ netdev_dpdk_offload_ct_session(struct mark_to_miss_ctx_data *data,
     struct match match;
     ovs_u128 ctid;
 
-    netdev_rte_port_search(ct_offload1->odp_port, &port_map);
+    rte_port = netdev_rte_port_search(ct_offload1->odp_port, &port_map);
     if (!rte_port) {
         VLOG_DBG("port %d has no rte_port", ct_offload1->odp_port);
         goto fail;
@@ -5068,7 +5072,7 @@ netdev_dpdk_offload_ct_session(struct mark_to_miss_ctx_data *data,
     data->ct.rteflow[dir1] = true;
     data->ct.odp_port[dir1] = ct_offload1->odp_port;
 
-    netdev_rte_port_search(ct_offload2->odp_port, &port_map);
+    rte_port = netdev_rte_port_search(ct_offload2->odp_port, &port_map);
     if (!rte_port) {
         VLOG_DBG("port %d has no rte_port", ct_offload2->odp_port);
         goto fail;
