@@ -2627,6 +2627,7 @@ dp_ct_alloc_ct_offload(struct ct_flow_offload_item *ct_offload,
     return offload;
 }
 
+#ifdef INCLUDE_UNUSED_FUNCTIONS
 static void ct_offload_print_log(struct ct_flow_offload_item *item)
 {
     struct ovs_key_ct_tuple_ipv4 * ipv4 = &item->ct_key.ipv4;
@@ -2653,6 +2654,8 @@ static void ct_offload_print_log(struct ct_flow_offload_item *item)
             ntohs(ipv4->dst_port));
 
 }
+#endif
+
 /**
  * callback
  *
@@ -2702,29 +2705,6 @@ dp_ct_offload_add(struct ct_flow_offload_item *item)
     }
     ret = netdev_dpdk_offload_ct_put(item, mark);
     return ret;
-    // Delete below:
-    struct match match;
-    memset(&match, 0, sizeof match);
-    /* Fill in match struct */
-    match.flow.nw_proto = item->ct_match.ipv4.ipv4_proto;
-    match.wc.masks.nw_proto = 0xFF;
-    match.flow.nw_src = item->ct_match.ipv4.ipv4_src;
-    match.flow.nw_dst = item->ct_match.ipv4.ipv4_dst;
-    match.wc.masks.nw_src = 0xFFFFFFFF;
-    match.wc.masks.nw_dst = 0xFFFFFFFF;
-    match.flow.tp_src = item->ct_match.ipv4.src_port;
-    match.flow.tp_dst = item->ct_match.ipv4.dst_port;
-    match.wc.masks.tp_src = 0xFFFF;
-    match.wc.masks.tp_dst = 0xFFFF;
-    match.flow.ct_zone = item->zone;
-    match.wc.masks.ct_zone = 0xFFFF;
-
-    /* Use the mark as connection identifier */
-    ovs_u128 uctid;
-    memset(&uctid, 0, sizeof uctid);
-    uctid.u32[0] = mark;
-    ret = ct_put(item->odp_port, &match, item, &uctid, mark);
-    return ret;
 }
 
 static int
@@ -2738,7 +2718,6 @@ dp_ct_offload_del(struct ct_flow_offload_item *item)
         VLOG_WARN("CT del with no mark");
         return ret;
     } else {
-        // OMREVIEW - Add ct_flow_del()
         ct_to_mark_disassociate(item);
         flow_mark_free(mark);
     }
