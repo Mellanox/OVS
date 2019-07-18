@@ -296,6 +296,8 @@ struct ufid_to_odp {
 };
 
 static struct cmap ufid_to_portid_map = CMAP_INITIALIZER;
+static struct cmap ctid_to_portid_map = CMAP_INITIALIZER;
+static struct cmap hwid_to_portid_map = CMAP_INITIALIZER;
 static struct ovs_mutex ufid_to_portid_mutex = OVS_MUTEX_INITIALIZER;
 
 /*
@@ -304,13 +306,13 @@ static struct ovs_mutex ufid_to_portid_mutex = OVS_MUTEX_INITIALIZER;
  * Return ref to object and not a copy.
  */
 static struct ufid_to_odp *
-ufid_to_portid_get(const ovs_u128 *ufid)
+ufid_to_portid_get(const ovs_u128 *uid, struct cmap *map)
 {
-    size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
+    size_t hash = hash_bytes(uid, sizeof *uid, 0);
     struct ufid_to_odp *data;
 
-    CMAP_FOR_EACH_WITH_HASH (data, node, hash, &ufid_to_portid_map) {
-        if (ovs_u128_equals(*ufid, data->ufid)) {
+    CMAP_FOR_EACH_WITH_HASH (data, node, hash, map) {
+        if (ovs_u128_equals(*uid, data->ufid)) {
             return data;
         }
     }
@@ -319,9 +321,9 @@ ufid_to_portid_get(const ovs_u128 *ufid)
 }
 
 static odp_port_t
-ufid_to_portid_search(const ovs_u128 *ufid)
+ufid_to_portid_search(const ovs_u128 *ufid, struct map *map)
 {
-   struct ufid_to_odp *data = ufid_to_portid_get(ufid);
+   struct ufid_to_odp *data = ufid_to_portid_get(ufid, map);
 
    return (data) ? data->dp_port : INVALID_ODP_PORT;
 }
@@ -332,12 +334,12 @@ ufid_to_portid_search(const ovs_u128 *ufid)
  * Return the port if saved successfully.
  */
 static odp_port_t
-ufid_to_portid_add(const ovs_u128 *ufid, odp_port_t dp_port)
+ufid_to_portid_add(const ovs_u128 *ufid, odp_port_t dp_port, struct cmap *cmap)
 {
     size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
     struct ufid_to_odp *data;
 
-    if (ufid_to_portid_search(ufid) != INVALID_ODP_PORT) {
+    if (ufid_to_portid_search(ufid, cmap) != INVALID_ODP_PORT) {
         return dp_port;
     }
 
@@ -350,7 +352,7 @@ ufid_to_portid_add(const ovs_u128 *ufid, odp_port_t dp_port)
     data->ufid = *ufid;
     data->dp_port = dp_port;
 
-    cmap_insert(&ufid_to_portid_map,
+    cmap_insert(cmap,
                 CONST_CAST(struct cmap_node *, &data->node), hash);
 
     return dp_port;
@@ -360,14 +362,14 @@ ufid_to_portid_add(const ovs_u128 *ufid, odp_port_t dp_port)
  * Remove the mapping if exists.
  */
 static void
-ufid_to_portid_remove(const ovs_u128 *ufid)
+ufid_to_portid_remove(const ovs_u128 *ufid, struct cmap *cmap)
 {
     size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
-    struct ufid_to_odp *data = ufid_to_portid_get(ufid);
+    struct ufid_to_odp *data = ufid_to_portid_get(ufid, cmap);
 
     ovs_mutex_lock(&ufid_to_portid_mutex);
     if (data != NULL) {
-        cmap_remove(&ufid_to_portid_map,
+        cmap_remove(cmap,
                     CONST_CAST(struct cmap_node *, &data->node), hash);
         free(data);
     }
@@ -1400,7 +1402,7 @@ err:
 }
 
 static int
-netdev_offloads_flow_del(const ovs_u128 *ufid);
+netdev_offloads_flow_del(const ovs_u128 *ufid, struct cmap *cmap);
 
 int
 netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
@@ -1431,7 +1433,7 @@ netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
 
     if (ufid_hw_offload) {
         VLOG_DBG("got modification and destroying previous rte_flow");
-        ret = netdev_offloads_flow_del(ufid);
+        ret = netdev_offloads_flow_del(ufid, &ufid_to_portid_map);
         if (ret) {
             return ret;
         }
@@ -1455,7 +1457,7 @@ netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
     }
 #endif
     ufid_hw_offload_add(ufid_hw_offload, &rte_port->ufid_to_rte);
-    ufid_to_portid_add(ufid, rte_port->dp_port);
+    ufid_to_portid_add(ufid, rte_port->dp_port, &ufid_to_portid_map);
     // hwid_hw_offload_add(hwid_hw_offload, &rte_port->hwid_to_rte);
 
     ret = netdev_rte_offloads_validate_flow(match, false, false);
@@ -1491,7 +1493,7 @@ Original */
     return 0;
 
 err:
-    netdev_offloads_flow_del(ufid);
+    netdev_offloads_flow_del(ufid, &ufid_to_portid_map);
     return ret;
 }
 
@@ -1516,7 +1518,7 @@ netdev_rte_offloads_flow_stats_get(struct netdev *netdev OVS_UNUSED,
 
     ovs_mutex_lock(&ufid_to_portid_mutex);
 
-    uto = ufid_to_portid_get(ufid);
+    uto = ufid_to_portid_get(ufid, &ufid_to_portid_map);
     if (!uto) {
         ret = EINVAL;
         goto err;
@@ -1574,9 +1576,9 @@ err:
 }
 
 static int
-netdev_offloads_flow_del(const ovs_u128 *ufid)
+netdev_offloads_flow_del(const ovs_u128 *ufid, struct cmap *cmap)
 {
-    odp_port_t port_num = ufid_to_portid_search(ufid);
+    odp_port_t port_num = ufid_to_portid_search(ufid, cmap);
 
     if (port_num == INVALID_ODP_PORT) {
         return EINVAL;
@@ -1591,7 +1593,7 @@ netdev_offloads_flow_del(const ovs_u128 *ufid)
         return ENODEV;
     }
 
-    ufid_to_portid_remove(ufid);
+    ufid_to_portid_remove(ufid, cmap);
     ufid_hw_offload = ufid_hw_offload_remove(ufid, &rte_port->ufid_to_rte);
     if (ufid_hw_offload) {
         netdev_rte_port_ufid_hw_offload_free(ufid_hw_offload);
@@ -1605,7 +1607,7 @@ netdev_rte_offloads_flow_del(struct netdev *netdev OVS_UNUSED,
                              const ovs_u128 *ufid,
                              struct dpif_flow_stats *stats OVS_UNUSED)
 {
-    return netdev_offloads_flow_del(ufid);
+    return netdev_offloads_flow_del(ufid, &ufid_to_portid_map);
 }
 
 static int
@@ -1613,7 +1615,7 @@ netdev_rte_vport_flow_del(struct netdev *netdev OVS_UNUSED,
                           const ovs_u128 *ufid,
                           struct dpif_flow_stats *stats OVS_UNUSED)
 {
-    return netdev_offloads_flow_del(ufid);
+    return netdev_offloads_flow_del(ufid, &ufid_to_portid_map);
 }
 
 static int
@@ -1782,7 +1784,7 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
     }
 
     ufid_hw_offload_add(ufid_hw_offload, &rte_port->ufid_to_rte);
-    ufid_to_portid_add(ufid, rte_port->dp_port);
+    ufid_to_portid_add(ufid, rte_port->dp_port, &ufid_to_portid_map);
     /*
     struct rte_flow_attr flow_attr = {
         .group = rte_port->table_id,
@@ -1964,7 +1966,7 @@ static int
 ct_add_rte_flow_offload(struct netdev_rte_port *rte_port,
                         struct match *match,
                         struct ct_flow_offload_item *ct_offload,
-                        const ovs_u128 *ufid,
+                        const ovs_u128 *ctid,
                         bool nat,
                         struct ct_stats *stats OVS_UNUSED)
 {
@@ -1973,13 +1975,13 @@ ct_add_rte_flow_offload(struct netdev_rte_port *rte_port,
     /* If an old rte_flow exists, it means it's a flow modification.
      * Here destroy the old rte flow first before adding a new one.
      */
-    struct ufid_hw_offload *ufid_hw_offload =
-        ufid_hw_offload_find(ufid, &rte_port->ctid_to_rte);
+    struct ufid_hw_offload *ctid_hw_offload =
+        ufid_hw_offload_find(ctid, &rte_port->ctid_to_rte);
 
-    if (ufid_hw_offload) {
+    if (ctid_hw_offload) {
         VLOG_DBG("got modification and destroying previous rte_flow");
-        ufid_hw_offload_remove(ufid, &rte_port->ctid_to_rte);
-        ret = netdev_rte_port_ufid_hw_offload_free(ufid_hw_offload);
+        ufid_hw_offload_remove(ctid, &rte_port->ctid_to_rte);
+        ret = netdev_rte_port_ufid_hw_offload_free(ctid_hw_offload);
         if (ret < 0) {
             return ret;
         }
@@ -1997,15 +1999,15 @@ ct_add_rte_flow_offload(struct netdev_rte_port *rte_port,
         VLOG_WARN("offload while no phy ports %u", num_ports);
         return -1;
     }
-    ufid_hw_offload =
-        netdev_rte_port_ufid_hw_offload_alloc(num_ports, ufid);
-    if (ufid_hw_offload == NULL) {
-        VLOG_WARN("failed to allocate ufid_hw_offlaod, OOM");
+    ctid_hw_offload =
+        netdev_rte_port_ufid_hw_offload_alloc(num_ports, ctid);
+    if (ctid_hw_offload == NULL) {
+        VLOG_WARN("failed to allocate ctid_hw_offlaod, OOM");
         return -1;
     }
 
-    ufid_hw_offload_add(ufid_hw_offload, &rte_port->ctid_to_rte);
-    // ufid_to_portid_add(ufid, rte_port->dp_port);
+    ufid_hw_offload_add(ctid_hw_offload, &rte_port->ctid_to_rte);
+    ufid_to_portid_add(ctid, rte_port->dp_port, &ctid_to_portid_map);
 
     struct rte_flow_attr flow_attr = {
         .group = nat ? CONNTRACK_NAT_TABLE_ID : CONNTRACK_TABLE_ID,
@@ -2076,7 +2078,7 @@ ct_add_rte_flow_offload(struct netdev_rte_port *rte_port,
                      error.type, error.message);
         }
         if (flow) {
-            ufid_hw_offload_add_rte_flow(ufid_hw_offload, flow,
+            ufid_hw_offload_add_rte_flow(ctid_hw_offload, flow,
                                          rte_port->netdev);
         }
     }
@@ -2116,7 +2118,7 @@ info unknown
             }
 #endif
                 if (flow) {
-                    ufid_hw_offload_add_rte_flow(ufid_hw_offload, flow,
+                    ufid_hw_offload_add_rte_flow(ctid_hw_offload, flow,
                                                  data->netdev);
                 }
             }
@@ -3646,10 +3648,10 @@ netdev_dpdk_release_ct_flow(struct mark_to_miss_ctx_data *data,
 
     if (data->ct.rteflow[dir]) {
         build_ctid(data->mark, dir, false, &ctid);
-        netdev_offloads_flow_del(&ctid);
+        netdev_offloads_flow_del(&ctid, &ctid_to_portid_map);
         if (data->ct.ct_offload[dir]->has_nat) {
             build_ctid(data->mark, dir, true, &ctid);
-            netdev_offloads_flow_del(&ctid);
+            netdev_offloads_flow_del(&ctid, &ctid_to_portid_map);
         }
         data->ct.rteflow[dir] = false;
     }
@@ -5182,8 +5184,8 @@ netdev_dpdk_offload_ct_del(uint32_t mark)
 
     /* Destroy FLOWS  from NAT and CT NAT */
     netdev_dpdk_del_miss_ctx(mark);
-    /* TODO - destroy rte_flows from tables */
-    // netdev_offloads_flow_del(ufid);
+    /* TODO - destroy rte_flows from tables -- DONE in netdev_dpdk_release_ct_flow()
+     */
     return 0;
 }
 
