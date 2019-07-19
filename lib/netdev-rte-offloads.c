@@ -4162,9 +4162,7 @@ rss:
             goto rss;
         }
     }
-    if(flow_attr.transfer) {
-        info->is_hwol = (flow) ? true : false;
-    }
+    info->is_hwol = (flow_attr.transfer && flow) ? true : false;
 
 
     free_flow_patterns(&patterns);
