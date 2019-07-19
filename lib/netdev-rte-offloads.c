@@ -283,6 +283,7 @@ struct ufid_to_odp {
 };
 
 static struct cmap ufid_to_portid_map = CMAP_INITIALIZER;
+static struct ovs_mutex ufid_to_portid_mutex = OVS_MUTEX_INITIALIZER;
 
 /*
  * Search for ufid mapping
@@ -351,11 +352,13 @@ ufid_to_portid_remove(const ovs_u128 *ufid)
     size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
     struct ufid_to_odp *data = ufid_to_portid_get(ufid);
 
+    ovs_mutex_lock(&ufid_to_portid_mutex);
     if (data != NULL) {
         cmap_remove(&ufid_to_portid_map,
                     CONST_CAST(struct cmap_node *, &data->node), hash);
         free(data);
     }
+    ovs_mutex_unlock(&ufid_to_portid_mutex);
 }
 
 /*
@@ -1478,7 +1481,7 @@ netdev_rte_offloads_flow_stats_get(struct netdev *netdev OVS_UNUSED,
 
     memset(stats, 0, sizeof *stats);
 
-    // ovs_mutex_lock(&ufid_to_portid_mutex);
+    ovs_mutex_lock(&ufid_to_portid_mutex);
 
     uto = ufid_to_portid_get(ufid);
     if (!uto) {
@@ -1533,7 +1536,7 @@ netdev_rte_offloads_flow_stats_get(struct netdev *netdev OVS_UNUSED,
     ret = 0;
 
 err:
-    // ovs_mutex_unlock(&ufid_to_portid_mutex);
+    ovs_mutex_unlock(&ufid_to_portid_mutex);
     return ret;
 }
 
@@ -1708,6 +1711,9 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
                                         struct offload_info *info,
                                         struct dpif_flow_stats *stats OVS_UNUSED)
 {
+    VLOG_DBG("Adding rte offload for vport vxlan flow ufid "UUID_FMT,
+        UUID_ARGS((struct uuid *)ufid));
+
     if (!actions_len || !nl_actions) {
         VLOG_DBG("skip flow offload without actions\n");
         return 0;
