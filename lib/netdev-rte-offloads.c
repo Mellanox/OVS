@@ -4296,7 +4296,7 @@ netdev_dpdk_offload_put_add_actions(struct netdev_rte_port *rte_port,
                                                  flow_actions,cls_info);
             break;
         case ACTION_OFFLOAD_TYPE_CT:
-            return netdev_dpdk_offload_ct_actions(fdata, flow_actions, cls_info,
+            ret = netdev_dpdk_offload_ct_actions(fdata, flow_actions, cls_info,
                                                  actions, actions_len, flow_mark);
             break;
         case ACTION_OFFLOAD_TYPE_TNL_PUSH:
