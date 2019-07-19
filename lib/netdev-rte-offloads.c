@@ -3621,13 +3621,13 @@ netdev_dpdk_save_ct_miss_ctx(uint32_t mark, struct rte_flow *flow,
     data->ct.ct_mark = ct_mark;
     data->ct.ct_zone = ct_zone;
     data->ct.ct_state = ct_state;
-    data->ct.outer_id[idx] = outer_id;
-    idx = reply?CT_OFFLOAD_DIR_REP:CT_OFFLOAD_DIR_INIT;
+    idx = reply ? CT_OFFLOAD_DIR_REP : CT_OFFLOAD_DIR_INIT;
     if (data->ct.rte_flow[idx]) {
         VLOG_WARN("flow already exist");
         return -1;
     }
     data->ct.rte_flow[idx] = flow;
+    data->ct.outer_id[idx] = outer_id;
     return 0;
 }
 
