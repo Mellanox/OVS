@@ -91,6 +91,8 @@ struct netdev_rte_port {
     uint16_t dpdk_num_queues; /* Number of dpdk queues of this port. */
     uint32_t exception_mark; /* Exception SW handling for this port type. */
     struct cmap ufid_to_rte[UFID_TO_RTE_TYPE_NUM]; /* flows id to dpdk rte flows */
+    struct cmap recirc_to_rte; /* HW id of recirc id to dpdk rte flows */
+    struct cmap portid_to_rte; /* HW id of port id to dpdk rte flows */
     struct rte_flow *default_rte_flow[RTE_FLOW_MAX_TABLES];
     struct cmap_node mark_node;
 };
@@ -101,10 +103,15 @@ netdev_dpdk_offload_put_handle(struct netdev *netdev,
                              struct flow_data *flow_data, struct match *match,
                              struct nlattr *actions, size_t actions_len,
                              struct offload_info *info, bool is_vport);
+static int
+netdev_rte_update_hwid_mapping(struct netdev_rte_port *rte_port,
+                               odp_port_t out_dp_port,
+                               uint32_t hwid, bool add, bool port);
+static void netdev_dpdk_put_recirc_id_hw_id(uint32_t recirc_id);
+static void netdev_dpdk_put_port_id_hw_id(uint32_t port_id);
 static struct rte_flow *
 netdev_rte_offload_add_default_flow(struct netdev_rte_port *rte_port,
                                     struct netdev_rte_port *vport);
-
 
 static struct cmap port_map = CMAP_INITIALIZER;
 static struct cmap mark_to_rte_port = CMAP_INITIALIZER;
@@ -160,6 +167,8 @@ netdev_rte_port_set(struct netdev *netdev, odp_port_t dp_port,
          ufid_to_rte_type++) {
         cmap_init(&((*rte_port)->ufid_to_rte[ufid_to_rte_type]));
     }
+    cmap_init(&((*rte_port)->recirc_to_rte));
+    cmap_init(&((*rte_port)->portid_to_rte));
 
 next:
     (*rte_port)->netdev = netdev;
@@ -300,6 +309,7 @@ struct ufid_to_odp {
     struct cmap_node node;
     ovs_u128 ufid;
     odp_port_t dp_port;
+    uint32_t recirc_id;
 };
 
 static struct cmap ufid_to_portid_map = CMAP_INITIALIZER;
@@ -340,7 +350,8 @@ ufid_to_portid_search(const ovs_u128 *ufid, struct cmap *cmap)
  * Return the port if saved successfully.
  */
 static odp_port_t
-ufid_to_portid_add(const ovs_u128 *ufid, odp_port_t dp_port, struct cmap *cmap)
+ufid_to_portid_add(const ovs_u128 *ufid, odp_port_t dp_port,
+                   uint32_t recirc_id, struct cmap *cmap)
 {
     size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
     struct ufid_to_odp *data;
@@ -357,6 +368,7 @@ ufid_to_portid_add(const ovs_u128 *ufid, odp_port_t dp_port, struct cmap *cmap)
 
     data->ufid = *ufid;
     data->dp_port = dp_port;
+    data->recirc_id = recirc_id;
 
     cmap_insert(cmap,
                 CONST_CAST(struct cmap_node *, &data->node), hash);
@@ -906,8 +918,10 @@ add_jump_to_port_id_action(odp_port_t target_port,
     return 0;
 }
 
-static int netdev_dpdk_get_recirc_id_hw_id(uint32_t recirc_id, uint32_t *hw_id);
-static int netdev_dpdk_get_port_id_hw_id(uint32_t port_id, uint32_t *hw_id);
+static int netdev_dpdk_get_recirc_id_hw_id(uint32_t recirc_id, uint32_t *hw_id,
+                                           bool peek);
+static int netdev_dpdk_get_port_id_hw_id(uint32_t port_id, uint32_t *hw_id,
+                                         bool peek);
 
 /*
  * Check if any unsupported flow patterns are specified.
@@ -932,7 +946,7 @@ netdev_rte_offloads_validate_flow(const struct match *match, bool ct_offload,
         goto err;
     }
 
-    if (!ct_offload && (masks->ct_state || masks->ct_nw_proto ||
+    if (ct_offload && (masks->ct_state || masks->ct_nw_proto ||
         masks->ct_zone  || masks->ct_mark     ||
         !ovs_u128_is_zero(masks->ct_label))) {
         goto err;
@@ -1045,7 +1059,8 @@ netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
     }
 
     ufid_hw_offload_add(ufid_hw_offload, &rte_port->ufid_to_rte[UFID_TO_RTE_OFFLOADS]);
-    ufid_to_portid_add(ufid, rte_port->dp_port, &ufid_to_portid_map);
+    ufid_to_portid_add(ufid, rte_port->dp_port, match->flow.recirc_id,
+                       &ufid_to_portid_map);
 
     ret = netdev_rte_offloads_validate_flow(match, false, false);
     if (ret < 0) {
@@ -1054,7 +1069,7 @@ netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
         goto err;
     }
 
-    rte_flow = netdev_dpdk_offload_put_handle(netdev, rte_port, &flow_data, 
+    rte_flow = netdev_dpdk_offload_put_handle(netdev, rte_port, &flow_data,
                                               match, actions,
                                               actions_len, info, false);
     if (!rte_flow) {
@@ -1171,6 +1186,17 @@ netdev_offloads_flow_del(const ovs_u128 *ufid, struct cmap *cmap,
         return ENODEV;
     }
 
+    struct ufid_to_odp *uto =
+        ufid_to_portid_get(ufid, &ufid_to_portid_map);
+    if (uto && uto->recirc_id) {
+        bool peek = true;
+        bool add = false;
+        bool port = false;
+        uint32_t hwid;
+        netdev_dpdk_get_recirc_id_hw_id(uto->recirc_id, &hwid, peek);
+        netdev_rte_update_hwid_mapping(rte_port, 0, hwid, add, port);
+        netdev_dpdk_put_recirc_id_hw_id(uto->recirc_id);
+    }
     ufid_to_portid_remove(ufid, cmap);
     ufid_hw_offload = ufid_hw_offload_remove(ufid, &rte_port->ufid_to_rte[ufid_to_rte_type]);
     if (ufid_hw_offload) {
@@ -1370,7 +1396,8 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
     }
 
     ufid_hw_offload_add(ufid_hw_offload, &rte_port->ufid_to_rte[UFID_TO_RTE_OFFLOADS]);
-    ufid_to_portid_add(ufid, rte_port->dp_port, &ufid_to_portid_map);
+    ufid_to_portid_add(ufid, rte_port->dp_port, match->flow.recirc_id,
+                       &ufid_to_portid_map);
 
     struct netdev_rte_port *data;
     struct rte_flow *flow;
@@ -1490,7 +1517,8 @@ ct_add_rte_flow_offload(struct netdev_rte_port *rte_port,
     }
 
     ufid_hw_offload_add(ctid_hw_offload, &rte_port->ufid_to_rte[UFID_TO_RTE_CT]);
-    ufid_to_portid_add(ctid, rte_port->dp_port, &ctid_to_portid_map);
+    ufid_to_portid_add(ctid, rte_port->dp_port, match->flow.recirc_id,
+                       &ctid_to_portid_map);
 
     struct rte_flow_attr flow_attr = {
         .group = nat ? CONNTRACK_NAT_TABLE_ID : CONNTRACK_TABLE_ID,
@@ -1666,6 +1694,10 @@ netdev_rte_offloads_port_add(struct netdev *netdev, odp_port_t dp_port)
         rte_port->dpdk_num_queues = netdev_n_rxq(netdev);
         rte_port->dpdk_port_id = netdev_dpdk_get_port_id(netdev);
         dpdk_phy_ports_amount++;
+        /* Reserve a hw id for this dp_port */
+        uint32_t hw_id;
+        bool peek = false;
+        netdev_dpdk_get_port_id_hw_id(dp_port, &hw_id, peek);
         VLOG_INFO("Rte dpdk port %d allocated.", dp_port);
         goto out;
     }
@@ -1735,6 +1767,8 @@ netdev_rte_port_del_default_rules(struct netdev_rte_port *rte_port)
 int
 netdev_rte_offloads_port_del(odp_port_t dp_port)
 {
+    int ret;
+
     struct netdev_rte_port *rte_port =
         netdev_rte_port_search(dp_port, &port_map);
     if (rte_port == NULL) {
@@ -1753,6 +1787,16 @@ netdev_rte_offloads_port_del(odp_port_t dp_port)
     if (rte_port->rte_port_type == RTE_PORT_TYPE_DPDK) {
         netdev_rte_port_del_default_rules(rte_port);
         dpdk_phy_ports_amount--;
+        bool peek = true;
+        bool add = false;
+        bool port = true;
+        uint32_t hwid;
+        ret = netdev_dpdk_get_port_id_hw_id(rte_port->dp_port, &hwid, peek);
+        if (ret == INVALID_HW_ID) {
+            VLOG_ERR("Failed to get dp_port %u mapping to hwid", rte_port->dp_port);
+        }
+        netdev_rte_update_hwid_mapping(NULL, 0, hwid, add, port);
+        netdev_dpdk_put_port_id_hw_id(dp_port);
     } else if (rte_port->rte_port_type == RTE_PORT_TYPE_VXLAN) {
         cmap_remove(&mark_to_rte_port,
                     CONST_CAST(struct cmap_node *,
@@ -3182,23 +3226,26 @@ struct hw_table_id {
     uint32_t hw_id_to_sw[MAX_OUTER_ID];
 };
 
-struct hw_table_id hw_table_id = {
-    .recirc_id_to_tbl_id_map = CMAP_INITIALIZER,
-    .port_id_to_tbl_id_map = CMAP_INITIALIZER,
+static struct cmap recirc_id_to_tbl_id_map = CMAP_INITIALIZER;
+static struct cmap port_id_to_tbl_id_map = CMAP_INITIALIZER;
+static struct hw_table_id hw_table_id = {
+    .pool = NULL,
 };
 
 static int
-netdev_dpdk_get_hw_id(uint32_t id, uint32_t *hw_id, bool is_port)
+netdev_dpdk_get_hw_id(uint32_t id, uint32_t *hw_id, bool is_port, bool peek)
 {
-    size_t hash = hash_add(0,id);
-    struct hw_table_id_node *data;
-    struct cmap *smap = is_port ?&hw_table_id.port_id_to_tbl_id_map:
-                               &hw_table_id.recirc_id_to_tbl_id_map;
+    size_t hash = hash_bytes(&id, sizeof id, 0);
+    struct hw_table_id_node *data = NULL;
+    struct cmap *smap = is_port ?&/*hw_table_id.*/port_id_to_tbl_id_map:
+                               &/*hw_table_id.*/recirc_id_to_tbl_id_map;
 
     CMAP_FOR_EACH_WITH_HASH (data, node, hash, smap) {
         if (data->id == id && data->is_port == is_port) {
             *hw_id = data->hw_id;
-            data->ref_cnt++;
+            if (!peek) {
+                data->ref_cnt++;
+            }
             return 0;
         }
     }
@@ -3209,17 +3256,17 @@ netdev_dpdk_get_hw_id(uint32_t id, uint32_t *hw_id, bool is_port)
 static void
 netdev_dpdk_put_hw_id(uint32_t id, bool is_port)
 {
-    size_t hash = hash_add(0,id);
+    size_t hash = hash_bytes(&id, sizeof id, 0);
     struct hw_table_id_node *data;
-    struct cmap *smap = is_port? &hw_table_id.port_id_to_tbl_id_map:
-                               &hw_table_id.recirc_id_to_tbl_id_map;
+    struct cmap *smap = is_port? &port_id_to_tbl_id_map:
+                                 &recirc_id_to_tbl_id_map;
 
     CMAP_FOR_EACH_WITH_HASH (data, node, hash, smap) {
         if (data->id == id && data->is_port == is_port) {
             data->ref_cnt--;
             if (data->ref_cnt == 0) {
-                /*TODO: delete table (if recirc_id).*/
-                /*TODO: update mapping table.*/
+                /*TODO: delete table (if recirc_id). DONE -- implicitly */
+                /*TODO: update mapping table. - DONE -- during flow_put and flow_del */
                 /* Both tables should be updated under flow_del() */
                 id_pool_free_id(hw_table_id.pool, data->hw_id);
                 ovsrcu_postpone(free, data);
@@ -3229,13 +3276,13 @@ netdev_dpdk_put_hw_id(uint32_t id, bool is_port)
     }
 }
 
-static int
-netdev_dpdk_alloc_hw_id(uint32_t id, bool is_port)
+static uint32_t
+netdev_dpdk_alloc_hw_id(uint32_t id, bool is_port, bool peek)
 {
-    size_t hash = hash_add(0,id);
+    size_t hash = hash_bytes(&id, sizeof id, 0);
     uint32_t hw_id;
-    struct cmap *smap = is_port? &hw_table_id.port_id_to_tbl_id_map:
-                               &hw_table_id.recirc_id_to_tbl_id_map;
+    struct cmap *smap = is_port? &port_id_to_tbl_id_map:
+                               &recirc_id_to_tbl_id_map;
     struct hw_table_id_node *data;
 
     if (!id_pool_alloc_id(hw_table_id.pool, &hw_id)) {
@@ -3246,7 +3293,7 @@ netdev_dpdk_alloc_hw_id(uint32_t id, bool is_port)
     data->hw_id = hw_id;
     data->is_port = is_port;
     data->id = id;
-    data->ref_cnt = 1;
+    data->ref_cnt = peek ? 0 : 1;
 
     cmap_insert(smap, CONST_CAST(struct cmap_node *, &data->node), hash);
 
@@ -3273,26 +3320,31 @@ netdev_dpdk_hw_id_init(void)
 }
 
 static int
-netdev_dpdk_get_recirc_id_hw_id(uint32_t recirc_id, uint32_t *hw_id)
+netdev_dpdk_get_recirc_id_hw_id(uint32_t recirc_id, uint32_t *hw_id, bool peek)
 {
-    netdev_dpdk_hw_id_init();
-    if (netdev_dpdk_get_hw_id(recirc_id, hw_id, false)) {
-        return *hw_id;
-    }
+    int ret = 0;
+    bool is_port = false;
 
-    return netdev_dpdk_alloc_hw_id(recirc_id, false);
+    netdev_dpdk_hw_id_init();
+    ret = netdev_dpdk_get_hw_id(recirc_id, hw_id, is_port, peek);
+    if (ret) {
+        *hw_id = netdev_dpdk_alloc_hw_id(recirc_id, is_port, peek);
+    }
+    return 0;
 }
 
 static int
-netdev_dpdk_get_port_id_hw_id(uint32_t port_id, uint32_t *hw_id)
+netdev_dpdk_get_port_id_hw_id(uint32_t port_id, uint32_t *hw_id, bool peek)
 {
+    int ret = 0;
+    bool is_port = true;
+
     netdev_dpdk_hw_id_init();
-
-    if (netdev_dpdk_get_hw_id(port_id, hw_id, true)) {
-        return *hw_id;
+    ret = netdev_dpdk_get_hw_id(port_id, hw_id, is_port, peek);
+    if (ret) {
+        *hw_id = netdev_dpdk_alloc_hw_id(port_id, is_port, peek);
     }
-
-    return netdev_dpdk_alloc_hw_id(port_id, true);
+    return 0;
 }
 
 static void
@@ -3353,6 +3405,8 @@ netdev_dpdk_offload_fill_cls_info(struct netdev_rte_port *rte_port,
     unsigned int left;
     const struct nlattr *a;
     struct match match_zero_wc;
+
+    cls_info->actions.valid = true;
 
     /*TODO: find if in_port is vport or not. (DONE)*/
     cls_info->match.vport = (rte_port->rte_port_type == RTE_PORT_TYPE_VXLAN);
@@ -3498,7 +3552,7 @@ netdev_dpdk_offload_classify(struct netdev_rte_port *rte_port,
     netdev_dpdk_offload_fill_cls_info(rte_port, cls_info, match, actions, actions_len);
 
     /* some scenario we cannot support */
-    if (cls_info->actions.valid) {
+    if (!cls_info->actions.valid) {
         return -1;
     }
 
@@ -3579,8 +3633,9 @@ netdev_dpdk_offload_add_recirc_patterns(struct flow_data *fdata,
     const struct flow *masks = &match->wc.masks;
 
     /* find available hw_id for recirc_id */
+    bool peek = false;
     if (netdev_dpdk_get_recirc_id_hw_id(cls_info->match.recirc_id,
-                                        &cls_info->match.hw_id) ==
+                                        &cls_info->match.hw_id, peek) ==
                                         INVALID_HW_ID) {
         return -1;
     }
@@ -3666,15 +3721,16 @@ static inline int
 netdev_dpdk_offload_get_hw_id(struct offload_item_cls_info *cls_info)
 {
     int ret =0;
+    bool peek = true;
     if (cls_info->actions.recirc_id) {
         if (netdev_dpdk_get_recirc_id_hw_id(cls_info->actions.recirc_id,
-                                        &cls_info->actions.hw_id) ==
+                                        &cls_info->actions.hw_id, peek) ==
                                         INVALID_HW_ID) {
             ret = -1;
         }
     } else {
         if (netdev_dpdk_get_port_id_hw_id(cls_info->actions.odp_port,
-                                        &cls_info->actions.hw_id) ==
+                                        &cls_info->actions.hw_id, peek) ==
                                         INVALID_HW_ID) {
             ret = -1;
         }
@@ -3927,9 +3983,6 @@ netdev_dpdk_offload_put_handle(struct netdev *netdev,
     if(netdev_dpdk_offload_set_group_id(rte_port, &cls_info, &flow_attr, workaround_needed)) {
         goto roll_back;
     }
-    if (cls_info.match.type == MATCH_OFFLOAD_TYPE_RECIRC) {
-        /* flow is going to be added to a recirc_id table. Update MAPPING table per port */
-    }
     /* handle miss in HW in CT need special handling */
     /* for all cases, we need to save all resources allocated */
     if (cls_info.actions.type == ACTION_OFFLOAD_TYPE_CT) {
@@ -3949,6 +4002,47 @@ netdev_dpdk_offload_put_handle(struct netdev *netdev,
     /* if fail goto roleback. */
     flow = netdev_rte_offload_flow(netdev, NULL, &patterns, &flow_actions,
                                        &flow_attr);
+
+    if (flow) {
+        bool add = true;
+        bool port;
+        uint32_t hwid;
+        /*
+         * If there was a recirc_id match (mapped to hw_id) -
+         * check if need to update the MAPPING table.
+         */
+        hwid  = cls_info.match.hw_id;
+        if (cls_info.match.type == MATCH_OFFLOAD_TYPE_RECIRC && hwid) {
+            /* 
+             * Flow is going to be added to a recirc_id table.
+             * Update MAPPING table per port.
+             */
+            port = false;
+            ret = netdev_rte_update_hwid_mapping(rte_port, 0, hwid, add, port);
+            if (ret) {
+                goto roll_back;
+            }
+        }
+
+        /*
+         * If there was an OUTPUT action (mapped to hw id) -
+         * check if need to update the MAPPING table.
+         */
+        port = true;
+        hwid = cls_info.actions.hw_id;
+        if (!cls_info.actions.recirc_id && hwid) {
+            /*
+             * Flow action is to output packet.
+             * Update MAPPING table for this port.
+             */
+            ret = netdev_rte_update_hwid_mapping(rte_port,
+                                                   cls_info.actions.odp_port,
+                                                   hwid, add, port);
+            if (ret) {
+                goto roll_back;
+            }
+        }
+    }
 
     /* failed, we try only mark rss, no actions */
 rss:
@@ -3994,13 +4088,6 @@ roll_back:
         netdev_dpdk_put_recirc_id_hw_id(cls_info.match.hw_id);
     }
 
-    if (cls_info.actions.hw_id != INVALID_HW_ID) {
-        if (cls_info.actions.recirc_id) {
-            netdev_dpdk_put_recirc_id_hw_id(cls_info.actions.hw_id);
-        } else {
-            netdev_dpdk_put_port_id_hw_id(cls_info.actions.hw_id);
-        }
-    }
     netdev_dpdk_del_miss_ctx(info->flow_mark);
     free_flow_patterns(&patterns);
     free_flow_actions(&flow_actions);
@@ -4071,7 +4158,7 @@ netdev_dpdk_ct_ctx_get_ref_outer_id(struct mark_to_miss_ctx_data *data,
 }
 
 static void
-fill_match(struct match *match, struct ct_flow_offload_item *item)
+fill_ct_match(struct match *match, struct ct_flow_offload_item *item)
 {
     memset(match, 0, sizeof *match);
     if (item->ct_ipv6) {
@@ -4147,7 +4234,7 @@ netdev_dpdk_offload_ct_session(struct mark_to_miss_ctx_data *data,
         VLOG_DBG("port %d has no rte_port", ct_offload1->odp_port);
         goto fail;
     }
-    fill_match(&match, ct_offload1);
+    fill_ct_match(&match, ct_offload1);
     /* Add flow to CT table */
     build_ctid(data->mark, dir1, false, &ctid);
     ret =  ct_add_rte_flow_offload(rte_port, &match, ct_offload1, &ctid,
@@ -4176,7 +4263,7 @@ netdev_dpdk_offload_ct_session(struct mark_to_miss_ctx_data *data,
         VLOG_DBG("port %d has no rte_port", ct_offload2->odp_port);
         goto fail;
     }
-    fill_match(&match, ct_offload2);
+    fill_ct_match(&match, ct_offload2);
     /* Add flow to CT table in the other direction */
     build_ctid(data->mark, dir2, false, &ctid);
     ret =  ct_add_rte_flow_offload(rte_port, &match, ct_offload2, &ctid,
@@ -4279,5 +4366,224 @@ netdev_dpdk_offload_ct_del(uint32_t mark)
     /* TODO - destroy rte_flows from tables -- DONE in netdev_dpdk_release_ct_flow()
      */
     return 0;
+}
+
+struct recirc_to_flow {
+    struct cmap_node node;
+    uint32_t hwid;
+    int refcnt;
+    struct rte_flow *rte_flow;
+};
+
+static void
+fill_hwid_match(uint32_t hwid, struct match *match)
+{
+    memset(match, 0, sizeof *match);
+    match->flow.recirc_id = hwid;
+    match->wc.masks.recirc_id = 0xFFFFFFFF;
+}
+
+static struct rte_flow *
+netdev_rte_create_hwid_flow(struct netdev *netdev, uint32_t hwid, uint16_t dpdk_port, bool port)
+{
+    int ret = 0;
+    struct match match;
+    fill_hwid_match(hwid, &match);
+    struct rte_flow_attr flow_attr = {
+        .group = MAPPING_TABLE_ID,
+        .priority = 0,
+        .ingress = 1,
+        .egress = 0,
+        .transfer = 1
+    };
+
+    struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
+
+    struct flow_items spec, mask;
+    memset(&spec, 0, sizeof spec);
+    memset(&mask, 0, sizeof mask);
+
+    /* Match on hwid. TODO - handle by setting register */
+    ret = add_flow_patterns(&patterns, &spec, &mask, &match);
+    if (ret) {
+        return NULL;
+    }
+    add_flow_pattern(&patterns, RTE_FLOW_ITEM_TYPE_END, NULL, NULL);
+
+    struct flow_actions actions = { .actions = NULL, .cnt = 0 };
+    struct rte_flow_action_jump jump;
+    struct rte_flow_action_port_id port_id;
+
+    if (port) {
+        /* OUTPUT to dpdk port ID */
+        port_id.id = dpdk_port;
+        port_id.original = 0;
+        netdev_rte_add_port_id_flow_action(&port_id, &actions);
+    } else {
+        /* Jump to recircid table */
+        netdev_rte_add_jump_flow_action(&jump, hwid, &actions);
+    }
+    add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_END, NULL);
+
+    struct rte_flow_error error;
+    struct rte_flow *flow;
+
+    flow = netdev_dpdk_rte_flow_create(netdev,
+                                       &flow_attr, patterns.items,
+                                       actions.actions, &error);
+    VLOG_DBG("eSwitch offload was %s", flow ? "succeeded" : "failed");
+    return flow;
+}
+
+static struct recirc_to_flow *
+netdev_rte_hwid_search(uint32_t hwid, struct cmap *map)
+{
+    size_t hash = hash_bytes(&hwid, sizeof hwid, 0);
+    struct recirc_to_flow *data;
+
+    CMAP_FOR_EACH_WITH_HASH (data, node, hash, map) {
+        if (hwid == data->hwid) {
+            return data;
+        }
+    }
+
+    return NULL;
+}
+
+static int
+netdev_rte_add_hwid_mapping(struct netdev_rte_port *rte_port,
+                            odp_port_t out_dp_port, uint32_t hwid, bool port)
+{
+    struct cmap *map = port ? &rte_port->portid_to_rte : &rte_port->recirc_to_rte;
+    struct recirc_to_flow *rtf =
+        netdev_rte_hwid_search(hwid, map);
+    if (port && rtf) {
+        return 0;
+    }
+    if (!rtf) {
+        uint16_t dpdk_port_id = 0;
+        if (port) {
+            struct netdev_rte_port *out_rte_port =
+                netdev_rte_port_search(out_dp_port, &port_map);
+            if (!out_rte_port) {
+                return 0;
+            }
+            dpdk_port_id = out_rte_port->dpdk_port_id;
+        }
+        /* Create a DPDK flow for this hwid in the MAPPING table */
+        struct rte_flow *flow =
+            netdev_rte_create_hwid_flow(rte_port->netdev, hwid,
+                                        dpdk_port_id, port);
+        if (!flow) {
+            VLOG_ERR("Mapping table: rte_flow == NULL\n");
+            return -1;
+        }
+
+        /* Insert a new hwid entry with the flow and refcnt = 1. */
+        size_t hash = hash_bytes(&hwid, sizeof hwid, 0);
+        rtf = xzalloc(sizeof *rtf);
+        if (!rtf) {
+            VLOG_WARN("Failed to add recirc to flow, (ENOMEM)");
+            return -1;
+        }
+        rtf->hwid = hwid;
+        rtf->refcnt = 1;
+        rtf->rte_flow = flow;
+        cmap_insert(map,
+            CONST_CAST(struct cmap_node *, &rtf->node), hash);
+    } else {
+        /* Increase refcnt */
+        rtf->refcnt++;
+    }
+
+    return 0;
+}
+
+static int
+netdev_rte_del_hwid_mapping(struct netdev_rte_port *rte_port, uint32_t hwid,
+                            bool port)
+{
+    int ret = 0;
+    struct rte_flow *flow;
+    struct cmap *map = port ? &rte_port->portid_to_rte : &rte_port->recirc_to_rte;
+    struct recirc_to_flow *rtf =
+        netdev_rte_hwid_search(hwid, map);
+    if (!rtf) {
+        /* No error if mapping is deleted before it was inserted */
+        return 0;
+    }
+    /* Decrease refcnt */
+    rtf->refcnt--;
+    if (rtf->refcnt) {
+        return 0;
+    }
+
+    /* If refcnt equals 0 - delete this entry and destroy the rte flow */
+    flow = rtf->rte_flow;
+    rtf->rte_flow = NULL;
+    size_t hash = hash_bytes(&hwid, sizeof hwid, 0);
+    cmap_remove(map,
+            CONST_CAST(struct cmap_node *, &rtf->node), hash);
+    free(rtf);
+    struct rte_flow_error error;
+    ret = netdev_dpdk_rte_flow_destroy(rte_port->netdev, flow, &error);
+    if (ret) {
+        VLOG_ERR("rte flow destroy error: %u : message :"
+                " %s\n", error.type, error.message);
+    }
+    return ret;
+}
+
+static int
+netdev_rte_update_hwid_mapping(struct netdev_rte_port *rte_port,
+                               odp_port_t out_dp_port,
+                               uint32_t hwid, bool add, bool port)
+{
+    int ret = 0;
+    struct netdev_rte_port *data;
+    VLOG_ERR("%s: Update hwid %u add=%d port=%d\n", __func__, hwid, add, port);
+
+    if (port) {
+        goto port_handling;
+    } else {
+        goto recirc_handling;
+    }
+
+port_handling:
+    CMAP_FOR_EACH (data, node, &port_map) {
+        /* Go over all DPDK ports */ 
+        if (data->rte_port_type == RTE_PORT_TYPE_DPDK) {
+            if (add) {
+                ret |= netdev_rte_add_hwid_mapping(data, out_dp_port,
+                                                  hwid, port);
+            } else {
+                ret |= netdev_rte_del_hwid_mapping(data, hwid, port);
+            }
+        }
+    }
+    return ret;
+
+recirc_handling:
+    if (rte_port->rte_port_type == RTE_PORT_TYPE_VXLAN) {
+        CMAP_FOR_EACH (data, node, &port_map) {
+            /* For vport type consier all uplink DPDK types. */
+            if ((data->rte_port_type == RTE_PORT_TYPE_DPDK) &&
+                (netdev_dpdk_is_uplink_port(data->netdev))) {
+                if (add) {
+                    ret |= netdev_rte_add_hwid_mapping(data, 0, hwid, port);
+                } else {
+                    ret |= netdev_rte_del_hwid_mapping(data, hwid, port);
+                }
+            }
+        }
+    }
+    if (rte_port->rte_port_type == RTE_PORT_TYPE_DPDK) {
+        if (add) {
+            ret |= netdev_rte_add_hwid_mapping(rte_port, 0, hwid, port);
+        } else {
+            ret |= netdev_rte_del_hwid_mapping(rte_port, hwid, port);
+        }
+    }
+    return ret;
 }
 
