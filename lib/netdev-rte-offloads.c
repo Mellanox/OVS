@@ -695,17 +695,6 @@ add_flow_patterns(struct flow_patterns *patterns,
     return 0;
 }
 
-#ifdef INCLUDE_UNUSED_FUNCTIONS
-static void
-netdev_rte_add_jmp_flow_action(uint32_t table_id,
-                               struct rte_flow_action_jump *jump,
-                               struct flow_actions *actions)
-{
-    jump->group = table_id;
-    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_JUMP, jump);
-}
-#endif
-
 /* When we add a jump to vport table we add a new table.
  * We add a default rule with low priority that if we fail
  * to match on table we set a sepical mark and go to SW.
@@ -909,31 +898,6 @@ add_jump_to_port_id_action(odp_port_t target_port,
     netdev_rte_add_port_id_flow_action(port_id_action, flow_actions);
     return 0;
 }
-
-#ifdef INCLUDE_UNUSED_FUNCTIONS
-static int
-get_output_port(const struct nlattr *a,
-                struct rte_flow_action_port_id *port_id)
-{
-    odp_port_t odp_port;
-    struct netdev_rte_port *output_rte_port;
-
-    /* Output port should be hardware port number. */
-    odp_port = nl_attr_get_odp_port(a);
-    output_rte_port = netdev_rte_port_search(odp_port, &port_map);
-
-    if (!output_rte_port) {
-        VLOG_DBG("No rte port was found for odp_port %u",
-                 odp_to_u32(odp_port));
-        return EINVAL;
-    }
-
-    port_id->id = output_rte_port->dpdk_port_id;
-    port_id->original = 0;
-
-    return 0;
-}
-#endif
 
 static int netdev_dpdk_get_recirc_id_hw_id(uint32_t recirc_id, uint32_t *hw_id);
 static int netdev_dpdk_get_port_id_hw_id(uint32_t port_id, uint32_t *hw_id);
@@ -2991,18 +2955,6 @@ netdev_dpdk_tun_id_get_ref(ovs_be32 ip_dst, ovs_be32 ip_src,
     return outer_id;
 }
 
-#ifdef INCLUDE_UNUSED_FUNCTIONS
-/* Unref and a tun. if refcnt is zero we free the outer_id.
- * Every offloaded flow that used outer_id should unref it when del called.
- */
-static void
-netdev_dpdk_tun_id_unref(ovs_be32 ip_dst, ovs_be32 ip_src,
-                                       ovs_be64 tun_id)
-{
-    netdev_dpdk_tun_outer_id_unref(ip_dst, ip_src, tun_id);
-}
-#endif
-
 static void
 netdev_dpdk_outer_id_unref(uint32_t outer_id)
 {
@@ -3157,35 +3109,6 @@ netdev_dpdk_save_flow_miss_ctx(uint32_t mark, uint32_t hw_id, bool is_port,
     return 0;
 }
 
-#ifdef INCLUDE_UNUSED_FUNCTIONS
-/* TODO - connect this call in the right place */
-static int
-netdev_dpdk_save_ct_miss_ctx(uint32_t mark, bool flow,
-                        uint32_t ct_mark, uint16_t ct_zone,
-                        uint8_t  ct_state, uint16_t  outer_id, bool reply)
-{
-    int idx;
-    struct mark_to_miss_ctx_data * data = netdev_dpdk_get_flow_miss_ctx(mark);
-    if (!data) {
-        return -1;
-    }
-
-    data->type = MARK_PREPROCESS_CT;
-    data->mark = mark;
-    data->ct.ct_mark = ct_mark;
-    data->ct.ct_zone = ct_zone;
-    data->ct.ct_state = ct_state;
-    idx = reply ? CT_OFFLOAD_DIR_REP : CT_OFFLOAD_DIR_INIT;
-    if (data->ct.rteflow[idx]) {
-        VLOG_WARN("flow already exist");
-        return -1;
-    }
-    data->ct.rteflow[idx] = flow;
-    data->ct.outer_id[idx] = outer_id;
-    return 0;
-}
-#endif
-
 static void
 netdev_dpdk_del_miss_ctx(uint32_t mark)
 {
@@ -3213,60 +3136,6 @@ netdev_dpdk_tun_recover_meta_data(struct dp_packet *p, uint32_t outer_id)
         p->md.tunnel.tun_id = data->tun_id;
     }
 }
-
-#ifdef INCLUDE_UNUSED_FUNCTIONS
-static void
-netdev_dpdk_ct_recover_metadata(struct dp_packet *p,
-                           struct  mark_to_miss_ctx_data *ct_ctx)
-{
-    int dir = CT_OFFLOAD_DIR_INIT;
-    if (p->md.in_port.odp_port == ct_ctx->ct.odp_port[CT_OFFLOAD_DIR_REP]) {
-        dir = CT_OFFLOAD_DIR_REP;
-    }
-    if (ct_ctx->ct.outer_id) {
-        netdev_dpdk_tun_recover_meta_data(p, ct_ctx->ct.outer_id[dir]);
-    }
-
-    /*uint32_t recirc_id;*/
-    p->md.ct_state = ct_ctx->ct.ct_state;
-    p->md.ct_zone  = ct_ctx->ct.ct_zone;
-    p->md.ct_mark  = ct_ctx->ct.ct_mark;
-    p->md.ct_state = ct_ctx->ct.ct_state;
-}
-#endif
-
-#ifdef INCLUDE_UNUSED_FUNCTIONS
-void
-netdev_dpdk_offload_preprocess(struct dp_packet *p)
-{
-    uint32_t mark;
-    struct mark_to_miss_ctx_data *ct_ctx;
-
-    if (!dp_packet_has_flow_mark(p, &mark)) {
-        return;
-    }
-
-    if (netdev_dpdk_find_miss_ctx(mark, &ct_ctx)) {
-        switch (ct_ctx->type) {
-            case MARK_PREPROCESS_CT:
-                netdev_dpdk_ct_recover_metadata(p,ct_ctx);
-                break;
-            case MARK_PREPROCESS_FLOW_CT:
-                /* TODO - preprocess flow CT */
-                VLOG_WARN("not supported yet");
-                break;
-            case MARK_PREPROCESS_FLOW:
-                /* TODO - preprocess flow (no CT) */
-                VLOG_WARN("not supported yet");
-                break;
-            case MARK_PREPROCESS_VXLAN:
-                /* TODO - preprocess VXLAN */
-                VLOG_WARN("not supported yet");
-                break;
-        }
-    }
-}
-#endif
 
 struct hw_table_id_node {
     struct cmap_node node;
@@ -3406,14 +3275,6 @@ netdev_dpdk_put_port_id_hw_id(uint32_t port_id)
 {
     netdev_dpdk_put_hw_id(port_id, true);
 }
-
-#ifdef INCLUDE_UNUSED_FUNCTIONS
-static int
-netdev_dpdk_get_sw_id_from_hw_id(uint16_t hw_id)
-{
-    return hw_table_id.hw_id_to_sw[hw_id];
-}
-#endif
 
 enum {
   MATCH_OFFLOAD_TYPE_UNDEFINED    =  0,
@@ -4116,46 +3977,6 @@ roll_back:
     return NULL;
 }
 
-#ifdef INCLUDE_UNUSED_FUNCTIONS
-static int
-netdev_dpdk_ct_flow_add_patterns(struct flow_patterns  *patterns,
-                                 struct ct_flow_offload_item *ct_offload)
-{
-    /* TODO match on zone */
-    /* TODO add 5-tuple -- DONE in a call from ct_put() */
-
-    return 0;
-}
-#endif
-
-#ifdef INCLUDE_UNUSED_FUNCTIONS
-static int
-netdev_dpdk_ct_flow_add_actions(struct flow_actions *actions,
-                                struct ct_flow_offload_item *ct_offload)
-{
-    /* TODO : jump to mapping table -- DONE in ct_add_rte_flow_offload() */
-    return 0;
-}
-#endif
-
-#ifdef INCLUDE_UNUSED_FUNCTIONS
-int netdev_dpdk_create_ct_flow(struct ct_flow_offload_item *ct_offload)
-{
-    struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
-    struct flow_actions  actions = { .actions = NULL, .cnt = 0 };
-    if (!netdev_dpdk_ct_flow_add_patterns(&patterns, ct_offload)) {
-        goto roll_back;
-    }
-     
-    if (!netdev_dpdk_ct_flow_add_actions(&actions, ct_offload)) {
-        goto roll_back;
-    }
-
-roll_back:
-    return -1;
-}
-#endif
-
 static inline enum ct_offload_dir
 netdev_dpdk_offload_ct_opposite_dir(enum ct_offload_dir dir)
 {
@@ -4172,97 +3993,6 @@ netdev_dpdk_offload_ct_dup(struct ct_flow_offload_item *ct_offload)
     return data;
 }
 
-#ifdef INCLUDE_UNUSED_FUNCTIONS
-static int
-netdev_dpdk_ct_add_ipv4_5tuple_pattern(struct flow_patterns *patterns,
-                                        struct ovs_key_ct_tuple_ipv4 *ct_match)
-{
-    struct flow_items {
-        struct rte_flow_item_ipv4 ipv4;
-        union {
-            struct rte_flow_item_tcp  tcp;
-            struct rte_flow_item_udp  udp;
-            struct rte_flow_item_icmp icmp;
-        };
-    } spec, mask;
-
-    spec.ipv4.hdr.next_proto_id   = ct_match->ipv4_proto;
-    spec.ipv4.hdr.src_addr        = ct_match->ipv4_src;
-    spec.ipv4.hdr.dst_addr        = ct_match->ipv4_dst;
-
-    /* TODO: this can be unified with other matches, providing mask */
-    mask.ipv4.hdr.type_of_service = 0;
-    mask.ipv4.hdr.time_to_live    = 0;
-    mask.ipv4.hdr.next_proto_id   = 0;
-    mask.ipv4.hdr.src_addr        = 0xffffffff;
-    mask.ipv4.hdr.dst_addr        = 0xffffffff;
-
-    add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV4,
-                     &spec.ipv4, &mask.ipv4);
-
-    switch (ct_match->ipv4_proto) {
-    case IPPROTO_TCP:
-        spec.tcp.hdr.src_port  = ct_match->src_port;
-        spec.tcp.hdr.dst_port  = ct_match->dst_port;
-        /* TODO: need to skip rst/fin */
-        /*spec.tcp.hdr.tcp_flags = ntohs(match->flow.tcp_flags) & 0xff;*/
-
-        mask.tcp.hdr.src_port  = 0xffff;
-        mask.tcp.hdr.dst_port  = 0xffff;
-        mask.tcp.hdr.data_off  = 0;
-        mask.tcp.hdr.tcp_flags = 0; /* FLAGS & 0xff */
-        mask.ipv4.hdr.next_proto_id = 0;
-
-        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_TCP,
-                     &spec.tcp, &mask.tcp);
-    break;
-
-    case IPPROTO_UDP:
-        spec.udp.hdr.src_port = ct_match->src_port;
-        spec.udp.hdr.dst_port = ct_match->dst_port;
-
-        mask.udp.hdr.src_port = 0xffff;
-        mask.udp.hdr.dst_port = 0xffff;
-
-        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_UDP,
-                         &spec.udp, &mask.udp);
-
-        /* proto == UDP and ITEM_TYPE_UDP, thus no need for proto match. */
-        break;
-
-    case IPPROTO_SCTP:
-        /* We don't support in CT */
-        return -1;
-       break;
-
-    case IPPROTO_ICMP:
-       /* We don't support, might need to */
-        return -1;
-        break;
-    }
-
-    add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_END, NULL, NULL);
-    return 0;
-}
-#endif
-
-#ifdef INCLUDE_UNUSED_FUNCTIONS
-static int
-netdev_dpdk_add_jump_to_mapping_actions(struct flow_actions *actions
-                                        /*, rte_port */)
-{
-    struct rte_flow_action_jump jump = {0};
-    /* TODO: fill the right mapping table id */
-    /* TODO: since we hhave one, better to just alloc 
-     * one per port on start, no need for ref count! */
-    int hw_map_tbl_id = 0; 
-    jump.group = hw_map_tbl_id;
-    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_JUMP, &jump);
-    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_END, NULL);
-    return 0;
-}
-#endif
-
 static inline void
 netdev_dpdk_reset_patterns(struct flow_patterns *patterns)
 {
@@ -4278,40 +4008,6 @@ netdev_dpdk_reset_actions(struct flow_actions *actions)
     actions->cnt = 0;
     actions->actions = NULL;
 }
-
-#ifdef INCLUDE_UNUSED_FUNCTIONS
-static struct rte_flow *
-netdev_dpdk_ct_build_session_offload(struct ct_flow_offload_item *item, 
-                                     uint16_t outer_id)
-{
-    struct rte_flow * flow = NULL;
-    int ret = 0;
-    struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
-    struct flow_actions  actions = { .actions = NULL, .cnt = 0 };
-
-    if (item->ct_ipv6) {
-        /* TODO: offload ipv6 */
-        VLOG_ERR("IPV6 not suppored yet");
-        return NULL;
-    } else {
-        ret |= netdev_dpdk_ct_add_ipv4_5tuple_pattern(&patterns,
-                                           &item->ct_match.ipv4);
-        /* TODO: if outer_id != INVALID we need to set register */
-        ret |= netdev_dpdk_add_jump_to_mapping_actions(&actions);
-    }
-
-    if (!ret) {
-    /* offload here
-    * offload the flow to the in_port if not a VXLAN , if
-    * it is vxlan port, we need to offload to pf!!!!
-    * TODO: offload rte flow in rte_port and with mark */
-    }
-    netdev_dpdk_reset_patterns(&patterns);
-    netdev_dpdk_reset_actions(&actions);
-
-    return flow;
-}
-#endif
 
 static int
 netdev_dpdk_ct_ctx_get_ref_outer_id(struct mark_to_miss_ctx_data *data,
