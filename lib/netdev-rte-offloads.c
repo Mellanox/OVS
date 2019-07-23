@@ -972,6 +972,32 @@ static int
 netdev_offloads_flow_del(const ovs_u128 *ufid, struct cmap *cmap);
 
 int
+netdev_rte_offloads_flow_restore(OVS_UNUSED struct netdev *netdev,
+                                 OVS_UNUSED uint32_t flow_mark ,
+                                 OVS_UNUSED struct dp_packet *packet,
+                                 struct nlattr *actions, size_t actions_len,
+                                 size_t *offloaded_actions_len)
+{
+    unsigned int hw_actions_len = 0;
+    const struct nlattr *a;
+    unsigned int left;
+
+    NL_ATTR_FOR_EACH_UNSAFE (a, left, actions, actions_len) {
+        int type = nl_attr_type(a);
+
+        /* TODO - this should be generic by quering the PMD capabilities*/
+        if (type == OVS_ACTION_ATTR_CT) {
+            break;
+        }
+        hw_actions_len += a->nla_len;
+    }
+
+    if (offloaded_actions_len && hw_actions_len < actions_len)
+        *offloaded_actions_len = hw_actions_len;
+    return 0;
+}
+
+int
 netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
                              struct nlattr *actions, size_t actions_len,
                              const ovs_u128 *ufid, struct offload_info *info,
