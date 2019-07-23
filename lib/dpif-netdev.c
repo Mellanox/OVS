@@ -6622,16 +6622,27 @@ static inline void
 packet_batch_per_flow_execute(struct packet_batch_per_flow *batch,
                               struct dp_netdev_pmd_thread *pmd)
 {
-    struct dp_netdev_actions *actions;
     struct dp_netdev_flow *flow = batch->flow;
+    struct dp_netdev_actions *updated_actions;
+    struct dp_netdev_actions *actions;
+    size_t updated_actions_size;
 
-    dp_netdev_flow_used(flow, batch->array.count, batch->byte_count,
-                        batch->tcp_flags, pmd->ctx.now / 1000);
+    /* update the stats only if the flow was not fully offloaded */
+    if (!flow->is_hwol)
+        dp_netdev_flow_used(flow, batch->array.count, batch->byte_count,
+                            batch->tcp_flags, pmd->ctx.now / 1000);
 
+    /* skip the actions that were executed by the HW */
     actions = dp_netdev_flow_get_actions(flow);
+    updated_actions = actions;
+    updated_actions_size = actions->size;
+    if (flow->offloaded_actions_len) {
+        updated_actions_size -= flow->offloaded_actions_len;
+        updated_actions += (flow->offloaded_actions_len / sizeof (struct nlattr ));
+    }
 
     dp_netdev_execute_actions(pmd, &batch->array, true, &flow->flow,
-                              actions->actions, actions->size);
+                              updated_actions->actions, updated_actions_size);
 }
 
 static inline void
