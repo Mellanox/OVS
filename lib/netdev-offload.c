@@ -256,6 +256,20 @@ netdev_flow_put(struct netdev *netdev, struct match *match,
 }
 
 int
+netdev_hw_miss_packet_recover(struct netdev *netdev,
+                              uint32_t flow_miss_ctx_id,
+                              struct dp_packet *packet)
+{
+    const struct netdev_flow_api *flow_api =
+        ovsrcu_get(const struct netdev_flow_api *, &netdev->flow_api);
+
+    return (flow_api && flow_api->hw_miss_packet_recover)
+            ? flow_api->hw_miss_packet_recover(netdev, flow_miss_ctx_id,
+                                               packet)
+            : EOPNOTSUPP;
+}
+
+int
 netdev_flow_get(struct netdev *netdev, struct match *match,
                 struct nlattr **actions, const ovs_u128 *ufid,
                 struct dpif_flow_stats *stats,
