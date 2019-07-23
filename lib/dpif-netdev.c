@@ -573,8 +573,11 @@ struct dp_netdev_flow {
     struct ovs_refcount ref_cnt;
 
     bool dead;
+
+    /* HW offload state */
     uint32_t mark;               /* Unique flow mark assigned to a flow */
     bool is_hwol;                /* true if flow is fully offloaded */
+    size_t offloaded_actions_len;
 
     /* Statistics. */
     struct dp_netdev_flow_stats stats;
@@ -6735,6 +6738,24 @@ smc_lookup_batch(struct dp_netdev_pmd_thread *pmd,
     pmd_perf_update_counter(&pmd->perf_stats, PMD_STAT_SMC_HIT, n_smc_hit);
 }
 
+static inline struct dp_netdev_flow *
+process_partial_offload(struct dp_netdev_pmd_thread *pmd, odp_port_t port_no,
+                           uint32_t mark, struct dp_packet *packet)
+{
+    struct dp_netdev_port *port = dp_netdev_lookup_port(pmd->dp, port_no);
+    struct dp_netdev_flow *flow = NULL;
+    struct dp_netdev_actions* actions = NULL;
+
+    flow = mark_to_flow_find(pmd, mark);
+    if (flow)
+        actions = dp_netdev_flow_get_actions(flow);
+
+    netdev_flow_restore_state(port->netdev, mark, packet,
+                              (actions? actions->actions: NULL),
+                              (actions? actions->size : 0),
+                              (flow? &flow->offloaded_actions_len : 0));
+    return flow;
+}
 /* Try to process all ('cnt') the 'packets' using only the datapath flow cache
  * 'pmd->flow_cache'. If a flow is not found for a packet 'packets[i]', the
  * miniflow is copied into 'keys' and the packet pointer is moved at the
@@ -6799,7 +6820,7 @@ dfc_processing(struct dp_netdev_pmd_thread *pmd,
 
         if ((*recirc_depth_get() == 0) &&
             dp_packet_has_flow_mark(packet, &mark)) {
-            flow = mark_to_flow_find(pmd, mark);
+            flow = process_partial_offload(pmd, port_no, mark, packet);
             if (OVS_LIKELY(flow)) {
                 tcp_flags = parse_tcp_flags(packet);
                 if (OVS_LIKELY(batch_enable)) {

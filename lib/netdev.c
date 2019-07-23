@@ -2207,6 +2207,21 @@ netdev_flow_put(struct netdev *netdev, struct match *match,
 }
 
 int
+netdev_flow_restore_state(struct netdev *netdev,  uint32_t flow_mark,
+                             struct dp_packet *packet,
+                             struct nlattr *actions, size_t actions_len,
+                             size_t *offloaded_actions_len)
+{
+    const struct netdev_class *class = netdev->netdev_class;
+
+    return (class->flow_restore_state
+            ? class->flow_restore_state(netdev, flow_mark, packet,
+                                        actions, actions_len,
+                                        offloaded_actions_len)
+            : EOPNOTSUPP);
+}
+
+int
 netdev_flow_get(struct netdev *netdev, struct match *match,
                 struct nlattr **actions, const ovs_u128 *ufid,
                 struct dpif_flow_stats *stats,

@@ -866,6 +866,16 @@ struct netdev_class {
                     size_t actions_len, const ovs_u128 *ufid,
                     struct offload_info *info, struct dpif_flow_stats *);
 
+    /* Restore the flow/packet metadata state for continued processing
+     * in software.
+     * 'actions' are in netlink format.
+     * 'offloaded_actions_len' is populated according to the offloaded actions
+     * Return 0 if successful, otherwise returns a positive errno value. */
+    int (*flow_restore_state)(struct netdev *,  uint32_t flow_mark,
+                              struct dp_packet *,
+                              struct nlattr *actions, size_t actions_len,
+                              size_t *offloaded_actions_len);
+
     /* Queries a flow specified by ufid on netdev.
      * Fills output buffer as 'wbuffer' in flow_dump_next, which
      * needs to be be pre allocated.
