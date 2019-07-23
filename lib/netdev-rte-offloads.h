@@ -54,6 +54,10 @@ int netdev_rte_offloads_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
 int netdev_rte_offloads_flow_stats_get(struct netdev *netdev,
                                        const ovs_u128 *ufid,
                                        struct dpif_flow_stats *stats);
+int netdev_rte_offloads_flow_restore(struct netdev *,  uint32_t flow_mark,
+                                     struct dp_packet *,
+                                     struct nlattr *actions, size_t actions_len,
+                                     size_t *offloaded_actions_len);
 void netdev_rte_offloads_init(void);
 int netdev_rte_offloads_hw_pr_fwd(int queue_id, int relay_id);
 void netdev_rte_offloads_hw_pr_remove(int relay_id);
@@ -74,7 +78,8 @@ int netdev_dpdk_offload_ct_del(uint32_t mark);
 #define DPDK_FLOW_OFFLOAD_API                   \
     .flow_put = netdev_rte_offloads_flow_put,   \
     .flow_del = netdev_rte_offloads_flow_del,   \
-    .flow_stats_get = netdev_rte_offloads_flow_stats_get
+    .flow_stats_get = netdev_rte_offloads_flow_stats_get, \
+    .flow_restore_state = netdev_rte_offloads_flow_restore
 
 #define DPDK_ETH_PORT_ID_INVALID    RTE_MAX_ETHPORTS
 
