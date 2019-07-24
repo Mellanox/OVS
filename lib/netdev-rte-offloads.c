@@ -1197,8 +1197,8 @@ add_vport_vxlan_flow_patterns(struct flow_patterns *patterns,
         add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV4, &spec->ipv4,
                          &mask->ipv4);
 
-        ovs_be64 tun_id = match->flow.tunnel.tun_id;
-        ovs_be64 tun_id_mask = match->wc.masks.tunnel.tun_id;
+        //ovs_be64 tun_id = match->flow.tunnel.tun_id;
+        //ovs_be64 tun_id_mask = match->wc.masks.tunnel.tun_id;
         // TODO: add_flow_pattern(patterns, RTE_FLOW_ITEM_MD, (tun_id & tun_id_mask));
 
         /* Save proto for L4 protocol setup */
@@ -1502,7 +1502,7 @@ ct_add_rte_flow_offload(struct netdev_rte_port *rte_port,
                                                            &ipv6_dst, &port_src,
                                                            &port_dst, &actions);
         }
-   } 
+    }
     netdev_rte_add_count_flow_action(&count, &actions);
     netdev_rte_add_jump_flow_action(&jump, MAPPING_TABLE_ID, &actions);
     add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_END, NULL);
@@ -2731,48 +2731,49 @@ enum {
     REG_MAX = 5
 };
 
+/*
 static int reg_indexs[] = {2,2,3,4,2};
 static int reg_mask  [] = {2,2,3,4,2};
 static int reg_shift [] = {0,16,0,0,24};
-
+*/
 static void
 netdev_dpdk_add_pattern_match_reg(struct flow_patterns *patterns OVS_UNUSED,
                                   int reg_type,
-                                  uint32_t val)
+                                  uint32_t val OVS_UNUSED)
 {
     if (reg_type > REG_MAX ) {
         VLOG_ERR("reg type %d is out of range",reg_type);
         return;
     }
 
+    /* TODO: once API is ready should put here the real spec and mask
     struct flow_items {
         struct rte_flow_item_tag tag;
     } spec, mask;
 
-    /* TODO: once API is ready should put here the real spec and mask */
     spec.tag.index = reg_indexs[reg_type];
     spec.tag.data   = val << reg_shift[reg_type];
-    spec.tag.mask   = reg_mask[reg_type];
+    spec.tag.mask   = reg_mask[reg_type];*/
 }
 
 static int
 netdev_dpdk_add_action_set_reg(struct flow_actions *actions OVS_UNUSED,
                                int reg_type,
-                               uint32_t val)
+                               uint32_t val OVS_UNUSED)
 {
     if (reg_type > REG_MAX ) {
         VLOG_ERR("reg type %d is out of range",reg_type);
         return -1;
     }
 
+    /* TODO: once API is ready should put here the real spec and mask
     struct flow_items {
         struct rte_flow_action_set_tag tag;
     } spec, mask;
 
-    /* TODO: once API is ready should put here the real spec and mask */
     spec.tag.index = reg_indexs[reg_type];
     spec.tag.data   = val << reg_shift[reg_type];
-    spec.tag.mask   = reg_mask[reg_type];
+    spec.tag.mask   = reg_mask[reg_type];*/
 
     return 0;
 }
