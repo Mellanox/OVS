@@ -2234,10 +2234,10 @@ netdev_rte_offloads_update_relay(uint16_t relay_id,
 static void
 parse_packet_fields(struct rte_mbuf *m, uint16_t port_id)
 {
-    struct ipv4_hdr *ipv4_hdr;
-    struct ipv6_hdr *ipv6_hdr;
-    struct ether_hdr *eth_hdr;
-    struct tcp_hdr *tcp_hdr;
+    struct rte_ipv4_hdr *ipv4_hdr;
+    struct rte_ipv6_hdr *ipv6_hdr;
+    struct rte_ether_hdr *eth_hdr;
+    struct rte_tcp_hdr *tcp_hdr;
     uint32_t l2_len = 0;
     uint32_t l3_len = 0;
     uint32_t l4_len = 0;
@@ -2249,26 +2249,26 @@ parse_packet_fields(struct rte_mbuf *m, uint16_t port_id)
     if (m->pkt_len < 1400)
         return;
 
-    eth_hdr = rte_pktmbuf_mtod(m, struct ether_hdr *);
-    l2_len = sizeof(struct ether_hdr);
+    eth_hdr = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
+    l2_len = sizeof(struct rte_ether_hdr);
 
     switch (rte_be_to_cpu_16(eth_hdr->ether_type)) {
-    case ETHER_TYPE_IPv4:
-        ipv4_hdr = (struct ipv4_hdr *) ((char *)eth_hdr + l2_len);
+    case RTE_ETHER_TYPE_IPV4:
+        ipv4_hdr = (struct rte_ipv4_hdr *) ((char *)eth_hdr + l2_len);
         l3_len = (ipv4_hdr->version_ihl & 0x0f) * 4;
         l4_proto_id = ipv4_hdr->next_proto_id;
         if (l4_proto_id == IPPROTO_TCP) {
-            tcp_hdr = (struct tcp_hdr *)((char *)ipv4_hdr + l3_len);
+            tcp_hdr = (struct rte_tcp_hdr *)((char *)ipv4_hdr + l3_len);
             l4_len = (tcp_hdr->data_off & 0xf0) >> 2;
             ol_flags |= (PKT_TX_IPV4 | PKT_TX_IP_CKSUM);
         }
         break;
-    case ETHER_TYPE_IPv6:
-        ipv6_hdr = (struct ipv6_hdr *) ((char *)eth_hdr + l2_len);
+    case RTE_ETHER_TYPE_IPV6:
+        ipv6_hdr = (struct rte_ipv6_hdr *) ((char *)eth_hdr + l2_len);
         l4_proto_id = ipv6_hdr->proto;
         if (l4_proto_id == IPPROTO_TCP) {
-            l3_len = sizeof(struct ipv6_hdr);
-            tcp_hdr = (struct tcp_hdr *)((char *)ipv6_hdr + l3_len);
+            l3_len = sizeof(struct rte_ipv6_hdr);
+            tcp_hdr = (struct rte_tcp_hdr *)((char *)ipv6_hdr + l3_len);
             l4_len = (tcp_hdr->data_off & 0xf0) >> 2;
             ol_flags |= PKT_TX_IPV6;
         }
