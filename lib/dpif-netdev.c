@@ -2203,7 +2203,7 @@ ct_item_key_fill(struct ct_to_mark_key *key, struct ct_flow_offload_item *item)
 {
     key->zone = item->zone;
     key->is_ipv6 = item->ct_ipv6;
-    if (item->ct_ipv6) {
+    if (!item->ct_ipv6) {
         key->ct_orig_tuple.ipv4 = item->ct_key.ipv4;
     } else {
         key->ct_orig_tuple.ipv6 = item->ct_key.ipv6;
@@ -2627,34 +2627,74 @@ dp_ct_alloc_ct_offload(struct ct_flow_offload_item *ct_offload,
     return offload;
 }
 
-#ifdef INCLUDE_UNUSED_FUNCTIONS
-static void ct_offload_print_log(struct ct_flow_offload_item *item)
+static void ct_offload_dump_ipv4_item(struct ds *s,
+                                      struct ct_flow_offload_item *item)
 {
-    struct ovs_key_ct_tuple_ipv4 * ipv4 = &item->ct_key.ipv4;
-    VLOG_ERR("key:"IP_FMT":%d "IP_FMT":%d",IP_ARGS(ipv4->ipv4_src),
-                                ntohs(ipv4->src_port),
-                                IP_ARGS(ipv4->ipv4_dst),
-                                ntohs(ipv4->dst_port));
+    struct ovs_key_ct_tuple_ipv4 *ipv4;
+
+    ipv4 = &item->ct_key.ipv4;
+    ds_put_format(s, "    key:"IP_FMT":%d -> "IP_FMT":%d\n",
+                  IP_ARGS(ipv4->ipv4_src), ntohs(ipv4->src_port),
+                  IP_ARGS(ipv4->ipv4_dst), ntohs(ipv4->dst_port));
+
     ipv4 = &item->ct_match.ipv4;
-
-    VLOG_ERR("match:"IP_FMT":%d "IP_FMT":%d",IP_ARGS(ipv4->ipv4_src),
-            ntohs(ipv4->src_port),
-            IP_ARGS(ipv4->ipv4_dst),
-            ntohs(ipv4->dst_port));
-
-    ipv4 = &item->ct_modify.ipv4;
+    ds_put_format(s, "    match:"IP_FMT":%d -> "IP_FMT":%d\n",
+                  IP_ARGS(ipv4->ipv4_src), ntohs(ipv4->src_port),
+                  IP_ARGS(ipv4->ipv4_dst), ntohs(ipv4->dst_port));
 
     if (item->mod_flags) {
-        VLOG_ERR("nat flags are on");
+        ipv4 = &item->ct_modify.ipv4;
+        ds_put_format(s, "    nat:"IP_FMT":%d -> "IP_FMT":%d\n",
+                      IP_ARGS(ipv4->ipv4_src), ntohs(ipv4->src_port),
+                      IP_ARGS(ipv4->ipv4_dst), ntohs(ipv4->dst_port));
+    } else {
+        ds_put_cstr(s, "    nat flags are off\n");
     }
-
-    VLOG_ERR("nat:"IP_FMT":%d "IP_FMT":%d",IP_ARGS(ipv4->ipv4_src),
-            ntohs(ipv4->src_port),
-            IP_ARGS(ipv4->ipv4_dst),
-            ntohs(ipv4->dst_port));
-
 }
-#endif
+
+static void ct_offload_dump_ipv6_item(struct ds *s,
+                                      struct ct_flow_offload_item *item)
+{
+    char src_addr_str[INET6_ADDRSTRLEN];
+    char dst_addr_str[INET6_ADDRSTRLEN];
+
+    struct ovs_key_ct_tuple_ipv6 *ipv6;
+
+    ipv6 = &item->ct_key.ipv6;
+    ipv6_string_mapped(src_addr_str, (struct in6_addr *)&ipv6->ipv6_src);
+    ipv6_string_mapped(dst_addr_str, (struct in6_addr *)&ipv6->ipv6_dst);
+    ds_put_format(s, "    key:%s-%d -> %s-%d\n",
+                  src_addr_str, ntohs(ipv6->src_port),
+                  dst_addr_str, ntohs(ipv6->dst_port));
+
+    ipv6 = &item->ct_match.ipv6;
+    ipv6_string_mapped(src_addr_str, (struct in6_addr *)&ipv6->ipv6_src);
+    ipv6_string_mapped(dst_addr_str, (struct in6_addr *)&ipv6->ipv6_dst);
+    ds_put_format(s, "    match:%s-%d -> %s-%d\n",
+                  src_addr_str, ntohs(ipv6->src_port),
+                  dst_addr_str, ntohs(ipv6->dst_port));
+
+    if (item->mod_flags) {
+        ipv6 = &item->ct_modify.ipv6;
+        ipv6_string_mapped(src_addr_str, (struct in6_addr *)&ipv6->ipv6_src);
+        ipv6_string_mapped(dst_addr_str, (struct in6_addr *)&ipv6->ipv6_dst);
+        ds_put_format(s, "    nat:%s-%d -> %s-%d\n",
+                      src_addr_str, ntohs(ipv6->src_port),
+                      dst_addr_str, ntohs(ipv6->dst_port));
+    } else {
+        ds_put_cstr(s, "    nat flags are off\n");
+    }
+}
+
+static void ct_offload_dump_item(struct ds *s,
+                                 struct ct_flow_offload_item *item)
+{
+    if (!item->ct_ipv6) {
+        ct_offload_dump_ipv4_item(s, item);
+    } else {
+        ct_offload_dump_ipv6_item(s, item);
+    }
+}
 
 /**
  * callback
@@ -2704,6 +2744,16 @@ dp_ct_offload_add(struct ct_flow_offload_item *item)
         ret = -1;
     }
     ret = netdev_dpdk_offload_ct_put(item, mark);
+
+    if (VLOG_IS_DBG_ENABLED()) {
+        struct ds s;
+
+        ds_init(&s);
+        ct_offload_dump_item(&s, item);
+        VLOG_DBG("mark %d\n%sret=%d", mark, ds_cstr(&s), ret);
+        ds_destroy(&s);
+    }
+
     return ret;
 }
 
@@ -2711,19 +2761,26 @@ static int
 dp_ct_offload_del(struct ct_flow_offload_item *item)
 {
     uint32_t mark;
-    int ret = 0;
+    int ret = -1;
+    struct ds s;
+
+    ds_init(&s);
+    ct_offload_dump_item(&s, item);
 
     mark = ct_to_mark_find(item);
     if (mark == INVALID_FLOW_MARK) {
-        VLOG_WARN("CT del with no mark");
-        return ret;
-    } else {
-        ct_to_mark_disassociate(item);
-        flow_mark_free(mark);
+        VLOG_WARN("CT del with no mark\n%s", ds_cstr(&s));
+        goto out;
     }
 
-    VLOG_ERR("mark %d returned to poll",mark);
+    ct_to_mark_disassociate(item);
+    flow_mark_free(mark);
+    VLOG_DBG("mark %d returned to pool\n%s", mark, ds_cstr(&s));
 
+    ret = netdev_dpdk_offload_ct_del(mark);
+
+out:
+    ds_destroy(&s);
     return ret;
 }
 
