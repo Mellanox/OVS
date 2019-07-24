@@ -75,6 +75,12 @@ enum rte_port_type {
 /*
  * A mapping from dp_port to flow parameters.
  */
+enum ufid_to_rte_type_e {
+    UFID_TO_RTE_OFFLOADS = 0,
+    UFID_TO_RTE_CT,
+    UFID_TO_RTE_TYPE_NUM
+};
+
 struct netdev_rte_port {
     struct cmap_node node; /* Map by datapath port number. */
     odp_port_t dp_port; /* Datapath port number. */
@@ -84,9 +90,7 @@ struct netdev_rte_port {
     uint32_t table_id; /* Flow table id per related to this port. */
     uint16_t dpdk_num_queues; /* Number of dpdk queues of this port. */
     uint32_t exception_mark; /* Exception SW handling for this port type. */
-    struct cmap ufid_to_rte; /* flows id to dpdk rte flows */
-    struct cmap hwid_to_rte; /* HW id in mapping table to dpdk rte flows */
-    struct cmap ctid_to_rte; /* CT id in CT table to dpdk rte flows */
+    struct cmap ufid_to_rte[UFID_TO_RTE_TYPE_NUM]; /* flows id to dpdk rte flows */
     struct rte_flow *default_rte_flow[RTE_FLOW_MAX_TABLES];
     struct cmap_node mark_node;
 };
@@ -137,6 +141,8 @@ netdev_rte_port_set(struct netdev *netdev, odp_port_t dp_port,
                     enum rte_port_type port_type,
                     struct netdev_rte_port **rte_port)
 {
+    enum ufid_to_rte_type_e ufid_to_rte_type;
+
     *rte_port = netdev_rte_port_search(dp_port, &port_map);
     if (*rte_port) {
         VLOG_DBG("Rte_port for datapath port %d already exists.", dp_port);
@@ -150,9 +156,10 @@ netdev_rte_port_set(struct netdev *netdev, odp_port_t dp_port,
     size_t hash = hash_bytes(&dp_port, sizeof dp_port, 0);
     cmap_insert(&port_map,
                 CONST_CAST(struct cmap_node *, &(*rte_port)->node), hash);
-    cmap_init(&((*rte_port)->ufid_to_rte));
-    cmap_init(&((*rte_port)->hwid_to_rte));
-    cmap_init(&((*rte_port)->ctid_to_rte));
+    for (ufid_to_rte_type = 0; ufid_to_rte_type < UFID_TO_RTE_TYPE_NUM;
+         ufid_to_rte_type++) {
+        cmap_init(&((*rte_port)->ufid_to_rte[ufid_to_rte_type]));
+    }
 
 next:
     (*rte_port)->netdev = netdev;
@@ -968,9 +975,6 @@ err:
     return -1;
 }
 
-static int
-netdev_offloads_flow_del(const ovs_u128 *ufid, struct cmap *cmap);
-
 int
 netdev_rte_offloads_flow_restore(OVS_UNUSED struct netdev *netdev,
                                  OVS_UNUSED uint32_t flow_mark ,
@@ -1001,7 +1005,7 @@ int
 netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
                              struct nlattr *actions, size_t actions_len,
                              const ovs_u128 *ufid, struct offload_info *info,
-                             struct dpif_flow_stats *stats OVS_UNUSED)
+                             struct dpif_flow_stats *stats)
 {
     struct rte_flow *rte_flow /*, *rte_flow0*/ = NULL;
     int ret;
@@ -1022,11 +1026,11 @@ netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
      * Here destroy the old rte flow first before adding a new one.
      */
     struct ufid_hw_offload *ufid_hw_offload =
-            ufid_hw_offload_find(ufid, &rte_port->ufid_to_rte);
+            ufid_hw_offload_find(ufid, &rte_port->ufid_to_rte[UFID_TO_RTE_OFFLOADS]);
 
     if (ufid_hw_offload) {
         VLOG_DBG("got modification and destroying previous rte_flow");
-        ret = netdev_offloads_flow_del(ufid, &ufid_to_portid_map);
+        ret = netdev_rte_offloads_flow_del(netdev, ufid, stats);
         if (ret) {
             return ret;
         }
@@ -1040,7 +1044,7 @@ netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
         goto err;
     }
 
-    ufid_hw_offload_add(ufid_hw_offload, &rte_port->ufid_to_rte);
+    ufid_hw_offload_add(ufid_hw_offload, &rte_port->ufid_to_rte[UFID_TO_RTE_OFFLOADS]);
     ufid_to_portid_add(ufid, rte_port->dp_port, &ufid_to_portid_map);
 
     ret = netdev_rte_offloads_validate_flow(match, false, false);
@@ -1066,7 +1070,7 @@ netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
     return 0;
 
 err:
-    netdev_offloads_flow_del(ufid, &ufid_to_portid_map);
+    netdev_rte_offloads_flow_del(netdev, ufid, stats);
     return ret;
 }
 
@@ -1101,7 +1105,7 @@ netdev_rte_offloads_flow_stats_get(struct netdev *netdev OVS_UNUSED,
         ret = EINVAL;
         goto err;
     }
-    uho = ufid_hw_offload_find(ufid, &rte_port->ufid_to_rte);
+    uho = ufid_hw_offload_find(ufid, &rte_port->ufid_to_rte[UFID_TO_RTE_OFFLOADS]);
     if (!uho) {
         ret = EINVAL;
         goto err;
@@ -1149,7 +1153,8 @@ err:
 }
 
 static int
-netdev_offloads_flow_del(const ovs_u128 *ufid, struct cmap *cmap)
+netdev_offloads_flow_del(const ovs_u128 *ufid, struct cmap *cmap,
+                         enum ufid_to_rte_type_e ufid_to_rte_type)
 {
     odp_port_t port_num = ufid_to_portid_search(ufid, cmap);
 
@@ -1167,7 +1172,7 @@ netdev_offloads_flow_del(const ovs_u128 *ufid, struct cmap *cmap)
     }
 
     ufid_to_portid_remove(ufid, cmap);
-    ufid_hw_offload = ufid_hw_offload_remove(ufid, &rte_port->ufid_to_rte);
+    ufid_hw_offload = ufid_hw_offload_remove(ufid, &rte_port->ufid_to_rte[ufid_to_rte_type]);
     if (ufid_hw_offload) {
         netdev_rte_port_ufid_hw_offload_free(ufid_hw_offload);
     }
@@ -1180,7 +1185,7 @@ netdev_rte_offloads_flow_del(struct netdev *netdev OVS_UNUSED,
                              const ovs_u128 *ufid,
                              struct dpif_flow_stats *stats OVS_UNUSED)
 {
-    return netdev_offloads_flow_del(ufid, &ufid_to_portid_map);
+    return netdev_offloads_flow_del(ufid, &ufid_to_portid_map, UFID_TO_RTE_OFFLOADS);
 }
 
 static int
@@ -1188,7 +1193,15 @@ netdev_rte_vport_flow_del(struct netdev *netdev OVS_UNUSED,
                           const ovs_u128 *ufid,
                           struct dpif_flow_stats *stats OVS_UNUSED)
 {
-    return netdev_offloads_flow_del(ufid, &ufid_to_portid_map);
+    return netdev_offloads_flow_del(ufid, &ufid_to_portid_map, UFID_TO_RTE_OFFLOADS);
+}
+
+static int
+netdev_rte_ct_flow_del(struct netdev *netdev OVS_UNUSED,
+                       const ovs_u128 *ufid,
+                       struct dpif_flow_stats *stats OVS_UNUSED)
+{
+    return netdev_offloads_flow_del(ufid, &ctid_to_portid_map, UFID_TO_RTE_CT);
 }
 
 static int
@@ -1333,11 +1346,11 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
      * Here destroy the old rte flow first before adding a new one.
      */
     struct ufid_hw_offload *ufid_hw_offload =
-        ufid_hw_offload_find(ufid, &rte_port->ufid_to_rte);
+        ufid_hw_offload_find(ufid, &rte_port->ufid_to_rte[UFID_TO_RTE_OFFLOADS]);
 
     if (ufid_hw_offload) {
         VLOG_DBG("got modification and destroying previous rte_flow");
-        ufid_hw_offload_remove(ufid, &rte_port->ufid_to_rte);
+        ufid_hw_offload_remove(ufid, &rte_port->ufid_to_rte[UFID_TO_RTE_OFFLOADS]);
         ret = netdev_rte_port_ufid_hw_offload_free(ufid_hw_offload);
         if (ret < 0) {
             return ret;
@@ -1356,7 +1369,7 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
         return -1;
     }
 
-    ufid_hw_offload_add(ufid_hw_offload, &rte_port->ufid_to_rte);
+    ufid_hw_offload_add(ufid_hw_offload, &rte_port->ufid_to_rte[UFID_TO_RTE_OFFLOADS]);
     ufid_to_portid_add(ufid, rte_port->dp_port, &ufid_to_portid_map);
 
     struct netdev_rte_port *data;
@@ -1447,12 +1460,11 @@ ct_add_rte_flow_offload(struct netdev_rte_port *rte_port,
      * Here destroy the old rte flow first before adding a new one.
      */
     struct ufid_hw_offload *ctid_hw_offload =
-        ufid_hw_offload_find(ctid, &rte_port->ctid_to_rte);
+        ufid_hw_offload_find(ctid, &rte_port->ufid_to_rte[UFID_TO_RTE_CT]);
 
     if (ctid_hw_offload) {
         VLOG_DBG("got modification and destroying previous rte_flow");
-        ufid_hw_offload_remove(ctid, &rte_port->ctid_to_rte);
-        ret = netdev_rte_port_ufid_hw_offload_free(ctid_hw_offload);
+        ret = netdev_rte_ct_flow_del(rte_port->netdev, ctid, NULL);
         if (ret < 0) {
             return ret;
         }
@@ -1477,7 +1489,7 @@ ct_add_rte_flow_offload(struct netdev_rte_port *rte_port,
         return -1;
     }
 
-    ufid_hw_offload_add(ctid_hw_offload, &rte_port->ctid_to_rte);
+    ufid_hw_offload_add(ctid_hw_offload, &rte_port->ufid_to_rte[UFID_TO_RTE_CT]);
     ufid_to_portid_add(ctid, rte_port->dp_port, &ctid_to_portid_map);
 
     struct rte_flow_attr flow_attr = {
@@ -1686,7 +1698,7 @@ netdev_rte_port_clean_all(struct netdev_rte_port *rte_port)
     struct cmap_cursor cursor;
     struct ufid_hw_offload *data;
 
-    CMAP_CURSOR_FOR_EACH (data, node, &cursor, &rte_port->ufid_to_rte) {
+    CMAP_CURSOR_FOR_EACH (data, node, &cursor, &rte_port->ufid_to_rte[UFID_TO_RTE_OFFLOADS]) {
         netdev_rte_port_ufid_hw_offload_free(data);
     }
 }
@@ -3011,14 +3023,6 @@ enum mark_preprocess_type {
  */
 static struct cmap mark_to_ct_ctx = CMAP_INITIALIZER;
 
-struct mark_preprocess_info {
-    struct cmap mark_to_ct_ctx;
-};
-
-struct mark_preprocess_info mark_preprocess_info = {
-    .mark_to_ct_ctx = CMAP_INITIALIZER,
-};
-
 #define INVALID_IN_PORT 0xffff
 
 struct mark_to_miss_ctx_data {
@@ -3060,23 +3064,22 @@ netdev_dpdk_release_ct_flow(struct mark_to_miss_ctx_data *data,
 {
     ovs_u128 ctid;
 
-    if (data->ct.rteflow[dir]) {
+    if (data->ct.ct_offload[dir]) {
         build_ctid(data->mark, dir, false, &ctid);
-        netdev_offloads_flow_del(&ctid, &ctid_to_portid_map);
-        if (data->ct.ct_offload[dir]->has_nat) {
-            build_ctid(data->mark, dir, true, &ctid);
-            netdev_offloads_flow_del(&ctid, &ctid_to_portid_map);
+        netdev_rte_ct_flow_del(NULL, &ctid, NULL);
+        if (data->ct.ct_offload[dir]) {
+            if (data->ct.ct_offload[dir]->has_nat) {
+                build_ctid(data->mark, dir, true, &ctid);
+                netdev_rte_ct_flow_del(NULL, &ctid, NULL);
+            }
+            free(data->ct.ct_offload[dir]);
+            data->ct.ct_offload[dir] = NULL;
         }
-        data->ct.rteflow[dir] = false;
     }
     data->ct.odp_port[dir] = INVALID_IN_PORT;
     if (data->ct.outer_id[dir] != INVALID_OUTER_ID) {
         netdev_dpdk_outer_id_unref(data->ct.outer_id[dir]);
         data->ct.outer_id[dir] = INVALID_OUTER_ID;
-    }
-    if (data->ct.ct_offload[dir]) {
-        free(data->ct.ct_offload[dir]);
-        data->ct.ct_offload[dir] = NULL;
     }
 }
 
@@ -3087,7 +3090,7 @@ netdev_dpdk_find_miss_ctx(uint32_t mark, struct mark_to_miss_ctx_data **ctx)
     struct mark_to_miss_ctx_data *data;
 
     CMAP_FOR_EACH_WITH_HASH (data, node, hash,
-            &mark_preprocess_info.mark_to_ct_ctx) {
+            &mark_to_ct_ctx) {
         if (data->mark == mark) {
             *ctx = data;
             return true;
@@ -3143,7 +3146,7 @@ netdev_dpdk_del_miss_ctx(uint32_t mark)
     struct mark_to_miss_ctx_data *data;
 
     CMAP_FOR_EACH_WITH_HASH (data, node, hash,
-                      &mark_preprocess_info.mark_to_ct_ctx) {
+                      &mark_to_ct_ctx) {
         if (data->mark == mark) {
                 cmap_remove(&mark_to_ct_ctx,
                         CONST_CAST(struct cmap_node *, &data->node), hash);
@@ -4073,8 +4076,8 @@ fill_match(struct match *match, struct ct_flow_offload_item *item)
     memset(match, 0, sizeof *match);
     if (item->ct_ipv6) {
         /* Fill in ipv6 5-tuples */
+        match->flow.dl_type = htons(ETH_TYPE_IPV6);
         match->flow.nw_proto = item->ct_match.ipv6.ipv6_proto;
-        match->wc.masks.nw_proto = 0xFF;
         memcpy(&match->flow.ipv6_src,
                &item->ct_match.ipv6.ipv6_src,
                sizeof match->flow.ipv6_src);
@@ -4085,21 +4088,24 @@ fill_match(struct match *match, struct ct_flow_offload_item *item)
         memset(&match->wc.masks.ipv6_dst, 0xFF, sizeof match->wc.masks.ipv6_dst);
         match->flow.tp_src = item->ct_match.ipv6.src_port;
         match->flow.tp_dst = item->ct_match.ipv6.dst_port;
-        match->wc.masks.tp_src = 0xFFFF;
-        match->wc.masks.tp_dst = 0xFFFF;
     } else {
         /* Fill in ipv4 5-tuples */
+        match->flow.dl_type = htons(ETH_TYPE_IP);
         match->flow.nw_proto = item->ct_match.ipv4.ipv4_proto;
-        match->wc.masks.nw_proto = 0xFF;
         match->flow.nw_src = item->ct_match.ipv4.ipv4_src;
         match->flow.nw_dst = item->ct_match.ipv4.ipv4_dst;
         match->wc.masks.nw_src = 0xFFFFFFFF;
         match->wc.masks.nw_dst = 0xFFFFFFFF;
         match->flow.tp_src = item->ct_match.ipv4.src_port;
         match->flow.tp_dst = item->ct_match.ipv4.dst_port;
-        match->wc.masks.tp_src = 0xFFFF;
-        match->wc.masks.tp_dst = 0xFFFF;
     }
+    match->wc.masks.dl_type = 0xFFFF;
+    match->wc.masks.nw_proto = 0xFF;
+    if (match->flow.nw_proto == IPPROTO_TCP) {
+        match->wc.masks.tcp_flags = htons(TCP_RST | TCP_FIN);
+    }
+    match->wc.masks.tp_src = 0xFFFF;
+    match->wc.masks.tp_dst = 0xFFFF;
     match->flow.ct_zone = item->zone;
     match->wc.masks.ct_zone = 0xFFFF;
 }
@@ -4128,7 +4134,7 @@ netdev_dpdk_offload_ct_session(struct mark_to_miss_ctx_data *data,
         goto fail;
     }
 
-    if (!netdev_dpdk_ct_ctx_get_ref_outer_id(data, ct_offload1, ct_offload2)) {
+    if (netdev_dpdk_ct_ctx_get_ref_outer_id(data, ct_offload1, ct_offload2)) {
         goto fail;
     }
 
@@ -4240,23 +4246,19 @@ netdev_dpdk_offload_ct_put(struct ct_flow_offload_item *ct_offload,
         /* TODO: we should offload once on established. Roni - to advise how to check 'once' */
         netdev_dpdk_release_ct_flow(data, dir);
     }
+    data->ct.ct_offload[dir] = netdev_dpdk_offload_ct_dup(ct_offload);
 
     /* we offload only when we have both sides */
     /* this might need to change if we want to support single dir flow */
     /* but then we should define established differently */
     if (data->ct.ct_offload[dir_opp]) {
         struct ct_flow_offload_item *ct_off_opp = data->ct.ct_offload[dir_opp];
-        data->ct.ct_offload[dir_opp] = NULL;
 
-        if (!netdev_dpdk_offload_ct_session(data, ct_off_opp, ct_offload)) {
+        if (netdev_dpdk_offload_ct_session(data, ct_off_opp, ct_offload)) {
             free(ct_off_opp);
             return -1;
         }
         netdev_dpdk_offload_ct_ctx_update(data, ct_off_opp, ct_offload);
-        free(ct_off_opp);
-
-    } else {
-        data->ct.ct_offload[dir] = netdev_dpdk_offload_ct_dup(ct_offload);
     }
 
     return 0;
