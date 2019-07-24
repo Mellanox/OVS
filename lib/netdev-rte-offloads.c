@@ -2747,71 +2747,36 @@ netdev_rte_offloads_hw_pr_remove(int relay_id)
 /* Connection tracking code */
 
 /* TEMPORAL should be del once ready on dpdk */
-struct rte_flow_action_set_tag {
-       uint32_t data;
-       uint32_t mask;
-       uint8_t index;
-};
-
-struct rte_flow_item_tag {
-       uint32_t data;
-       uint32_t mask;
-       uint8_t index;
-};
-/* TEMPORAL should be del once ready on dpdk */
 
 enum {
-    REG_RECIRC_ID = 0,
-    REG_ZONE = 1,
-    REG_MARK =2 ,
-    REG_OUTER_ID =3,
-    REG_STATE = 4,
-    REG_MAX = 5
+    REG_IDX_RECIRC_ID = 0,
+    REG_IDX_CT_ZONE,
+    REG_IDX_CT_MARK,
+    REG_IDX_OUTER_ID,
+    REG_IDX_CT_STATE,
+    REG_IDX_NUM
 };
 
-/*
-static int reg_indexs[] = {2,2,3,4,2};
-static int reg_mask  [] = {2,2,3,4,2};
-static int reg_shift [] = {0,16,0,0,24};
-*/
 static void
 netdev_dpdk_add_pattern_match_reg(struct flow_patterns *patterns OVS_UNUSED,
-                                  int reg_type,
+                                  uint8_t reg_type,
                                   uint32_t val OVS_UNUSED)
 {
-    if (reg_type > REG_MAX ) {
+    if (reg_type >= REG_IDX_NUM) {
         VLOG_ERR("reg type %d is out of range",reg_type);
         return;
     }
-
-    /* TODO: once API is ready should put here the real spec and mask
-    struct flow_items {
-        struct rte_flow_item_tag tag;
-    } spec, mask;
-
-    spec.tag.index = reg_indexs[reg_type];
-    spec.tag.data   = val << reg_shift[reg_type];
-    spec.tag.mask   = reg_mask[reg_type];*/
 }
 
 static int
 netdev_dpdk_add_action_set_reg(struct flow_actions *actions OVS_UNUSED,
-                               int reg_type,
+                               uint8_t reg_type,
                                uint32_t val OVS_UNUSED)
 {
-    if (reg_type > REG_MAX ) {
+    if (reg_type >= REG_IDX_NUM) {
         VLOG_ERR("reg type %d is out of range",reg_type);
         return -1;
     }
-
-    /* TODO: once API is ready should put here the real spec and mask
-    struct flow_items {
-        struct rte_flow_action_set_tag tag;
-    } spec, mask;
-
-    spec.tag.index = reg_indexs[reg_type];
-    spec.tag.data   = val << reg_shift[reg_type];
-    spec.tag.mask   = reg_mask[reg_type];*/
 
     return 0;
 }
@@ -3594,7 +3559,7 @@ netdev_dpdk_offload_add_recirc_patterns(struct flow_data *fdata,
         if (cls_info->match.outer_id == INVALID_OUTER_ID) {
             return -1;
         }
-        netdev_dpdk_add_pattern_match_reg(patterns, REG_OUTER_ID,
+        netdev_dpdk_add_pattern_match_reg(patterns, REG_IDX_OUTER_ID,
                                           cls_info->match.outer_id);
     }
 
@@ -3605,16 +3570,16 @@ netdev_dpdk_offload_add_recirc_patterns(struct flow_data *fdata,
         masks->ct_zone  || masks->ct_mark) {
         /*TODO: replace with matching right register */
         if (masks->ct_state) {
-            netdev_dpdk_add_pattern_match_reg(patterns, REG_STATE,
+            netdev_dpdk_add_pattern_match_reg(patterns, REG_IDX_CT_STATE,
                                               match->flow.ct_state);
         }
         if (masks->ct_zone) {
-            netdev_dpdk_add_pattern_match_reg(patterns, REG_ZONE,
+            netdev_dpdk_add_pattern_match_reg(patterns, REG_IDX_CT_ZONE,
                                               match->flow.ct_zone);
         }
 
         if (masks->ct_mark) {
-            netdev_dpdk_add_pattern_match_reg(patterns, REG_MARK,
+            netdev_dpdk_add_pattern_match_reg(patterns, REG_IDX_CT_MARK,
                                               match->flow.ct_mark);
         }
     }
@@ -3717,7 +3682,7 @@ netdev_dpdk_offload_ct_actions(struct flow_data *fdata,
         return -1;
     }
     /* TODO: set hw_id in reg_recirc , will be used by mapping table */
-    if (!netdev_dpdk_add_action_set_reg(flow_actions, REG_RECIRC_ID,
+    if (!netdev_dpdk_add_action_set_reg(flow_actions, REG_IDX_RECIRC_ID,
                                         cls_info->actions.hw_id)) {
         return -1;
     }
