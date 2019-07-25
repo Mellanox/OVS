@@ -3634,6 +3634,7 @@ dp_netdev_flow_add(struct dp_netdev_pmd_thread *pmd,
     flow->batch = NULL;
     flow->mark = INVALID_FLOW_MARK;
     flow->is_hwol = false;
+    flow->offloaded_actions_len = 0;
     *CONST_CAST(unsigned *, &flow->pmd_id) = pmd->core_id;
     *CONST_CAST(struct flow *, &flow->flow) = match->flow;
     *CONST_CAST(ovs_u128 *, &flow->ufid) = *ufid;
