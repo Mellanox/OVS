@@ -497,6 +497,15 @@ add_flow_rss_action(struct flow_actions *actions,
     return rss_data;
 }
 
+enum {
+    REG_IDX_RECIRC_ID = 0,
+    REG_IDX_CT_ZONE,
+    REG_IDX_CT_MARK,
+    REG_IDX_OUTER_ID,
+    REG_IDX_CT_STATE,
+    REG_IDX_NUM,
+};
+
 struct flow_items {
     struct rte_flow_item_eth  eth;
     struct rte_flow_item_vlan vlan;
@@ -509,6 +518,8 @@ struct flow_items {
         struct rte_flow_item_sctp sctp;
         struct rte_flow_item_icmp icmp;
     };
+    struct rte_flow_item_tag tags[REG_IDX_NUM];
+    uint8_t num_tags;
 };
 
 struct flow_action_items {
@@ -2746,38 +2757,20 @@ netdev_rte_offloads_hw_pr_remove(int relay_id)
 
 /* Connection tracking code */
 
-/* TEMPORAL should be del once ready on dpdk */
-struct rte_flow_action_set_tag {
-       uint32_t data;
-       uint32_t mask;
-       uint8_t index;
-};
-
-struct rte_flow_item_tag {
-       uint32_t data;
-       uint32_t mask;
-       uint8_t index;
-};
-/* TEMPORAL should be del once ready on dpdk */
-
-enum {
-    REG_IDX_RECIRC_ID = 0,
-    REG_IDX_CT_ZONE,
-    REG_IDX_CT_MARK,
-    REG_IDX_OUTER_ID,
-    REG_IDX_CT_STATE,
-    REG_IDX_NUM
-};
-
 static void
-netdev_dpdk_add_pattern_match_reg(struct flow_patterns *patterns OVS_UNUSED,
-                                  uint8_t reg_type,
-                                  uint32_t val OVS_UNUSED)
+netdev_dpdk_add_pattern_match_reg(struct flow_items *spec,
+                                  struct flow_patterns *patterns,
+                                  uint8_t reg_type, uint32_t val)
 {
     if (reg_type >= REG_IDX_NUM) {
         VLOG_ERR("reg type %d is out of range",reg_type);
         return;
     }
+
+    spec->tags[spec->num_tags].index = reg_type;
+    spec->tags[spec->num_tags].data = val;
+    add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_TAG, &spec->tags[spec->num_tags], NULL);
+    spec->num_tags++;
 }
 
 static int
@@ -3571,7 +3564,8 @@ netdev_dpdk_offload_add_recirc_patterns(struct flow_data *fdata,
         if (cls_info->match.outer_id == INVALID_OUTER_ID) {
             return -1;
         }
-        netdev_dpdk_add_pattern_match_reg(patterns, REG_IDX_OUTER_ID,
+        netdev_dpdk_add_pattern_match_reg(&fdata->spec, patterns,
+                                          REG_IDX_OUTER_ID,
                                           cls_info->match.outer_id);
     }
 
@@ -3582,16 +3576,19 @@ netdev_dpdk_offload_add_recirc_patterns(struct flow_data *fdata,
         masks->ct_zone  || masks->ct_mark) {
         /*TODO: replace with matching right register */
         if (masks->ct_state) {
-            netdev_dpdk_add_pattern_match_reg(patterns, REG_IDX_CT_STATE,
+            netdev_dpdk_add_pattern_match_reg(&fdata->spec, patterns,
+                                              REG_IDX_CT_STATE,
                                               match->flow.ct_state);
         }
         if (masks->ct_zone) {
-            netdev_dpdk_add_pattern_match_reg(patterns, REG_IDX_CT_ZONE,
+            netdev_dpdk_add_pattern_match_reg(&fdata->spec, patterns,
+                                              REG_IDX_CT_ZONE,
                                               match->flow.ct_zone);
         }
 
         if (masks->ct_mark) {
-            netdev_dpdk_add_pattern_match_reg(patterns, REG_IDX_CT_MARK,
+            netdev_dpdk_add_pattern_match_reg(&fdata->spec, patterns,
+                                              REG_IDX_CT_MARK,
                                               match->flow.ct_mark);
         }
     }
