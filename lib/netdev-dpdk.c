@@ -4614,6 +4614,17 @@ dump_flow_action(struct rte_flow_action *actions, struct ds *s)
         }
     } else if (actions->type == RTE_FLOW_ACTION_TYPE_VXLAN_DECAP) {
         ds_put_cstr(s, "rte flow vxlan-decap action\n");
+    } else if (actions->type == RTE_FLOW_ACTION_TYPE_SET_TAG) {
+        const struct rte_flow_action_set_tag *set_tag = actions->conf;
+
+        ds_put_cstr(s, "rte flow set-tag action:\n");
+        if (set_tag) {
+            ds_put_format(s,
+                          "  Set-tag: index=%u, data=%u, mask=0x%08x\n",
+                          set_tag->index, set_tag->data, set_tag->mask);
+        } else {
+            ds_put_cstr(s, "  Set-tag = null\n");
+        }
     } else {
         ds_put_format(s, "rte flow UNKNOWN action (type=%d)\n", actions->type);
     }
