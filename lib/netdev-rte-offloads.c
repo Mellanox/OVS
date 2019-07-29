@@ -542,6 +542,8 @@ struct flow_action_items {
     struct rte_flow_action_port_id clone_output;
     struct rte_flow_action_count clone_count;
     struct rte_flow_action_raw_encap clone_raw_encap;
+    struct rte_flow_action_set_tag set_tags[REG_IDX_NUM];
+    uint8_t num_set_tags;
 };
 
 struct flow_data {
@@ -2808,14 +2810,22 @@ netdev_dpdk_add_pattern_match_reg(struct flow_items *spec,
 }
 
 static int
-netdev_dpdk_add_action_set_reg(struct flow_actions *actions OVS_UNUSED,
-                               uint8_t reg_type,
-                               uint32_t val OVS_UNUSED)
+netdev_dpdk_add_action_set_reg(struct flow_action_items *action_items,
+                               struct flow_actions *actions,
+                               uint8_t reg_type, uint32_t val)
 {
     if (reg_type >= REG_IDX_NUM) {
         VLOG_ERR("reg type %d is out of range",reg_type);
         return -1;
     }
+
+    action_items->set_tags[action_items->num_set_tags].index = reg_type;
+    action_items->set_tags[action_items->num_set_tags].data = val;
+    memset(&action_items->set_tags[action_items->num_set_tags].mask, 0xff,
+           sizeof action_items->set_tags[action_items->num_set_tags].mask);
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_TAG,
+                    &action_items->set_tags[action_items->num_set_tags]);
+    action_items->num_set_tags++;
 
     return 0;
 }
@@ -3745,8 +3755,9 @@ netdev_dpdk_offload_ct_actions(struct flow_data *fdata,
         return -1;
     }
     /* TODO: set hw_id in reg_recirc , will be used by mapping table */
-    if (!netdev_dpdk_add_action_set_reg(flow_actions, REG_IDX_RECIRC_ID,
-                                        cls_info->actions.hw_id)) {
+    if (netdev_dpdk_add_action_set_reg(&fdata->actions, flow_actions,
+                                       REG_IDX_RECIRC_ID,
+                                       cls_info->actions.hw_id)) {
         return -1;
     }
     /* TODO: add all actions until CT
