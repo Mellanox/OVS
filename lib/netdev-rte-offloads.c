@@ -510,7 +510,7 @@ add_flow_rss_action(struct flow_actions *actions,
 }
 
 enum {
-    REG_IDX_RECIRC_ID = 0,
+    REG_IDX_HW_ID = 0,
     REG_IDX_CT_ZONE,
     REG_IDX_CT_MARK,
     REG_IDX_OUTER_ID,
@@ -2793,20 +2793,21 @@ netdev_rte_offloads_hw_pr_remove(int relay_id)
 
 /* Connection tracking code */
 
-static void
+static int
 netdev_dpdk_add_pattern_match_reg(struct flow_items *spec,
                                   struct flow_patterns *patterns,
                                   uint8_t reg_type, uint32_t val)
 {
     if (reg_type >= REG_IDX_NUM) {
         VLOG_ERR("reg type %d is out of range",reg_type);
-        return;
+        return -1;
     }
 
     spec->tags[spec->num_tags].index = reg_type;
     spec->tags[spec->num_tags].data = val;
     add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_TAG, &spec->tags[spec->num_tags], NULL);
     spec->num_tags++;
+    return 0;
 }
 
 static int
@@ -3633,12 +3634,12 @@ netdev_dpdk_offload_add_recirc_patterns(struct flow_data *fdata,
                                           cls_info->match.outer_id);
     }
 
-    /* TODO: here we add match on outer_id */
+    /* TODO: here we add match on outer_id -- DONE */
     netdev_dpdk_offload_add_root_patterns(fdata, patterns, match);
     /*TODO: add following patterns: */
     if (masks->ct_state ||
         masks->ct_zone  || masks->ct_mark) {
-        /*TODO: replace with matching right register */
+        /*TODO: replace with matching right register -- DONE */
         if (masks->ct_state) {
             netdev_dpdk_add_pattern_match_reg(&fdata->spec, patterns,
                                               REG_IDX_CT_STATE,
@@ -3754,9 +3755,9 @@ netdev_dpdk_offload_ct_actions(struct flow_data *fdata,
     if (!netdev_dpdk_offload_get_hw_id(cls_info)) {
         return -1;
     }
-    /* TODO: set hw_id in reg_recirc , will be used by mapping table */
+    /* TODO: set hw_id in reg_recirc , will be used by mapping table -- DONE */
     if (netdev_dpdk_add_action_set_reg(&fdata->actions, flow_actions,
-                                       REG_IDX_RECIRC_ID,
+                                       REG_IDX_HW_ID,
                                        cls_info->actions.hw_id)) {
         return -1;
     }
@@ -3795,7 +3796,7 @@ netdev_dpdk_offload_output_actions(struct flow_data *fdata,
     /* TODO: add counter (DONE)*/
     netdev_rte_add_count_flow_action(&fdata->actions.count, flow_actions);
 
-    /* TODO: add all actions including output */
+    /* TODO: add all actions including output ??? */
     /* TODO: add output (DONE)*/
     return add_jump_to_port_id_action(cls_info->actions.odp_port,
                 flow_actions,
@@ -3838,7 +3839,7 @@ netdev_dpdk_offload_put_add_actions(struct netdev_rte_port *rte_port,
 
     switch (cls_info->actions.type) {
         case ACTION_OFFLOAD_TYPE_TNL_POP:
-            /*TODO: need to verify the POP is the only action here.*/
+            /*TODO: need to verify the POP is the only action here. ??? */
             ret = netdev_dpdk_offload_vxlan_actions(rte_port, fdata,
                                                  flow_actions,cls_info);
             break;
@@ -4366,20 +4367,9 @@ struct recirc_to_flow {
     struct rte_flow *rte_flow;
 };
 
-static void
-fill_hwid_match(uint32_t hwid, struct match *match)
-{
-    memset(match, 0, sizeof *match);
-    match->flow.recirc_id = hwid;
-    match->wc.masks.recirc_id = 0xFFFFFFFF;
-}
-
 static struct rte_flow *
 netdev_rte_create_hwid_flow(struct netdev *netdev, uint32_t hwid, uint16_t dpdk_port, bool port)
 {
-    int ret = 0;
-    struct match match;
-    fill_hwid_match(hwid, &match);
     struct rte_flow_attr flow_attr = {
         .group = MAPPING_TABLE_ID,
         .priority = 0,
@@ -4387,15 +4377,16 @@ netdev_rte_create_hwid_flow(struct netdev *netdev, uint32_t hwid, uint16_t dpdk_
         .egress = 0,
         .transfer = 1
     };
+    int ret = 0;
 
     struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
 
-    struct flow_items spec, mask;
+    struct flow_items spec;
     memset(&spec, 0, sizeof spec);
-    memset(&mask, 0, sizeof mask);
 
-    /* Match on hwid. TODO - handle by setting register */
-    ret = add_flow_patterns(&patterns, &spec, &mask, &match);
+    /* Match on hwid by setting RECIRC_ID register */
+    ret = netdev_dpdk_add_pattern_match_reg(&spec, &patterns,
+                                            REG_IDX_HW_ID, hwid);
     if (ret) {
         return NULL;
     }
