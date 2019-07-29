@@ -4494,6 +4494,25 @@ dump_flow_pattern(struct rte_flow_item *item, struct ds *s)
         } else {
             ds_put_cstr(s, "  Mask = null\n");
         }
+    } else if (item->type == RTE_FLOW_ITEM_TYPE_TAG) {
+        const struct rte_flow_item_tag *tag_spec = item->spec;
+        const struct rte_flow_item_tag *tag_mask = item->mask;
+
+        ds_put_cstr(s, "rte flow tag pattern:\n");
+        if (tag_spec) {
+            ds_put_format(s,
+                          "  Spec: index=%u, data=%u\n",
+                          tag_spec->index, tag_spec->data);
+        } else {
+            ds_put_cstr(s, "  Spec = null\n");
+        }
+        if (tag_mask) {
+            ds_put_format(s,
+                          "  Mask: index=%u, data=%u\n",
+                          tag_mask->index, tag_mask->data);
+        } else {
+            ds_put_cstr(s, "  Mask = null\n");
+        }
     } else {
         ds_put_format(s, "rte flow UNKNOWN pattern (type=%d)\n", item->type);
     }
