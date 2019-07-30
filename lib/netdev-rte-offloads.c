@@ -3769,13 +3769,12 @@ netdev_dpdk_offload_ct_actions(struct flow_data *fdata,
     netdev_rte_add_mark_flow_action(&fdata->actions.mark, flow_mark, flow_actions);
     netdev_rte_add_meta_flow_action(&fdata->actions.meta, flow_mark, flow_actions);
 
-    /*TODO: add counter -- DONE */
     netdev_rte_add_count_flow_action(&fdata->actions.count, flow_actions);
     /* translate recirc_id or port_id to hw_id */
     if (netdev_dpdk_offload_get_hw_id(cls_info)) {
-        VLOG_ERR("%s: failed to call get_hw_id in line %d\n", __func__, __LINE__);
         return -1;
     }
+
     /* TODO: set hw_id in reg_recirc , will be used by mapping table -- DONE */
     if (netdev_dpdk_add_action_set_reg(&fdata->actions, flow_actions,
                                        REG_IDX_HW_ID,
