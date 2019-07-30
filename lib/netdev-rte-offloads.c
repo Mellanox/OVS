@@ -3759,8 +3759,8 @@ netdev_dpdk_offload_ct_actions(struct flow_data *fdata,
         netdev_rte_add_decap_flow_action(flow_actions);
     }
 
-    /*TODO: set mark cls_info->mark -- DONE */
     netdev_rte_add_mark_flow_action(&fdata->actions.mark, flow_mark, flow_actions);
+    netdev_rte_add_meta_flow_action(&fdata->actions.meta, flow_mark, flow_actions);
 
     /*TODO: add counter -- DONE */
     netdev_rte_add_count_flow_action(&fdata->actions.count, flow_actions);
