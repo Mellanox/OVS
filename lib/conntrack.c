@@ -1373,6 +1373,93 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
                    &conn_for_expectation);
 }
 
+static void
+conntrack_swap_tuple_ipv4(struct ovs_key_ct_tuple_ipv4 *tuple)
+{
+    struct ovs_key_ct_tuple_ipv4 swapped_tuple = {
+        .ipv4_src = tuple->ipv4_dst,
+        .ipv4_dst = tuple->ipv4_src,
+        .src_port = tuple->dst_port,
+        .dst_port = tuple->src_port,
+        .ipv4_proto = tuple->ipv4_proto,
+    };
+    memcpy(tuple, &swapped_tuple, sizeof *tuple);
+}
+
+static void
+conntrack_off_fill_ipv4_nat(struct ct_flow_offload_item *item,
+                            struct dp_packet *packet,
+                            bool reply)
+{
+    const struct ip_header *l3 = dp_packet_l3(packet);
+    struct ovs_key_ct_tuple_ipv4 *match_init = &item->ct_key.ipv4;
+    struct ovs_key_ct_tuple_ipv4 match, *tuple, modify;
+
+    tuple = &match;
+    memcpy(tuple, match_init, sizeof *tuple);
+    if (reply) {
+        conntrack_swap_tuple_ipv4(tuple);
+        modify.ipv4_src = tuple->ipv4_src;
+        modify.ipv4_dst = tuple->ipv4_dst;
+        modify.src_port = tuple->src_port;
+        modify.dst_port = tuple->dst_port;
+    } else {
+        modify.ipv4_src = get_16aligned_be32(&l3->ip_src);
+        modify.ipv4_dst = get_16aligned_be32(&l3->ip_dst);
+        modify.src_port = 0;
+        modify.dst_port = 0;
+    }
+
+    if (get_16aligned_be32(&l3->ip_src) != tuple->ipv4_src) {
+        VLOG_DBG("NAT, change src IP "IP_FMT" from "IP_FMT,
+                 IP_ARGS(get_16aligned_be32(&l3->ip_src)),
+                 IP_ARGS(tuple->ipv4_src));
+        item->ct_modify.ipv4.ipv4_src = modify.ipv4_src;
+        item->mod_flags |= CT_OFFLOAD_MODIFY_SRC_IP;
+    }
+    if (get_16aligned_be32(&l3->ip_dst) != tuple->ipv4_dst) {
+        VLOG_DBG("NAT, change dst IP "IP_FMT" from "IP_FMT,
+                 IP_ARGS(get_16aligned_be32(&l3->ip_dst)),
+                 IP_ARGS(tuple->ipv4_dst));
+        item->ct_modify.ipv4.ipv4_dst = modify.ipv4_dst;
+        item->mod_flags |= CT_OFFLOAD_MODIFY_DST_IP;
+    }
+    if (tuple->ipv4_proto == IPPROTO_TCP) {
+        const struct tcp_header *th = dp_packet_l4(packet);
+
+        if (th->tcp_src != tuple->src_port) {
+            VLOG_DBG("NAT, change src port %u from %u",
+                     ntohs(th->tcp_src), ntohs(tuple->src_port));
+            item->ct_modify.ipv4.src_port = (modify.src_port)
+                                            ? tuple->src_port : th->tcp_src;
+            item->mod_flags |= CT_OFFLOAD_MODIFY_SRC_PORT;
+        }
+        if (th->tcp_dst != tuple->dst_port) {
+            VLOG_DBG("NAT, change dst port %u from %u",
+                     ntohs(th->tcp_dst), ntohs(tuple->dst_port));
+            item->ct_modify.ipv4.dst_port = (modify.dst_port)
+                                            ? tuple->dst_port : th->tcp_dst;
+            item->mod_flags |= CT_OFFLOAD_MODIFY_DST_PORT;
+        }
+    } else if (tuple->ipv4_proto == IPPROTO_UDP) {
+        const struct udp_header *uh = dp_packet_l4(packet);
+
+        if (uh->udp_src != tuple->src_port) {
+            VLOG_DBG("NAT, change src port %u from %u",
+                     ntohs(uh->udp_src), ntohs(tuple->src_port));
+            item->ct_modify.ipv4.src_port = (modify.src_port)
+                                            ? tuple->src_port : uh->udp_src;
+            item->mod_flags |= CT_OFFLOAD_MODIFY_SRC_PORT;
+        }
+        if (uh->udp_dst != tuple->dst_port) {
+            VLOG_DBG("NAT, change dst port %u from %u",
+                     ntohs(uh->udp_dst), ntohs(tuple->dst_port));
+            item->ct_modify.ipv4.dst_port = (modify.dst_port)
+                                            ? tuple->dst_port : uh->udp_dst;
+            item->mod_flags |= CT_OFFLOAD_MODIFY_DST_PORT;
+        }
+    }
+}
 
 static void
 conntrack_off_fill_nat(struct ct_flow_offload_item *item,
@@ -1380,50 +1467,10 @@ conntrack_off_fill_nat(struct ct_flow_offload_item *item,
                        bool reply)
 {
     if (item->ct_ipv6) {
-        VLOG_DBG("IPV6 not supported yet");
+        VLOG_DBG("CT_NAT for IPV6 is not supported yet");
     } else {
-        const struct ip_header *l3 = dp_packet_l3(packet);
-        struct ovs_key_ct_tuple_ipv4 * tuple = &item->ct_key.ipv4;
-        if (reply) {
-            if (get_16aligned_be32(&l3->ip_src) != tuple->ipv4_dst) {
-                VLOG_DBG("have a nat, chnage src "IP_FMT" to "IP_FMT, IP_ARGS(
-                         get_16aligned_be32(&l3->ip_src)),
-                         IP_ARGS(tuple->ipv4_dst));
-                item->ct_modify.ipv4.ipv4_src = tuple->ipv4_dst;
-                item->mod_flags |= CT_OFFLOAD_MODIFY_SRC_IP;
-            }
-            if (get_16aligned_be32(&l3->ip_dst) != tuple->ipv4_src) {
-                VLOG_DBG("have a nat, chnage dst "IP_FMT" to "IP_FMT, IP_ARGS(
-                           get_16aligned_be32(&l3->ip_dst)),
-                            IP_ARGS(tuple->ipv4_src));
-                item->ct_modify.ipv4.ipv4_dst = tuple->ipv4_src;
-                item->mod_flags |= CT_OFFLOAD_MODIFY_DST_IP;
-            }
-
-
-        } else {
-            if (get_16aligned_be32(&l3->ip_src) != tuple->ipv4_src) {
-                VLOG_DBG("have a nat, chnage src "IP_FMT" from "IP_FMT,
-                        IP_ARGS( get_16aligned_be32(&l3->ip_src)),
-                        IP_ARGS(tuple->ipv4_src));
-
-                item->ct_modify.ipv4.ipv4_src =
-                            get_16aligned_be32(&l3->ip_src);
-                item->mod_flags |= CT_OFFLOAD_MODIFY_SRC_IP;
-            }
-            if (get_16aligned_be32(&l3->ip_dst) != tuple->ipv4_dst) {
-                VLOG_DBG("have a nat, chnage dst "IP_FMT" from "IP_FMT,
-                        IP_ARGS( get_16aligned_be32(&l3->ip_dst)),
-                        IP_ARGS(tuple->ipv4_dst));
-                item->ct_modify.ipv4.ipv4_dst =
-                            get_16aligned_be32(&l3->ip_dst);
-                item->mod_flags |= CT_OFFLOAD_MODIFY_DST_IP;
-            }
-
-        }
+        conntrack_off_fill_ipv4_nat(item, packet, reply);
     }
-
-
 }
 
 static void
