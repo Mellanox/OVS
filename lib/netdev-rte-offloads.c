@@ -959,6 +959,13 @@ netdev_rte_offloads_validate_flow(const struct match *match, bool tun_offload)
         goto err;
     }
 
+    /* TODO: check why this test is required */
+/*    if (!ct_offload && (masks->ct_state || masks->ct_nw_proto ||
+        masks->ct_zone  || masks->ct_mark     ||
+        !ovs_u128_is_zero(masks->ct_label))) {
+        goto err;
+    }*/
+
     if (masks->conj_id || masks->actset_output) {
         goto err;
     }
