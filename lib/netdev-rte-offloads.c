@@ -850,17 +850,17 @@ netdev_rte_offload_flow(struct netdev *netdev,
                         struct flow_actions *actions,
                         const struct rte_flow_attr *flow_attr)
 {
-    struct rte_flow *flow = NULL;
+    struct rte_flow *offloaded_flow = NULL;
     struct rte_flow_error error;
 
-    flow = netdev_dpdk_rte_flow_create(netdev, flow_attr, patterns->items,
+    offloaded_flow = netdev_dpdk_rte_flow_create(netdev, flow_attr, patterns->items,
                                        actions->actions, &error);
-    if (!flow) {
+    if (!offloaded_flow) {
         VLOG_ERR("%s: rte flow create offload error: %u : message : %s\n",
                 netdev_get_name(netdev), error.type, error.message);
     }
 
-    return flow;
+    return offloaded_flow;
 }
 
 static struct rte_flow *
