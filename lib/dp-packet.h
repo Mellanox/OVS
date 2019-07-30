@@ -571,6 +571,18 @@ dp_packet_has_flow_mark(const struct dp_packet *p, uint32_t *mark)
     return false;
 }
 
+static inline bool
+dp_packet_has_flow_meta(const struct dp_packet *p, uint32_t *meta)
+{
+    if (p->mbuf.ol_flags & (PKT_RX_METADATA | PKT_TX_METADATA)) {
+        *meta = p->mbuf.metadata;
+        return true;
+    }
+
+    return false;
+}
+
+
 static inline void
 dp_packet_set_flow_mark(struct dp_packet *p, uint32_t mark)
 {

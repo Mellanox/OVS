@@ -4596,6 +4596,17 @@ dump_flow_action(struct rte_flow_action *actions, struct ds *s)
         } else {
             ds_put_cstr(s, "  Mark = null\n");
         }
+    } else if (actions->type == RTE_FLOW_ACTION_TYPE_SET_META) {
+            const struct rte_flow_action_set_meta *meta = actions->conf;
+
+            ds_put_cstr(s, "rte flow meta action:\n");
+            if (meta) {
+                ds_put_format(s,
+                              "  meta: data=%d mask=%x\n",
+                              meta->data,meta->mask);
+            } else {
+                ds_put_cstr(s, "  meta = null\n");
+            }
     } else if (actions->type == RTE_FLOW_ACTION_TYPE_RAW_ENCAP) {
         const struct rte_flow_action_raw_encap *raw_encap = actions->conf;
         char encap_str[1000];
