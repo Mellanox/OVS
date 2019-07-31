@@ -39,3 +39,4 @@ DPDK Support
    /topics/dpdk/qos
    /topics/dpdk/jumbo-frames
    /topics/dpdk/memory
+   /topics/dpdk/vdpa

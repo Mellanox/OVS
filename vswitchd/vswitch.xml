@@ -2671,6 +2671,13 @@
             </p>
           </dd>
 
+          <dt><code>dpdkvdpa</code></dt>
+          <dd>
+            The dpdk vDPA port allows forwarding bi-directional traffic between
+            SR-IOV virtual functions (VFs) and VirtIO devices in virtual
+            machines (VMs).
+          </dd>
+      
         </dl>
       </column>
     </group>
@@ -3216,6 +3223,24 @@ ovs-vsctl add-port br0 p0 -- set Interface p0 type=patch options:peer=p1 \
           The value specifies the path to the socket associated with a vHost
           User client mode device that has been or will be created by QEMU.
           Only supported by dpdkvhostuserclient interfaces.
+        </p>
+      </column>
+
+      <column name="options" key="vdpa-socket-path"
+              type='{"type": "string"}'>
+        <p>
+          The value specifies the path to the socket associated with a VDPA
+          port that will be created by QEMU.
+          Only supported by dpdkvdpa interfaces.
+        </p>
+      </column>
+
+      <column name="options" key="vdpa-accelerator-devargs"
+              type='{"type": "string"}'>
+        <p>
+          The value specifies the PCI address associated with the virtual
+          function.
+          Only supported by dpdkvdpa interfaces.
         </p>
       </column>
 

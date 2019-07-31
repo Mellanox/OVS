@@ -45,6 +45,7 @@ v2.13.0 - 14 Feb 2020
      * Add hardware offload support for output, drop, set of MAC, IPv4 and
        TCP/UDP ports actions (experimental).
      * Add experimental support for TSO.
+     * 'dpdkvdpa' port type.
    - RSTP:
      * The rstp_statistics column in Port table will only be updated every
        stats-update-interval configured in Open_vSwitch table.
