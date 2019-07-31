@@ -1462,12 +1462,127 @@ conntrack_off_fill_ipv4_nat(struct ct_flow_offload_item *item,
 }
 
 static void
+conntrack_swap_tuple_ipv6(struct ovs_key_ct_tuple_ipv6 *tuple)
+{
+    struct ovs_key_ct_tuple_ipv6 swapped_tuple;
+
+    memcpy(&swapped_tuple.ipv6_src, &tuple->ipv6_dst, sizeof tuple->ipv6_src);
+    memcpy(&swapped_tuple.ipv6_dst, &tuple->ipv6_src, sizeof tuple->ipv6_dst);
+    swapped_tuple.src_port = tuple->dst_port;
+    swapped_tuple.dst_port = tuple->src_port;
+    swapped_tuple.ipv6_proto = tuple->ipv6_proto;
+    memcpy(tuple, &swapped_tuple, sizeof *tuple);
+}
+
+static void
+conntrack_off_fill_ipv6_nat(struct ct_flow_offload_item *item,
+                            struct dp_packet *packet,
+                            bool reply)
+{
+    struct ovs_16aligned_ip6_hdr *l3 = dp_packet_l3(packet);
+    struct ovs_key_ct_tuple_ipv6 *match_init = &item->ct_key.ipv6;
+    struct ovs_key_ct_tuple_ipv6 match, *tuple, modify;
+    char addr_str1[INET6_ADDRSTRLEN];
+    char addr_str2[INET6_ADDRSTRLEN];
+
+    tuple = &match;
+    memcpy(tuple, match_init, sizeof *tuple);
+    if (reply) {
+        conntrack_swap_tuple_ipv6(tuple);
+        modify.ipv6_src.s6_addr32[0] = tuple->ipv6_src.s6_addr32[0];
+        modify.ipv6_src.s6_addr32[1] = tuple->ipv6_src.s6_addr32[1];
+        modify.ipv6_src.s6_addr32[2] = tuple->ipv6_src.s6_addr32[2];
+        modify.ipv6_src.s6_addr32[3] = tuple->ipv6_src.s6_addr32[3];
+        modify.ipv6_dst.s6_addr32[0] = tuple->ipv6_dst.s6_addr32[0];
+        modify.ipv6_dst.s6_addr32[1] = tuple->ipv6_dst.s6_addr32[1];
+        modify.ipv6_dst.s6_addr32[2] = tuple->ipv6_dst.s6_addr32[2];
+        modify.ipv6_dst.s6_addr32[3] = tuple->ipv6_dst.s6_addr32[3];
+        modify.src_port = tuple->src_port;
+        modify.dst_port = tuple->dst_port;
+    } else {
+        modify.ipv6_src.s6_addr32[0] = get_16aligned_be32(&l3->ip6_src.be32[0]);
+        modify.ipv6_src.s6_addr32[1] = get_16aligned_be32(&l3->ip6_src.be32[1]);
+        modify.ipv6_src.s6_addr32[2] = get_16aligned_be32(&l3->ip6_src.be32[2]);
+        modify.ipv6_src.s6_addr32[3] = get_16aligned_be32(&l3->ip6_src.be32[3]);
+        modify.ipv6_dst.s6_addr32[0] = get_16aligned_be32(&l3->ip6_dst.be32[0]);
+        modify.ipv6_dst.s6_addr32[1] = get_16aligned_be32(&l3->ip6_dst.be32[1]);
+        modify.ipv6_dst.s6_addr32[2] = get_16aligned_be32(&l3->ip6_dst.be32[2]);
+        modify.ipv6_dst.s6_addr32[3] = get_16aligned_be32(&l3->ip6_dst.be32[3]);
+        modify.src_port = 0;
+        modify.dst_port = 0;
+    }
+
+    if (get_16aligned_be32(&l3->ip6_src.be32[0]) != tuple->ipv6_src.s6_addr32[0] ||
+        get_16aligned_be32(&l3->ip6_src.be32[1]) != tuple->ipv6_src.s6_addr32[1] ||
+        get_16aligned_be32(&l3->ip6_src.be32[2]) != tuple->ipv6_src.s6_addr32[2] ||
+        get_16aligned_be32(&l3->ip6_src.be32[3]) != tuple->ipv6_src.s6_addr32[3]) {
+        ipv6_string_mapped(addr_str1, (struct in6_addr *)&l3->ip6_src);
+        ipv6_string_mapped(addr_str2, (struct in6_addr *)&tuple->ipv6_src);
+        VLOG_DBG("NAT, change src IP %s from %s", addr_str1, addr_str2);
+        item->ct_modify.ipv6.ipv6_src.s6_addr32[0] = modify.ipv6_src.s6_addr32[0];
+        item->ct_modify.ipv6.ipv6_src.s6_addr32[1] = modify.ipv6_src.s6_addr32[1];
+        item->ct_modify.ipv6.ipv6_src.s6_addr32[2] = modify.ipv6_src.s6_addr32[2];
+        item->ct_modify.ipv6.ipv6_src.s6_addr32[3] = modify.ipv6_src.s6_addr32[3];
+        item->mod_flags |= CT_OFFLOAD_MODIFY_SRC_IP;
+    }
+    if (get_16aligned_be32(&l3->ip6_dst.be32[0]) != tuple->ipv6_dst.s6_addr32[0] ||
+        get_16aligned_be32(&l3->ip6_dst.be32[1]) != tuple->ipv6_dst.s6_addr32[1] ||
+        get_16aligned_be32(&l3->ip6_dst.be32[2]) != tuple->ipv6_dst.s6_addr32[2] ||
+        get_16aligned_be32(&l3->ip6_dst.be32[3]) != tuple->ipv6_dst.s6_addr32[3]) {
+        ipv6_string_mapped(addr_str1, (struct in6_addr *)&l3->ip6_dst);
+        ipv6_string_mapped(addr_str2, (struct in6_addr *)&tuple->ipv6_dst);
+        VLOG_DBG("NAT, change dst IP %s from %s", addr_str1, addr_str2);
+        item->ct_modify.ipv6.ipv6_dst.s6_addr32[0] = modify.ipv6_dst.s6_addr32[0];
+        item->ct_modify.ipv6.ipv6_dst.s6_addr32[1] = modify.ipv6_dst.s6_addr32[1];
+        item->ct_modify.ipv6.ipv6_dst.s6_addr32[2] = modify.ipv6_dst.s6_addr32[2];
+        item->ct_modify.ipv6.ipv6_dst.s6_addr32[3] = modify.ipv6_dst.s6_addr32[3];
+        item->mod_flags |= CT_OFFLOAD_MODIFY_DST_IP;
+    }
+    if (tuple->ipv6_proto == IPPROTO_TCP) {
+        const struct tcp_header *th = dp_packet_l4(packet);
+
+        if (th->tcp_src != tuple->src_port) {
+            VLOG_DBG("NAT, change src port %u from %u",
+                     ntohs(th->tcp_src), ntohs(tuple->src_port));
+            item->ct_modify.ipv6.src_port = (modify.src_port)
+                                            ? tuple->src_port : th->tcp_src;
+            item->mod_flags |= CT_OFFLOAD_MODIFY_SRC_PORT;
+        }
+        if (th->tcp_dst != tuple->dst_port) {
+            VLOG_DBG("NAT, change dst port %u from %u",
+                     ntohs(th->tcp_dst), ntohs(tuple->dst_port));
+            item->ct_modify.ipv6.dst_port = (modify.dst_port)
+                                            ? tuple->dst_port : th->tcp_dst;
+            item->mod_flags |= CT_OFFLOAD_MODIFY_DST_PORT;
+        }
+    } else if (tuple->ipv6_proto == IPPROTO_UDP) {
+        const struct udp_header *uh = dp_packet_l4(packet);
+
+        if (uh->udp_src != tuple->src_port) {
+            VLOG_DBG("NAT, change src port %u from %u",
+                     ntohs(uh->udp_src), ntohs(tuple->src_port));
+            item->ct_modify.ipv6.src_port = (modify.src_port)
+                                            ? tuple->src_port : uh->udp_src;
+            item->mod_flags |= CT_OFFLOAD_MODIFY_SRC_PORT;
+        }
+        if (uh->udp_dst != tuple->dst_port) {
+            VLOG_DBG("NAT, change dst port %u from %u",
+                     ntohs(uh->udp_dst), ntohs(tuple->dst_port));
+            item->ct_modify.ipv6.dst_port = uh->udp_dst;
+            item->ct_modify.ipv6.dst_port = (modify.dst_port)
+                                            ? tuple->dst_port : uh->udp_dst;
+            item->mod_flags |= CT_OFFLOAD_MODIFY_DST_PORT;
+        }
+    }
+}
+
+static void
 conntrack_off_fill_nat(struct ct_flow_offload_item *item,
                        struct dp_packet *packet,
                        bool reply)
 {
     if (item->ct_ipv6) {
-        VLOG_DBG("CT_NAT for IPV6 is not supported yet");
+        conntrack_off_fill_ipv6_nat(item, packet, reply);
     } else {
         conntrack_off_fill_ipv4_nat(item, packet, reply);
     }
