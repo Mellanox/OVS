@@ -4661,6 +4661,34 @@ dump_flow_action(struct rte_flow_action *actions, struct ds *s)
         } else {
             ds_put_cstr(s, "  Set-ttl = null\n");
         }
+    } else if (actions->type == RTE_FLOW_ACTION_TYPE_SET_IPV4_SRC ||
+               actions->type == RTE_FLOW_ACTION_TYPE_SET_IPV4_DST) {
+        const struct rte_flow_action_set_ipv4 *set_ipv4 = actions->conf;
+        char *dirstr = (actions->type == RTE_FLOW_ACTION_TYPE_SET_IPV4_DST)
+                         ? "dst" : "src";
+
+        ds_put_format(s, "rte flow set-ipv4-%s action:\n", dirstr);
+        if (set_ipv4) {
+            ds_put_format(s,
+                          "  Set-ipv4-%s: "IP_FMT"\n",
+                          dirstr, IP_ARGS(set_ipv4->ipv4_addr));
+        } else {
+            ds_put_format(s, "  Set-ipv4-%s = null\n", dirstr);
+        }
+    } else if (actions->type == RTE_FLOW_ACTION_TYPE_SET_TP_SRC ||
+               actions->type == RTE_FLOW_ACTION_TYPE_SET_TP_DST) {
+        const struct rte_flow_action_set_tp *set_tp = actions->conf;
+        char *dirstr = (actions->type == RTE_FLOW_ACTION_TYPE_SET_TP_DST)
+                         ? "dst" : "src";
+
+        ds_put_format(s, "rte flow set-tcp/udp-port-%s action:\n", dirstr);
+        if (set_tp) {
+            ds_put_format(s,
+                          "  Set-%s-tcp/udp-port: %"PRIu16"\n",
+                          dirstr, ntohs(set_tp->port));
+        } else {
+            ds_put_format(s, "  Set-%s-tcp/udp-port = null\n", dirstr);
+        }
     } else {
         ds_put_format(s, "rte flow UNKNOWN action (type=%d)\n", actions->type);
     }
