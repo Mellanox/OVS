@@ -2625,6 +2625,8 @@ dp_ct_alloc_ct_offload(struct ct_flow_offload_item *ct_offload,
     memcpy(offload, ct_offload, sizeof *ct_offload);
     if (md) {
         offload->setmark = md->ct_mark;
+        offload->ct_state = md->ct_state;
+        offload->zone = md->ct_zone;
     }
 
     return offload;
