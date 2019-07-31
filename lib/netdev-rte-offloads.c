@@ -1460,17 +1460,28 @@ netdev_rte_add_ipv4_header_rewrite_flow_action(
     /* All values are in network order (BE) */
 
     /* Rewrite ipv4 src address */
-    ipv4_src->ipv4_addr = ct_offload->ct_modify.ipv4.ipv4_src;
-    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_IPV4_SRC, ipv4_src);
+    if (ct_offload->mod_flags & CT_OFFLOAD_MODIFY_SRC_IP) {
+        ipv4_src->ipv4_addr = ct_offload->ct_modify.ipv4.ipv4_src;
+        add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_IPV4_SRC, ipv4_src);
+    }
+
     /* Rewrite ipv4 dst address */
-    ipv4_dst->ipv4_addr = ct_offload->ct_modify.ipv4.ipv4_dst;
-    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_IPV4_DST, ipv4_dst);
+    if (ct_offload->mod_flags & CT_OFFLOAD_MODIFY_DST_IP) {
+        ipv4_dst->ipv4_addr = ct_offload->ct_modify.ipv4.ipv4_dst;
+        add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_IPV4_DST, ipv4_dst);
+    }
+
     /* Rewrite transport port src */
-    port_src->port = ct_offload->ct_modify.ipv4.src_port;
-    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_TP_SRC, port_src);
+    if (ct_offload->mod_flags & CT_OFFLOAD_MODIFY_SRC_PORT) {
+        port_src->port = ct_offload->ct_modify.ipv4.src_port;
+        add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_TP_SRC, port_src);
+    }
+
     /* Rewrite transport port dst */
-    port_dst->port = ct_offload->ct_modify.ipv4.dst_port;
-    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_TP_DST, port_dst);
+    if (ct_offload->mod_flags & CT_OFFLOAD_MODIFY_DST_PORT) {
+        port_dst->port = ct_offload->ct_modify.ipv4.dst_port;
+        add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_TP_DST, port_dst);
+    }
 }
 
 static void
@@ -1483,20 +1494,31 @@ netdev_rte_add_ipv6_header_rewrite_flow_action(
     struct flow_actions *actions)
 {
     /* Rewrite ipv6 src address */
-    memcpy(&ipv6_src->ipv6_addr, &ct_offload->ct_modify.ipv6.ipv6_src,
-           sizeof ipv6_src->ipv6_addr);
-    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_IPV6_SRC, ipv6_src);
+    if (ct_offload->mod_flags & CT_OFFLOAD_MODIFY_SRC_IP) {
+        memcpy(&ipv6_src->ipv6_addr, &ct_offload->ct_modify.ipv6.ipv6_src,
+               sizeof ipv6_src->ipv6_addr);
+        add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_IPV6_SRC, ipv6_src);
+    }
+
     /* Rewrite ipv6 dst address */
-    memcpy(&ipv6_dst->ipv6_addr, &ct_offload->ct_modify.ipv6.ipv6_dst,
-           sizeof ipv6_src->ipv6_addr);
+    if (ct_offload->mod_flags & CT_OFFLOAD_MODIFY_DST_IP) {
+        memcpy(&ipv6_dst->ipv6_addr, &ct_offload->ct_modify.ipv6.ipv6_dst,
+               sizeof ipv6_src->ipv6_addr);
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_IPV6_DST, ipv6_dst);
+    }
+
     /* Port values are in network order (short BE) */
     /* Rewrite transport port src */
-    port_src->port = ct_offload->ct_modify.ipv6.src_port;
-    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_TP_SRC, port_src);
+    if (ct_offload->mod_flags & CT_OFFLOAD_MODIFY_SRC_PORT) {
+        port_src->port = ct_offload->ct_modify.ipv6.src_port;
+        add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_TP_SRC, port_src);
+    }
+
     /* Rewrite transport port dst */
-    port_dst->port = ct_offload->ct_modify.ipv6.dst_port;
-    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_TP_DST, port_dst);
+    if (ct_offload->mod_flags & CT_OFFLOAD_MODIFY_DST_PORT) {
+        port_dst->port = ct_offload->ct_modify.ipv6.dst_port;
+        add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_TP_DST, port_dst);
+    }
 }
 
 struct ct_stats;
@@ -3107,7 +3129,7 @@ netdev_dpdk_release_ct_flow(struct mark_to_miss_ctx_data *data,
         build_ctid(data->mark, dir, false, &ctid);
         netdev_rte_ct_flow_del(NULL, &ctid, NULL);
         if (data->ct.ct_offload[dir]) {
-            if (data->ct.ct_offload[dir]->has_nat) {
+            if (data->ct.ct_offload[dir]->mod_flags) {
                 build_ctid(data->mark, dir, true, &ctid);
                 netdev_rte_ct_flow_del(NULL, &ctid, NULL);
             }
@@ -4377,8 +4399,7 @@ netdev_dpdk_offload_ct_session(struct mark_to_miss_ctx_data *data,
         VLOG_DBG("failed to offload CT mark=%u dir=INIT", data->mark);
         goto fail;
     }
-    if (ct_offload1->ct_modify.ipv6.ipv6_proto ||
-        ct_offload1->ct_modify.ipv4.ipv4_proto) {
+    if (ct_offload1->mod_flags) {
         /* Add flow to CT-NAT table */
         build_ctid(data->mark, dir1, true, &ctid);
         /* Add flow to CT-NAT table */
@@ -4406,8 +4427,7 @@ netdev_dpdk_offload_ct_session(struct mark_to_miss_ctx_data *data,
         VLOG_DBG("failed to offload CT mark=%u dir=REP", data->mark);
         goto fail;
     }
-    if (ct_offload2->ct_modify.ipv6.ipv6_proto ||
-        ct_offload2->ct_modify.ipv4.ipv4_proto) {
+    if (ct_offload2->mod_flags) {
         /* Add flow to CT-NAT table in the other direction */
         build_ctid(data->mark, dir2, true, &ctid);
         ret =  ct_add_rte_flow_offload(rte_port, &match, ct_offload2, &ctid,
