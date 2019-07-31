@@ -4689,6 +4689,24 @@ dump_flow_action(struct rte_flow_action *actions, struct ds *s)
         } else {
             ds_put_format(s, "  Set-%s-tcp/udp-port = null\n", dirstr);
         }
+    } else if (actions->type == RTE_FLOW_ACTION_TYPE_SET_IPV6_SRC ||
+               actions->type == RTE_FLOW_ACTION_TYPE_SET_IPV6_DST) {
+        const struct rte_flow_action_set_ipv6 *set_ipv6 = actions->conf;
+
+        char *dirstr = (actions->type == RTE_FLOW_ACTION_TYPE_SET_IPV6_DST)
+                         ? "dst" : "src";
+
+        ds_put_format(s, "rte flow set-ipv6-%s action:\n", dirstr);
+        if (set_ipv6) {
+            char addr_str[INET6_ADDRSTRLEN];
+
+            ipv6_string_mapped(addr_str, (struct in6_addr *)&set_ipv6->ipv6_addr);
+            ds_put_format(s,
+                          "  Set-ipv6-%s: %s\n",
+                          dirstr, addr_str);
+        } else {
+            ds_put_format(s, "  Set-ipv6-%s = null\n", dirstr);
+        }
     } else {
         ds_put_format(s, "rte flow UNKNOWN action (type=%d)\n", actions->type);
     }
