@@ -1003,16 +1003,20 @@ err:
     return -1;
 }
 
+static int restore_packet_state(uint32_t flow_mark, struct dp_packet *packet);
+
 int
 netdev_rte_offloads_flow_restore(OVS_UNUSED struct netdev *netdev,
-                                 OVS_UNUSED uint32_t flow_mark ,
-                                 OVS_UNUSED struct dp_packet *packet,
+                                 uint32_t flow_mark ,
+                                 struct dp_packet *packet,
                                  struct nlattr *actions, size_t actions_len,
                                  size_t *offloaded_actions_len)
 {
     unsigned int hw_actions_len = 0;
     const struct nlattr *a;
     unsigned int left;
+
+    restore_packet_state(flow_mark, packet);
 
     NL_ATTR_FOR_EACH_UNSAFE (a, left, actions, actions_len) {
         int type = nl_attr_type(a);
@@ -1600,6 +1604,8 @@ ct_add_rte_flow_offload(struct netdev_rte_port *rte_port,
             VLOG_ERR("%s: rte flow create offload error: %u : "
                      "message : %s\n", netdev_get_name(rte_port->netdev),
                      error.type, error.message);
+
+            /* TODO: OZ: missing error handling */
         }
         if (flow) {
             ufid_hw_offload_add_rte_flow(ctid_hw_offload, flow,
@@ -3056,7 +3062,6 @@ struct mark_to_miss_ctx_data {
         struct {
             uint32_t ct_mark;
             uint16_t ct_zone;
-            uint8_t  ct_state;
             struct ct_flow_offload_item *ct_offload[CT_OFFLOAD_NUM];
             uint32_t outer_id[CT_OFFLOAD_NUM];
             uint16_t odp_port[CT_OFFLOAD_NUM];
@@ -4319,7 +4324,6 @@ netdev_dpdk_offload_ct_ctx_update(struct mark_to_miss_ctx_data *data,
     data->ct.ct_zone = ct_offload1->zone?ct_offload1->zone:ct_offload2->zone;
     data->ct.ct_mark = ct_offload1->setmark?
                        ct_offload1->setmark:ct_offload2->setmark;
-    data->ct.ct_state = ct_offload1->ct_state | ct_offload2->ct_state;
 }
 
 
@@ -4603,3 +4607,27 @@ recirc_handling:
     return 0;
 }
 
+static int
+restore_packet_state(uint32_t flow_mark, struct dp_packet *packet)
+{
+    struct mark_to_miss_ctx_data *miss_ctx;
+
+    miss_ctx = netdev_dpdk_get_flow_miss_ctx(flow_mark);
+    if (!miss_ctx)
+        return -1;
+
+    if (packet->md.in_port.odp_port == miss_ctx->ct.odp_port[CT_OFFLOAD_DIR_INIT])
+    {
+        packet->md.ct_state = miss_ctx->ct.ct_offload[CT_OFFLOAD_DIR_INIT]->ct_state;
+        packet->md.recirc_id = 1;//FIX
+    }
+    else if (packet->md.in_port.odp_port == miss_ctx->ct.odp_port[CT_OFFLOAD_DIR_REP]) {
+        packet->md.ct_state = miss_ctx->ct.ct_offload[CT_OFFLOAD_DIR_REP]->ct_state;
+        packet->md.recirc_id = 2;//FIX
+    }
+    else
+        VLOG_DBG("error");
+
+    packet->md.ct_zone = miss_ctx->ct.ct_zone;
+    return 0;
+}
