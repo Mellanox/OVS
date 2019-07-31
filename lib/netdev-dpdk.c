@@ -4307,11 +4307,12 @@ dump_flow_pattern(struct rte_flow_item *item, struct ds *s)
         if (ipv4_spec) {
             ds_put_format(s,
                           "  Spec: tos=0x%"PRIx8", ttl=%"PRIu8
-                          ", proto=0x%"PRIx8
+                          ", proto=0x%"PRIx8", frag=0x%"PRIx16
                           ", src="IP_FMT", dst="IP_FMT"\n",
                           ipv4_spec->hdr.type_of_service,
                           ipv4_spec->hdr.time_to_live,
                           ipv4_spec->hdr.next_proto_id,
+                          ipv4_spec->hdr.fragment_offset,
                           IP_ARGS(ipv4_spec->hdr.src_addr),
                           IP_ARGS(ipv4_spec->hdr.dst_addr));
         } else {
@@ -4320,11 +4321,12 @@ dump_flow_pattern(struct rte_flow_item *item, struct ds *s)
         if (ipv4_mask) {
             ds_put_format(s,
                           "  Mask: tos=0x%"PRIx8", ttl=%"PRIu8
-                          ", proto=0x%"PRIx8
+                          ", proto=0x%"PRIx8", frag=0x%"PRIx16
                           ", src="IP_FMT", dst="IP_FMT"\n",
                           ipv4_mask->hdr.type_of_service,
                           ipv4_mask->hdr.time_to_live,
                           ipv4_mask->hdr.next_proto_id,
+                          ipv4_mask->hdr.fragment_offset,
                           IP_ARGS(ipv4_mask->hdr.src_addr),
                           IP_ARGS(ipv4_mask->hdr.dst_addr));
         } else {

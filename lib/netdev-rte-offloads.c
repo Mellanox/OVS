@@ -613,6 +613,8 @@ add_flow_patterns(struct flow_patterns *patterns,
         mask->ipv4.hdr.next_proto_id   = match->wc.masks.nw_proto;
         mask->ipv4.hdr.src_addr        = match->wc.masks.nw_src;
         mask->ipv4.hdr.dst_addr        = match->wc.masks.nw_dst;
+        mask->ipv4.hdr.fragment_offset = RTE_IPV4_HDR_OFFSET_MASK |
+                                         RTE_IPV4_HDR_MF_FLAG;
 
         add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV4,
                          &spec->ipv4, &mask->ipv4);
