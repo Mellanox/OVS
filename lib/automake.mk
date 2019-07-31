@@ -175,6 +175,7 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/netdev-offload.h \
 	lib/netdev-offload-provider.h \
 	lib/netdev-provider.h \
+	lib/netdev-dpdk-vdpa.h \
 	lib/netdev-vport.c \
 	lib/netdev-vport.h \
 	lib/netdev-vport-private.h \
@@ -458,7 +459,8 @@ if DPDK_NETDEV
 lib_libopenvswitch_la_SOURCES += \
 	lib/dpdk.c \
 	lib/netdev-dpdk.c \
-	lib/netdev-offload-dpdk.c
+	lib/netdev-offload-dpdk.c \
+	lib/netdev-dpdk-vdpa.c
 else
 lib_libopenvswitch_la_SOURCES += \
 	lib/dpdk-stub.c
