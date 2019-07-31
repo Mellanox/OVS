@@ -102,6 +102,7 @@ netdev_dpdk_vdpa_free(void *ptr)
     free(ptr);
     ptr = NULL;
 }
+
 static void
 netdev_dpdk_vdpa_clear_relay(struct netdev_dpdk_vdpa_relay *relay)
 {
@@ -351,7 +352,8 @@ netdev_dpdk_vdpa_port_init(struct netdev_dpdk_vdpa_relay *relay,
         tso_offloads = (DEV_TX_OFFLOAD_TCP_TSO |
                         DEV_TX_OFFLOAD_MULTI_SEGS);
 
-        tso_support = (tso_offloads & dev_info.tx_offload_capa) == tso_offloads;
+        tso_support = (tso_offloads & dev_info.tx_offload_capa) ==
+                       tso_offloads;
         csum_support = (csum_offloads & dev_info.tx_offload_capa) ==
                        csum_offloads;
 
@@ -445,65 +447,61 @@ out:
 static void
 netdev_dpdk_vdpa_parse_pkt(struct rte_mbuf *m, uint16_t mtu)
 {
-    struct rte_ipv4_hdr *ipv4_hdr;
-    struct rte_ipv6_hdr *ipv6_hdr;
-    struct rte_ether_hdr *eth_hdr;
-    struct rte_vlan_hdr *vlan_hdr;
-    struct rte_tcp_hdr *tcp_hdr;
-    struct ip6_ext *ip6_ext;
+    const struct ovs_16aligned_ip6_frag *frag_hdr;
+    const struct ovs_16aligned_ip6_hdr *ipv6;
+    const struct vlan_header *vlan;
+    const struct eth_header *eth;
+    const struct ip_header *ipv4;
+    const struct tcp_header *tcp;
+    uint8_t nw_frag = 0;
     uint8_t l4_proto_id;
     uint64_t ol_flags;
+    const void *data;
     uint32_t l2_len;
     uint32_t l3_len;
     uint32_t l4_len;
-    uint16_t proto;
-    int hdr_len;
-    char *hdr;
+    ovs_be16 proto;
+    size_t size;
 
-    eth_hdr = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
-    l2_len = sizeof(struct rte_ether_hdr);
-    hdr = (char *)(eth_hdr + 1);
-    proto = rte_be_to_cpu_16(eth_hdr->ether_type);
-    while (proto == RTE_ETHER_TYPE_VLAN || proto == RTE_ETHER_TYPE_QINQ) {
-        hdr += sizeof(struct rte_vlan_hdr);
-        vlan_hdr = (struct rte_vlan_hdr *)hdr;
-        proto = rte_be_to_cpu_16(vlan_hdr->eth_proto);
-        l2_len  += sizeof(struct rte_vlan_hdr);
-        eth_hdr->ether_type = vlan_hdr->eth_proto;
+    eth = rte_pktmbuf_mtod(m, const struct eth_header *);
+    l2_len = sizeof *eth;
+    vlan = (struct vlan_header *)(eth + 1);
+    proto = eth->eth_type;
+
+    while (eth_type_vlan(proto)) {
+        l2_len += sizeof *vlan;
+        proto = vlan->vlan_next_type;
+        vlan++;
     }
 
-    if ((m->pkt_len - l2_len) <= mtu) {
+    if ((rte_pktmbuf_pkt_len(m) - l2_len) <= mtu) {
         return;
     }
 
-    switch (rte_be_to_cpu_16(eth_hdr->ether_type)) {
-    case RTE_ETHER_TYPE_IPV4:
-        ipv4_hdr = (struct rte_ipv4_hdr *) ((char *)eth_hdr + l2_len);
-        l3_len = (ipv4_hdr->version_ihl & 0x0f) << 2;
-        l4_proto_id = ipv4_hdr->next_proto_id;
+    switch (ntohs(proto)) {
+    case ETH_TYPE_IP:
+        ipv4 = (const struct ip_header *)vlan;
+        l3_len = (ipv4->ip_ihl_ver & 0x0f) << 2;
+        l4_proto_id = ipv4->ip_proto;
         if (l4_proto_id == IPPROTO_TCP) {
-            tcp_hdr = (struct rte_tcp_hdr *)((char *)ipv4_hdr + l3_len);
-            l4_len = (tcp_hdr->data_off & 0xf0) >> 2;
+            tcp = (const struct tcp_header *)((char *)ipv4 + l3_len);
+            l4_len = TCP_OFFSET(tcp->tcp_ctl) * 4;
             ol_flags = (PKT_TX_IPV4 | PKT_TX_IP_CKSUM);
         }
         break;
-    case RTE_ETHER_TYPE_IPV6:
-        l3_len = sizeof(struct rte_ipv6_hdr);
-        ipv6_hdr = (struct rte_ipv6_hdr *) ((char *)eth_hdr + l2_len);
-        hdr = (char *)ipv6_hdr;
-        hdr_len = l3_len;
-        l4_proto_id = ipv6_hdr->proto;
-        while ((l4_proto_id != IPPROTO_TCP) && (l4_proto_id != IPPROTO_UDP) &&
-               (l4_proto_id != IPPROTO_ICMPV6)) {
-            hdr += hdr_len;
-            ip6_ext = (struct ip6_ext *)hdr;
-            l4_proto_id = ip6_ext->ip6e_nxt;
-            hdr_len = ip6_ext->ip6e_len;
-            l3_len += hdr_len;
+    case ETH_TYPE_IPV6:
+        ipv6 = (const struct ovs_16aligned_ip6_hdr *)vlan;
+        data = ipv6 + 1;
+        size = rte_pktmbuf_data_len(m) - l2_len - sizeof *ipv6;
+        l4_proto_id = ipv6->ip6_nxt;
+        if (!parse_ipv6_ext_hdrs(&data, &size, &l4_proto_id, &nw_frag,
+                                 &frag_hdr) || nw_frag) {
+            return;
         }
+        l3_len = (char *)data - (char *)ipv6;
         if (l4_proto_id == IPPROTO_TCP) {
-            tcp_hdr = (struct rte_tcp_hdr *)((char *)ipv6_hdr + l3_len);
-            l4_len = (tcp_hdr->data_off & 0xf0) >> 2;
+            tcp = (const struct tcp_header *)data;
+            l4_len = TCP_OFFSET(tcp->tcp_ctl) * 4;
             ol_flags = PKT_TX_IPV6;
         }
         break;
