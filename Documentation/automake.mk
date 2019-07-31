@@ -41,6 +41,7 @@ DOC_SOURCE = \
 	Documentation/topics/dpdk/qos.rst \
 	Documentation/topics/dpdk/vdev.rst \
 	Documentation/topics/dpdk/vhost-user.rst \
+	Documentation/topics/dpdk/vdpa.rst \
 	Documentation/topics/fuzzing/index.rst \
 	Documentation/topics/fuzzing/what-is-fuzzing.rst \
 	Documentation/topics/fuzzing/ovs-fuzzing-infrastructure.rst \
