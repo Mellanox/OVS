@@ -6,6 +6,7 @@ v2.14.1 - xx xxx xxxx
      * Fixed support of 'net_virtio' devices.
      * Add hardware offload support tunnel pop action (experimental).
      * Add hardware offload support VXLAN vports.
+     * 'dpdkvdpa' port type.
 
 v2.14.0 - 17 Aug 2020
 ---------------------
