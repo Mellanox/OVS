@@ -4651,6 +4651,16 @@ dump_flow_action(struct rte_flow_action *actions, struct ds *s)
         } else {
             ds_put_format(s, "  Set-mac-%s = null\n", dirstr);
         }
+    } else if (actions->type == RTE_FLOW_ACTION_TYPE_SET_TTL) {
+        const struct rte_flow_action_set_ttl *set_ttl = actions->conf;
+
+        ds_put_cstr(s, "rte flow set-ttl action:\n");
+        if (set_ttl) {
+            ds_put_format(s,
+                          "  Set-ttl: %d\n", set_ttl->ttl_value);
+        } else {
+            ds_put_cstr(s, "  Set-ttl = null\n");
+        }
     } else {
         ds_put_format(s, "rte flow UNKNOWN action (type=%d)\n", actions->type);
     }
