@@ -4636,6 +4636,21 @@ dump_flow_action(struct rte_flow_action *actions, struct ds *s)
         } else {
             ds_put_cstr(s, "  Set-tag = null\n");
         }
+    } else if (actions->type == RTE_FLOW_ACTION_TYPE_SET_MAC_SRC ||
+               actions->type == RTE_FLOW_ACTION_TYPE_SET_MAC_DST) {
+        const struct rte_flow_action_set_mac *set_mac = actions->conf;
+
+        char *dirstr = (actions->type == RTE_FLOW_ACTION_TYPE_SET_MAC_DST)
+                         ? "dst" : "src";
+
+        ds_put_format(s, "rte flow set-mac-%s action:\n", dirstr);
+        if (set_mac) {
+            ds_put_format(s,
+                          "  Set-mac-%s: "ETH_ADDR_FMT"\n",
+                          dirstr, ETH_ADDR_BYTES_ARGS(set_mac->mac_addr));
+        } else {
+            ds_put_format(s, "  Set-mac-%s = null\n", dirstr);
+        }
     } else {
         ds_put_format(s, "rte flow UNKNOWN action (type=%d)\n", actions->type);
     }
