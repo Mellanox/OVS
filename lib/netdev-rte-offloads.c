@@ -550,6 +550,11 @@ struct flow_action_items {
             struct rte_flow_action_set_mac src;
             struct rte_flow_action_set_mac dst;
         } mac;
+        struct {
+            struct rte_flow_action_set_ipv4 src;
+            struct rte_flow_action_set_ipv4 dst;
+            struct rte_flow_action_set_ttl ttl;
+        } ipv4;
     } set;
 };
 
@@ -3806,7 +3811,35 @@ netdev_rte_offloads_add_set_actions(struct flow_data *fdata,
             }
             } break;
         case OVS_KEY_ATTR_ETHERTYPE:
-        case OVS_KEY_ATTR_IPV4:
+            VLOG_DBG_RL(&error_rl,
+                        "Unsupported set action. set_type=%d", set_type);
+            ret = -1;
+            break;
+        case OVS_KEY_ATTR_IPV4:{
+            const struct ovs_key_ipv4 *key = nl_attr_get(sa);
+            const struct ovs_key_ipv4 *mask =
+                get_mask(sa, struct ovs_key_ipv4);
+            if (!mask || !mask->ipv4_src) {
+                fdata->actions.set.ipv4.src.ipv4_addr = key->ipv4_src;
+                add_flow_action(flow_actions, RTE_FLOW_ACTION_TYPE_SET_IPV4_SRC,
+                                &fdata->actions.set.ipv4.src);
+            }
+            if (!mask || !mask->ipv4_dst) {
+                fdata->actions.set.ipv4.dst.ipv4_addr = key->ipv4_dst;
+                add_flow_action(flow_actions, RTE_FLOW_ACTION_TYPE_SET_IPV4_DST,
+                                &fdata->actions.set.ipv4.dst);
+            }
+            if (!mask || !mask->ipv4_ttl) {
+                fdata->actions.set.ipv4.ttl.ttl_value = key->ipv4_ttl;
+                add_flow_action(flow_actions, RTE_FLOW_ACTION_TYPE_SET_TTL,
+                                &fdata->actions.set.ipv4.ttl);
+            }
+            if (!mask || !mask->ipv4_proto || !mask->ipv4_tos ||
+                !mask->ipv4_frag) {
+                VLOG_DBG_RL(&error_rl, "Unsupported IPv4 set action");
+                return -1;
+            }
+            } break;
         case OVS_KEY_ATTR_IPV6:
         case OVS_KEY_ATTR_TCP:
         case OVS_KEY_ATTR_UDP:
