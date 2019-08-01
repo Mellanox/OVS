@@ -545,6 +545,12 @@ struct flow_action_items {
     struct rte_flow_action_raw_encap clone_raw_encap;
     struct rte_flow_action_set_tag set_tags[REG_IDX_NUM];
     uint8_t num_set_tags;
+    struct {
+        struct {
+            struct rte_flow_action_set_mac src;
+            struct rte_flow_action_set_mac dst;
+        } mac;
+    } set;
 };
 
 struct flow_data {
@@ -3386,6 +3392,8 @@ struct offload_item_cls_info {
         int type;
         bool pop_tnl;
         const struct ovs_action_push_tnl *push_tnl;
+        const struct nlattr *set_actions;
+        size_t set_actions_len;
     } actions;
 };
 
@@ -3479,11 +3487,12 @@ netdev_dpdk_offload_fill_cls_info(struct netdev_rte_port *rte_port,
                 case OVS_ACTION_ATTR_TUNNEL_POP:    /* u32 port number. */
                     cls_info->actions.pop_tnl = true;
                     cls_info->actions.odp_port = nl_attr_get_odp_port(a);
-                    break;;
+                    break;
                 case OVS_ACTION_ATTR_SET:
-                /*TODO: set baidu eth here. Requirement is not understood */
-
-                break;
+                case OVS_ACTION_ATTR_SET_MASKED:
+                    cls_info->actions.set_actions = nl_attr_get(a);
+                    cls_info->actions.set_actions_len = nl_attr_get_size(a);
+                    break;
                 /*TODO: verify if tnl_pop or tnl_push, (DONE)*/
                 case OVS_ACTION_ATTR_CLONE:{
                     const struct nlattr *clone_actions =
@@ -3511,7 +3520,6 @@ netdev_dpdk_offload_fill_cls_info(struct netdev_rte_port *rte_port,
                 case OVS_ACTION_ATTR_SAMPLE:
                 case OVS_ACTION_ATTR_PUSH_MPLS:
                 case OVS_ACTION_ATTR_POP_MPLS:
-                case OVS_ACTION_ATTR_SET_MASKED:
                 case OVS_ACTION_ATTR_TRUNC:
                 case OVS_ACTION_ATTR_PUSH_ETH:
                 case OVS_ACTION_ATTR_POP_ETH:
@@ -3755,6 +3763,82 @@ netdev_rte_add_meta_flow_action(struct rte_flow_action_set_meta *meta,
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_META, meta);
 }
 
+#define get_mask(a, type) ((const type *)(const void *)(a + 1) + 1)
+static int
+netdev_rte_offloads_add_set_actions(struct flow_data *fdata,
+                                    struct flow_actions *flow_actions,
+                                    struct offload_item_cls_info *cls_info)
+{
+    const struct nlattr *sa;
+    unsigned int sleft;
+    int ret = 0;
+
+    NL_ATTR_FOR_EACH_UNSAFE(sa, sleft, cls_info->actions.set_actions,
+                            cls_info->actions.set_actions_len) {
+        int set_type = nl_attr_type(sa);
+
+        switch ((enum ovs_key_attr) set_type) {
+        case OVS_KEY_ATTR_UNSPEC:
+        case OVS_KEY_ATTR_ENCAP:
+        case OVS_KEY_ATTR_PRIORITY:
+        case OVS_KEY_ATTR_IN_PORT:
+        case OVS_KEY_ATTR_VLAN:
+            VLOG_DBG_RL(&error_rl,
+                        "Unsupported set action. set_type=%d", set_type);
+            ret = -1;
+            break;
+        case OVS_KEY_ATTR_ETHERNET: {
+            const struct ovs_key_ethernet *key = nl_attr_get(sa);
+            const struct ovs_key_ethernet *mask =
+                get_mask(sa, struct ovs_key_ethernet);
+
+            if (!mask || !eth_addr_is_zero(mask->eth_src)) {
+                memcpy(fdata->actions.set.mac.src.mac_addr, key->eth_src.ea,
+                       ETH_ADDR_LEN);
+                add_flow_action(flow_actions, RTE_FLOW_ACTION_TYPE_SET_MAC_SRC,
+                                &fdata->actions.set.mac.src);
+            }
+            if (!mask || !eth_addr_is_zero(mask->eth_dst)) {
+                memcpy(fdata->actions.set.mac.dst.mac_addr, key->eth_dst.ea,
+                       ETH_ADDR_LEN);
+                add_flow_action(flow_actions, RTE_FLOW_ACTION_TYPE_SET_MAC_DST,
+                                &fdata->actions.set.mac.dst);
+            }
+            } break;
+        case OVS_KEY_ATTR_ETHERTYPE:
+        case OVS_KEY_ATTR_IPV4:
+        case OVS_KEY_ATTR_IPV6:
+        case OVS_KEY_ATTR_TCP:
+        case OVS_KEY_ATTR_UDP:
+        case OVS_KEY_ATTR_ICMP:
+        case OVS_KEY_ATTR_ICMPV6:
+        case OVS_KEY_ATTR_ARP:
+        case OVS_KEY_ATTR_ND:
+        case OVS_KEY_ATTR_SKB_MARK:
+        case OVS_KEY_ATTR_TUNNEL:
+        case OVS_KEY_ATTR_SCTP:
+        case OVS_KEY_ATTR_TCP_FLAGS:
+        case OVS_KEY_ATTR_DP_HASH:
+        case OVS_KEY_ATTR_RECIRC_ID:
+        case OVS_KEY_ATTR_MPLS:
+        case OVS_KEY_ATTR_CT_STATE:
+        case OVS_KEY_ATTR_CT_ZONE:
+        case OVS_KEY_ATTR_CT_MARK:
+        case OVS_KEY_ATTR_CT_LABELS:
+        case OVS_KEY_ATTR_CT_ORIG_TUPLE_IPV4:
+        case OVS_KEY_ATTR_CT_ORIG_TUPLE_IPV6:
+        case OVS_KEY_ATTR_NSH:
+        case OVS_KEY_ATTR_PACKET_TYPE:
+        case OVS_KEY_ATTR_ND_EXTENSIONS:
+        case __OVS_KEY_ATTR_MAX:
+            VLOG_DBG_RL(&error_rl,
+                        "Unsupported set action. set_type=%d", set_type);
+            ret = -1;
+            break;
+        }
+    }
+    return ret;
+}
 
 static int
 netdev_dpdk_offload_ct_actions(struct flow_data *fdata,
@@ -3765,11 +3849,6 @@ netdev_dpdk_offload_ct_actions(struct flow_data *fdata,
                                uint32_t flow_mark)
 {
     int ret = 0;
-    /* match on vport recirc_id = 0, we must decap first */
-    if (cls_info->match.type == MATCH_OFFLOAD_TYPE_VPORT_ROOT) {
-        /* TODO: add decap -- DONE */
-        netdev_rte_add_decap_flow_action(flow_actions);
-    }
 
     netdev_rte_add_mark_flow_action(&fdata->actions.mark, flow_mark, flow_actions);
     netdev_rte_add_meta_flow_action(&fdata->actions.meta, flow_mark, flow_actions);
@@ -3812,12 +3891,6 @@ netdev_dpdk_offload_output_actions(struct flow_data *fdata,
                                    struct nlattr *actions OVS_UNUSED,
                                    size_t actions_len OVS_UNUSED)
 {
-    /* match on vport recirc_id = 0, we must decap first */
-    if (cls_info->match.type == MATCH_OFFLOAD_TYPE_VPORT_ROOT) {
-        /*TODO: add decap (DONE)*/
-        netdev_rte_add_decap_flow_action(flow_actions);
-    }
-
     /* TODO: add counter (DONE)*/
     netdev_rte_add_count_flow_action(&fdata->actions.count, flow_actions);
 
@@ -3861,6 +3934,16 @@ netdev_dpdk_offload_put_add_actions(struct netdev_rte_port *rte_port,
                                     uint32_t flow_mark)
 {
     int ret;
+
+    /* match on vport recirc_id = 0, we must decap first */
+    if (cls_info->match.type == MATCH_OFFLOAD_TYPE_VPORT_ROOT) {
+        netdev_rte_add_decap_flow_action(flow_actions);
+    }
+
+    ret = netdev_rte_offloads_add_set_actions(fdata, flow_actions, cls_info);
+    if (ret) {
+        return ret;
+    }
 
     switch (cls_info->actions.type) {
         case ACTION_OFFLOAD_TYPE_TNL_POP:
