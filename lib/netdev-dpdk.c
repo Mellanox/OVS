@@ -4603,7 +4603,7 @@ dump_flow_action(struct rte_flow_action *actions, struct ds *s)
             if (meta) {
                 ds_put_format(s,
                               "  meta: data=%d mask=%x\n",
-                              meta->data,meta->mask);
+                              RTE_BE32(meta->data), RTE_BE32(meta->mask));
             } else {
                 ds_put_cstr(s, "  meta = null\n");
             }

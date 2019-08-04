@@ -3750,7 +3750,7 @@ netdev_rte_add_meta_flow_action(struct rte_flow_action_set_meta *meta,
                                 struct flow_actions *actions)
 {
     memset(meta, 0, sizeof *meta);
-    meta->data = mark_id;
+    meta->data = RTE_BE32(mark_id);
     meta->mask = RTE_BE32(0xffff);
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_META, meta);
 }
