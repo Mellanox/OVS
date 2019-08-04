@@ -52,6 +52,7 @@ enum table_ids {
     CONNTRACK_TABLE_ID,
     CONNTRACK_NAT_TABLE_ID,
     MAPPING_TABLE_ID,
+    TABLE_ID_LAST
 };
 
 
@@ -511,7 +512,6 @@ add_flow_rss_action(struct flow_actions *actions,
 
 enum {
     REG_IDX_HW_ID = 0,
-    REG_IDX_CT_ZONE,
     REG_IDX_CT_MARK,
     REG_IDX_OUTER_ID,
     REG_IDX_CT_STATE,
@@ -568,6 +568,16 @@ struct flow_data {
     struct rte_flow *flow0;
 };
 
+
+static int
+netdev_dpdk_add_pattern_match_reg(struct flow_items *spec,
+                                  struct flow_patterns *patterns,
+                                  uint8_t reg_type, uint32_t val);
+
+static int
+netdev_dpdk_add_action_set_reg(struct flow_action_items *action_items,
+                               struct flow_actions *actions,
+                               uint8_t reg_type, uint32_t val);
 
 static int
 add_flow_patterns(struct flow_patterns *patterns,
@@ -735,6 +745,12 @@ add_flow_patterns(struct flow_patterns *patterns,
         mask->ipv4.hdr.next_proto_id = 0;
         break;
     }
+
+    /* CT state */
+    if (match->flow.ct_state)
+        netdev_dpdk_add_pattern_match_reg(spec, patterns,
+                                          REG_IDX_CT_STATE,
+                                          match->flow.ct_state);
 
     return 0;
 }
@@ -1176,7 +1192,8 @@ netdev_rte_offloads_flow_stats_get(struct netdev *netdev OVS_UNUSED,
                 ret = ovs_rte_flow_query(dpdk_port_id, rte_flow,
                                          actions.actions, &query, &error);
                 if (ret) {
-                    VLOG_DBG("ufid "UUID_FMT
+                    /* TODO: moved to once as this fails due to current WA */
+                    VLOG_DBG_ONCE("ufid "UUID_FMT
                              " flow %p query for port %d failed\n",
                              UUID_ARGS((struct uuid *)ufid), rte_flow,
                              dpdk_port_id);
@@ -1531,6 +1548,7 @@ ct_add_rte_flow_offload(struct netdev_rte_port *rte_port,
                         bool nat,
                         struct ct_stats *stats OVS_UNUSED)
 {
+    struct flow_action_items action_items;
     int ret = 0;
 
     /* If an old rte_flow exists, it means it's a flow modification.
@@ -1619,6 +1637,14 @@ ct_add_rte_flow_offload(struct netdev_rte_port *rte_port,
                                                            &port_dst, &actions);
         }
     }
+
+    if (netdev_dpdk_add_action_set_reg(&action_items, &actions,
+                                       REG_IDX_CT_STATE,
+                                       ct_offload->ct_state)) {
+        VLOG_DBG("failed to set ct_state");
+        return -1;
+    }
+
     netdev_rte_add_count_flow_action(&count, &actions);
     netdev_rte_add_jump_flow_action(&jump, MAPPING_TABLE_ID, &actions);
     add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_END, NULL);
@@ -3331,7 +3357,7 @@ netdev_dpdk_hw_id_init(void)
         /* we don't overflow by this check:
          * if (!id_pool_alloc_id(hw_table_id.pool, &hw_id)) 
          */
-        hw_table_id.pool = id_pool_create(64, MAX_HW_TABLE);
+        hw_table_id.pool = id_pool_create(TABLE_ID_LAST, MAX_HW_TABLE);
         memset(hw_table_id.hw_id_to_sw, 0, sizeof hw_table_id.hw_id_to_sw);
     }
 }
@@ -3693,12 +3719,6 @@ netdev_dpdk_offload_add_recirc_patterns(struct flow_data *fdata,
                                               REG_IDX_CT_STATE,
                                               match->flow.ct_state);
         }
-        if (masks->ct_zone) {
-            netdev_dpdk_add_pattern_match_reg(&fdata->spec, patterns,
-                                              REG_IDX_CT_ZONE,
-                                              match->flow.ct_zone);
-        }
-
         if (masks->ct_mark) {
             netdev_dpdk_add_pattern_match_reg(&fdata->spec, patterns,
                                               REG_IDX_CT_MARK,
@@ -3906,13 +3926,15 @@ netdev_dpdk_offload_ct_actions(struct flow_data *fdata,
     int ret = 0;
 
     netdev_rte_add_mark_flow_action(&fdata->actions.mark, flow_mark, flow_actions);
-    netdev_rte_add_meta_flow_action(&fdata->actions.meta, flow_mark, flow_actions);
 
     netdev_rte_add_count_flow_action(&fdata->actions.count, flow_actions);
     /* translate recirc_id or port_id to hw_id */
     if (netdev_dpdk_offload_get_hw_id(cls_info)) {
         return -1;
     }
+
+    netdev_rte_add_meta_flow_action(&fdata->actions.meta, cls_info->actions.hw_id, flow_actions);
+
 
     /* TODO: set hw_id in reg_recirc , will be used by mapping table -- DONE */
     if (netdev_dpdk_add_action_set_reg(&fdata->actions, flow_actions,
