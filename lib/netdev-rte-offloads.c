@@ -511,11 +511,43 @@ add_flow_rss_action(struct flow_actions *actions,
 }
 
 enum {
-    REG_IDX_HW_ID = 0,
-    REG_IDX_CT_MARK,
-    REG_IDX_OUTER_ID,
-    REG_IDX_CT_STATE,
-    REG_IDX_NUM,
+    TAG_FIELD_HW_ID = 0,
+    TAG_FIELD_CT_STATE,
+    TAG_FIELD_CT_ZONE,
+    TAG_FIELD_OUTER_ID,
+    TAG_FIELD_CT_MARK,
+    TAG_FIELD_NUM,
+};
+
+/* map tag_id to register index, mask as few tags can share the same register
+ * and data field is used as the bit shift needed.
+ */
+static struct rte_flow_action_set_tag tag_id_maps[] = {
+    [TAG_FIELD_HW_ID] = {
+        .index = 0,
+        .mask = 0xFFFFFFFF,
+        .data = 0,
+    },
+    [TAG_FIELD_CT_STATE] = {
+        .index = 1,
+        .mask = 0x000000FF,
+        .data = 0,
+    },
+    [TAG_FIELD_CT_ZONE] = {
+        .index = 1,
+        .mask = 0x0000FF00,
+        .data = 8,
+    },
+    [TAG_FIELD_OUTER_ID] = {
+        .index = 1,
+        .mask = 0xFFFF0000,
+        .data = 16,
+    },
+    [TAG_FIELD_CT_MARK] = {
+        .index = 2,
+        .mask = 0xFFFFFFFF,
+        .data = 0,
+    },
 };
 
 struct flow_items {
@@ -530,7 +562,7 @@ struct flow_items {
         struct rte_flow_item_sctp sctp;
         struct rte_flow_item_icmp icmp;
     };
-    struct rte_flow_item_tag tags[REG_IDX_NUM];
+    struct rte_flow_item_tag tags[TAG_FIELD_NUM];
     uint8_t num_tags;
 };
 
@@ -543,7 +575,7 @@ struct flow_action_items {
     struct rte_flow_action_port_id clone_output;
     struct rte_flow_action_count clone_count;
     struct rte_flow_action_raw_encap clone_raw_encap;
-    struct rte_flow_action_set_tag set_tags[REG_IDX_NUM];
+    struct rte_flow_action_set_tag set_tags[TAG_FIELD_NUM];
     uint8_t num_set_tags;
     struct {
         struct {
@@ -571,18 +603,32 @@ struct flow_data {
 
 static int
 netdev_dpdk_add_pattern_match_reg(struct flow_items *spec,
+                                  struct flow_items *mask,
                                   struct flow_patterns *patterns,
-                                  uint8_t reg_type, uint32_t val)
+                                  uint8_t tag_field, uint32_t val)
 {
-    if (reg_type >= REG_IDX_NUM) {
-        VLOG_ERR("reg type %d is out of range",reg_type);
+    struct rte_flow_action_set_tag *tag_id_map;
+
+    if (tag_field >= TAG_FIELD_NUM) {
+        VLOG_ERR("tag field %d is out of range", tag_field);
         return -1;
     }
 
-    spec->tags[spec->num_tags].index = reg_type;
-    spec->tags[spec->num_tags].data = val;
-    add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_TAG, &spec->tags[spec->num_tags], NULL);
+    tag_id_map = &tag_id_maps[tag_field];
+
+    spec->tags[spec->num_tags].index = tag_id_map->index;
+    spec->tags[spec->num_tags].data = (val << tag_id_map->data) & tag_id_map->mask;
+    if (spec->tags[spec->num_tags].data != val << tag_id_map->data) {
+        VLOG_ERR_RL(&error_rl, "value is out of range for tag id %d", val);
+        return -1;
+    }
+    mask->tags[mask->num_tags].index = 0xFF;
+    mask->tags[mask->num_tags].data = tag_id_map->mask;
+    add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_TAG,
+                     &spec->tags[spec->num_tags],
+                     &mask->tags[mask->num_tags]);
     spec->num_tags++;
+    mask->num_tags++;
     return 0;
 }
 
@@ -590,17 +636,26 @@ netdev_dpdk_add_pattern_match_reg(struct flow_items *spec,
 static int
 netdev_dpdk_add_action_set_reg(struct flow_action_items *action_items,
                                struct flow_actions *actions,
-                               uint8_t reg_type, uint32_t val)
+                               uint8_t tag_field, uint32_t val)
 {
-    if (reg_type >= REG_IDX_NUM) {
-        VLOG_ERR("reg type %d is out of range",reg_type);
+    struct rte_flow_action_set_tag *tag_id_map;
+
+    if (tag_field >= TAG_FIELD_NUM) {
+        VLOG_ERR("tag field %d is out of range", tag_field);
         return -1;
     }
 
-    action_items->set_tags[action_items->num_set_tags].index = reg_type;
-    action_items->set_tags[action_items->num_set_tags].data = val;
-    memset(&action_items->set_tags[action_items->num_set_tags].mask, 0xff,
-           sizeof action_items->set_tags[action_items->num_set_tags].mask);
+    tag_id_map = &tag_id_maps[tag_field];
+
+    action_items->set_tags[action_items->num_set_tags].index = tag_id_map->index;
+    action_items->set_tags[action_items->num_set_tags].data =
+        (val << tag_id_map->data) & tag_id_map->mask;
+    if (action_items->set_tags[action_items->num_set_tags].data !=
+        val << tag_id_map->data) {
+        VLOG_ERR_RL(&error_rl, "value is out of range for tag id %d", val);
+        return -1;
+    }
+    action_items->set_tags[action_items->num_set_tags].mask = tag_id_map->mask;
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_TAG,
                     &action_items->set_tags[action_items->num_set_tags]);
     action_items->num_set_tags++;
@@ -778,8 +833,8 @@ add_flow_patterns(struct flow_patterns *patterns,
 
     /* CT state */
     if (match->flow.ct_state)
-        netdev_dpdk_add_pattern_match_reg(spec, patterns,
-                                          REG_IDX_CT_STATE,
+        netdev_dpdk_add_pattern_match_reg(spec, mask, patterns,
+                                          TAG_FIELD_CT_STATE,
                                           match->flow.ct_state);
 
     return 0;
@@ -1669,7 +1724,7 @@ ct_add_rte_flow_offload(struct netdev_rte_port *rte_port,
     }
 
     if (netdev_dpdk_add_action_set_reg(&action_items, &actions,
-                                       REG_IDX_CT_STATE,
+                                       TAG_FIELD_CT_STATE,
                                        ct_offload->ct_state)) {
         VLOG_DBG("failed to set ct_state");
         return -1;
@@ -3695,8 +3750,8 @@ netdev_dpdk_offload_add_recirc_patterns(struct flow_data *fdata,
         if (cls_info->match.outer_id == INVALID_OUTER_ID) {
             return -1;
         }
-        netdev_dpdk_add_pattern_match_reg(&fdata->spec, patterns,
-                                          REG_IDX_OUTER_ID,
+        netdev_dpdk_add_pattern_match_reg(&fdata->spec, &fdata->mask, patterns,
+                                          TAG_FIELD_OUTER_ID,
                                           cls_info->match.outer_id);
     }
 
@@ -3707,13 +3762,13 @@ netdev_dpdk_offload_add_recirc_patterns(struct flow_data *fdata,
         masks->ct_zone  || masks->ct_mark) {
         /*TODO: replace with matching right register -- DONE */
         if (masks->ct_state) {
-            netdev_dpdk_add_pattern_match_reg(&fdata->spec, patterns,
-                                              REG_IDX_CT_STATE,
+            netdev_dpdk_add_pattern_match_reg(&fdata->spec, &fdata->mask, patterns,
+                                              TAG_FIELD_CT_STATE,
                                               match->flow.ct_state);
         }
         if (masks->ct_mark) {
-            netdev_dpdk_add_pattern_match_reg(&fdata->spec, patterns,
-                                              REG_IDX_CT_MARK,
+            netdev_dpdk_add_pattern_match_reg(&fdata->spec, &fdata->mask, patterns,
+                                              TAG_FIELD_CT_MARK,
                                               match->flow.ct_mark);
         }
     }
@@ -3930,7 +3985,7 @@ netdev_dpdk_offload_ct_actions(struct flow_data *fdata,
 
     /* TODO: set hw_id in reg_recirc , will be used by mapping table -- DONE */
     if (netdev_dpdk_add_action_set_reg(&fdata->actions, flow_actions,
-                                       REG_IDX_HW_ID,
+                                       TAG_FIELD_HW_ID,
                                        cls_info->actions.hw_id)) {
         return -1;
     }
@@ -4556,12 +4611,13 @@ netdev_rte_create_hwid_flow(struct netdev *netdev, uint32_t hwid, uint16_t dpdk_
 
     struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
 
-    struct flow_items spec;
+    struct flow_items spec, mask;
     memset(&spec, 0, sizeof spec);
+    memset(&mask, 0, sizeof mask);
 
     /* Match on hwid by setting RECIRC_ID register */
-    ret = netdev_dpdk_add_pattern_match_reg(&spec, &patterns,
-                                            REG_IDX_HW_ID, hwid);
+    ret = netdev_dpdk_add_pattern_match_reg(&spec, &mask, &patterns,
+                                            TAG_FIELD_HW_ID, hwid);
     if (ret) {
         return NULL;
     }
