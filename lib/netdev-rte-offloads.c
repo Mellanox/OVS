@@ -572,12 +572,42 @@ struct flow_data {
 static int
 netdev_dpdk_add_pattern_match_reg(struct flow_items *spec,
                                   struct flow_patterns *patterns,
-                                  uint8_t reg_type, uint32_t val);
+                                  uint8_t reg_type, uint32_t val)
+{
+    if (reg_type >= REG_IDX_NUM) {
+        VLOG_ERR("reg type %d is out of range",reg_type);
+        return -1;
+    }
+
+    spec->tags[spec->num_tags].index = reg_type;
+    spec->tags[spec->num_tags].data = val;
+    add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_TAG, &spec->tags[spec->num_tags], NULL);
+    spec->num_tags++;
+    return 0;
+}
+
 
 static int
 netdev_dpdk_add_action_set_reg(struct flow_action_items *action_items,
                                struct flow_actions *actions,
-                               uint8_t reg_type, uint32_t val);
+                               uint8_t reg_type, uint32_t val)
+{
+    if (reg_type >= REG_IDX_NUM) {
+        VLOG_ERR("reg type %d is out of range",reg_type);
+        return -1;
+    }
+
+    action_items->set_tags[action_items->num_set_tags].index = reg_type;
+    action_items->set_tags[action_items->num_set_tags].data = val;
+    memset(&action_items->set_tags[action_items->num_set_tags].mask, 0xff,
+           sizeof action_items->set_tags[action_items->num_set_tags].mask);
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_TAG,
+                    &action_items->set_tags[action_items->num_set_tags]);
+    action_items->num_set_tags++;
+
+    return 0;
+}
+
 
 static int
 add_flow_patterns(struct flow_patterns *patterns,
@@ -2865,44 +2895,6 @@ netdev_rte_offloads_hw_pr_remove(int relay_id)
 }
 
 /* Connection tracking code */
-
-static int
-netdev_dpdk_add_pattern_match_reg(struct flow_items *spec,
-                                  struct flow_patterns *patterns,
-                                  uint8_t reg_type, uint32_t val)
-{
-    if (reg_type >= REG_IDX_NUM) {
-        VLOG_ERR("reg type %d is out of range",reg_type);
-        return -1;
-    }
-
-    spec->tags[spec->num_tags].index = reg_type;
-    spec->tags[spec->num_tags].data = val;
-    add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_TAG, &spec->tags[spec->num_tags], NULL);
-    spec->num_tags++;
-    return 0;
-}
-
-static int
-netdev_dpdk_add_action_set_reg(struct flow_action_items *action_items,
-                               struct flow_actions *actions,
-                               uint8_t reg_type, uint32_t val)
-{
-    if (reg_type >= REG_IDX_NUM) {
-        VLOG_ERR("reg type %d is out of range",reg_type);
-        return -1;
-    }
-
-    action_items->set_tags[action_items->num_set_tags].index = reg_type;
-    action_items->set_tags[action_items->num_set_tags].data = val;
-    memset(&action_items->set_tags[action_items->num_set_tags].mask, 0xff,
-           sizeof action_items->set_tags[action_items->num_set_tags].mask);
-    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_TAG,
-                    &action_items->set_tags[action_items->num_set_tags]);
-    action_items->num_set_tags++;
-
-    return 0;
-}
 
 #define INVALID_OUTER_ID  0Xffffffff
 #define INVALID_HW_ID     0Xffffffff
