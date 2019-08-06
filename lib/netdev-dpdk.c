@@ -4501,14 +4501,14 @@ dump_flow_pattern(struct rte_flow_item *item, struct ds *s)
         ds_put_cstr(s, "rte flow tag pattern:\n");
         if (tag_spec) {
             ds_put_format(s,
-                          "  Spec: index=%u, data=%u\n",
+                          "  Spec: index=%u, data=0x%08x\n",
                           tag_spec->index, tag_spec->data);
         } else {
             ds_put_cstr(s, "  Spec = null\n");
         }
         if (tag_mask) {
             ds_put_format(s,
-                          "  Mask: index=%u, data=%u\n",
+                          "  Mask: index=%u, data=0x%08x\n",
                           tag_mask->index, tag_mask->data);
         } else {
             ds_put_cstr(s, "  Mask = null\n");
@@ -4631,7 +4631,7 @@ dump_flow_action(struct rte_flow_action *actions, struct ds *s)
         ds_put_cstr(s, "rte flow set-tag action:\n");
         if (set_tag) {
             ds_put_format(s,
-                          "  Set-tag: index=%u, data=%u, mask=0x%08x\n",
+                          "  Set-tag: index=%u, data=0x%08x, mask=0x%08x\n",
                           set_tag->index, set_tag->data, set_tag->mask);
         } else {
             ds_put_cstr(s, "  Set-tag = null\n");
