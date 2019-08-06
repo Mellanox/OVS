@@ -831,11 +831,21 @@ add_flow_patterns(struct flow_patterns *patterns,
         break;
     }
 
-    /* CT state */
-    if (match->flow.ct_state)
+    if (match->wc.masks.ct_state) {
         netdev_dpdk_add_pattern_match_reg(spec, mask, patterns,
                                           TAG_FIELD_CT_STATE,
                                           match->flow.ct_state);
+    }
+    if (match->wc.masks.ct_zone) {
+        netdev_dpdk_add_pattern_match_reg(spec, mask, patterns,
+                                          TAG_FIELD_CT_ZONE,
+                                          match->flow.ct_zone);
+    }
+    if (match->wc.masks.ct_mark) {
+        netdev_dpdk_add_pattern_match_reg(spec, mask, patterns,
+                                          TAG_FIELD_CT_MARK,
+                                          match->flow.ct_mark);
+    }
 
     return 0;
 }
@@ -3732,8 +3742,6 @@ netdev_dpdk_offload_add_recirc_patterns(struct flow_data *fdata,
                              struct match *match,
                              struct offload_item_cls_info *cls_info)
 {
-    const struct flow *masks = &match->wc.masks;
-
     /* find available hw_id for recirc_id */
     if (netdev_dpdk_get_recirc_hw_id(cls_info->match.recirc_id,
                                      &cls_info->match.hw_id) ==
@@ -3757,22 +3765,6 @@ netdev_dpdk_offload_add_recirc_patterns(struct flow_data *fdata,
 
     /* TODO: here we add match on outer_id -- DONE */
     netdev_dpdk_offload_add_root_patterns(fdata, patterns, match);
-    /*TODO: add following patterns: */
-    if (masks->ct_state ||
-        masks->ct_zone  || masks->ct_mark) {
-        /*TODO: replace with matching right register -- DONE */
-        if (masks->ct_state) {
-            netdev_dpdk_add_pattern_match_reg(&fdata->spec, &fdata->mask, patterns,
-                                              TAG_FIELD_CT_STATE,
-                                              match->flow.ct_state);
-        }
-        if (masks->ct_mark) {
-            netdev_dpdk_add_pattern_match_reg(&fdata->spec, &fdata->mask, patterns,
-                                              TAG_FIELD_CT_MARK,
-                                              match->flow.ct_mark);
-        }
-    }
-        
 
     return 0;
 }
@@ -3971,6 +3963,13 @@ netdev_dpdk_offload_ct_actions(struct flow_data *fdata,
                                uint32_t flow_mark)
 {
     int ret = 0;
+
+    if (cls_info->actions.zone) {
+        netdev_dpdk_add_action_set_reg(&fdata->actions, flow_actions,
+                                       TAG_FIELD_CT_ZONE,
+                                       cls_info->actions.zone);
+        return -1;
+    }
 
     netdev_rte_add_mark_flow_action(&fdata->actions.mark, flow_mark, flow_actions);
 
