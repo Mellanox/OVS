@@ -29,6 +29,7 @@
 #include "id-pool.h"
 #include "netdev-provider.h"
 #include "conntrack.h"
+#include "netdev-native-tnl.h"
 #include "openvswitch/match.h"
 #include "openvswitch/vlog.h"
 #include "packets.h"
@@ -3081,13 +3082,16 @@ netdev_dpdk_tun_data_del(uint32_t outer_id)
 }
 
 static void
-netdev_dpdk_tun_data_insert(uint32_t outer_id, ovs_be32 ip_dst,
-                               ovs_be32 ip_src, ovs_be64 tun_id)
+netdev_dpdk_tun_data_insert(uint32_t outer_id, odp_port_t tun_vport,
+                            ovs_be32 ip_dst,
+                            ovs_be32 ip_src,
+                            ovs_be64 tun_id)
 {
     size_t hash = hash_add(0,outer_id);
     struct tun_ctx_outer_id_data *data = xzalloc(sizeof *data);
 
     data->outer_id = outer_id;
+    data->tun_vport = tun_vport;
     data->ip_dst = ip_dst;
     data->ip_src = ip_src;
     data->tun_id = tun_id;
@@ -3107,7 +3111,8 @@ static inline uint32_t netdev_dpdk_tun_hash(ovs_be32 ip_dst, ovs_be32 ip_src,
 }
 
 static uint32_t
-netdev_dpdk_tun_outer_id_get_ref(ovs_be32 ip_dst, ovs_be32 ip_src,
+netdev_dpdk_tun_outer_id_get_ref(odp_port_t tun_vport,
+                                 ovs_be32 ip_dst, ovs_be32 ip_src,
                               ovs_be64 tun_id)
 {
     struct tun_ctx_outer_id_data *data;
@@ -3115,8 +3120,10 @@ netdev_dpdk_tun_outer_id_get_ref(ovs_be32 ip_dst, ovs_be32 ip_src,
 
     CMAP_FOR_EACH_WITH_HASH (data, node, hash,
                     &tun_ctx_outer_id.tun_to_outer_id_map) {
-        if (data->tun_id == tun_id && data->ip_dst == ip_dst
-                        && data->ip_src == ip_src) {
+        if (data->tun_id == tun_id && 
+            data->ip_dst == ip_dst &&
+            data->ip_src == ip_src &&
+            data->tun_vport == tun_vport) {
             data->ref_count++;
             return data->outer_id;
         }
@@ -3126,8 +3133,9 @@ netdev_dpdk_tun_outer_id_get_ref(ovs_be32 ip_dst, ovs_be32 ip_src,
 }
 
 static uint32_t
-netdev_dpdk_tun_outer_id_alloc(ovs_be32 ip_dst, ovs_be32 ip_src,
-                              ovs_be64 tun_id)
+netdev_dpdk_tun_outer_id_alloc(odp_port_t tun_vport,
+                               ovs_be32 ip_dst, ovs_be32 ip_src,
+                               ovs_be64 tun_id)
 {
     struct tun_ctx_outer_id_data *data;
     uint32_t outer_id;
@@ -3144,6 +3152,7 @@ netdev_dpdk_tun_outer_id_alloc(ovs_be32 ip_dst, ovs_be32 ip_src,
     hash = netdev_dpdk_tun_hash(ip_dst, ip_src, tun_id);
 
     data = xzalloc(sizeof *data);
+    data->tun_vport = tun_vport;
     data->ip_dst = ip_dst;
     data->ip_src = ip_src;
     data->tun_id = tun_id;
@@ -3153,7 +3162,7 @@ netdev_dpdk_tun_outer_id_alloc(ovs_be32 ip_dst, ovs_be32 ip_src,
     cmap_insert(&tun_ctx_outer_id.tun_to_outer_id_map,
                 CONST_CAST(struct cmap_node *, &data->node), hash);
 
-    netdev_dpdk_tun_data_insert(outer_id, ip_dst,ip_src, tun_id);
+    netdev_dpdk_tun_data_insert(outer_id, tun_vport, ip_dst,ip_src, tun_id);
 
     return outer_id;
 }
@@ -3189,13 +3198,15 @@ netdev_dpdk_tun_outer_id_unref(ovs_be32 ip_dst, ovs_be32 ip_src,
  * every offloaded flow that has tun on match should use outer_id
  */
 static uint32_t
-netdev_dpdk_tun_id_get_ref(ovs_be32 ip_dst, ovs_be32 ip_src,
-                                       ovs_be64 tun_id)
+netdev_dpdk_tun_id_get_ref(odp_port_t tun_vport,
+                           ovs_be32 ip_dst, ovs_be32 ip_src,
+                           ovs_be64 tun_id)
 {
-    uint32_t outer_id = netdev_dpdk_tun_outer_id_get_ref(ip_dst,
-                                                   ip_src, tun_id);
+    uint32_t outer_id = netdev_dpdk_tun_outer_id_get_ref(tun_vport, ip_dst,
+                                                         ip_src, tun_id);
     if (outer_id == INVALID_OUTER_ID) {
-        return netdev_dpdk_tun_outer_id_alloc(ip_dst, ip_src, tun_id);
+        return netdev_dpdk_tun_outer_id_alloc(tun_vport, ip_dst,
+                                              ip_src, tun_id);
     }
     return outer_id;
 }
@@ -3210,6 +3221,39 @@ netdev_dpdk_outer_id_unref(uint32_t outer_id)
     }
 }
 
+static int
+netdev_rte_vxlan_restore(uint32_t outer_id, struct dp_packet *packet)
+{
+    struct tun_ctx_outer_id_data *data = netdev_dpdk_tun_data_find(outer_id);
+    if (!data) {
+        return -1;
+    }
+    /* Override odp_port with vport number */
+    packet->md.in_port.odp_port = data->tun_vport;
+    memset(&packet->md.tunnel, 0, sizeof packet->md.tunnel);
+    packet->md.tunnel.ip_dst = data->ip_dst;
+    packet->md.tunnel.ip_src = data->ip_src;
+    packet->md.tunnel.tun_id = data->tun_id;
+    /*
+     * The following tunnel information is not used for matching metadata.
+     * struct in6_addr ipv6_dst;
+     * struct in6_addr ipv6_src;
+     * uint16_t flags;
+     * uint8_t ip_tos;
+     * uint8_t ip_ttl;
+     * uint16_t tp_dst;
+     * uint16_t tp_src;
+     * ovs_be16 gbp_id;
+     * uint8_t  gbp_flags;
+     * uint8_t erspan_ver;
+     * uint32_t erspan_idx;
+     * uint8_t erspan_dir;
+     * uint8_t erspan_hwid;
+     */
+
+    return 0;
+}
+
 enum ct_offload_dir {
     CT_OFFLOAD_DIR_INIT = 0,
     CT_OFFLOAD_DIR_REP = 1,
@@ -3219,7 +3263,7 @@ enum ct_offload_dir {
 /* TODO - make sure each of the below 4 preprocesses is fully implemented */
 enum mark_preprocess_type {
     MARK_PREPROCESS_CT = 1 << 0,
-    MARK_PREPROCESS_FLOW_CT = 1 << 1,
+    MARK_PREPROCESS_FLOW_WITH_CT = 1 << 1,
     MARK_PREPROCESS_FLOW = 1 << 2,
     MARK_PREPROCESS_VXLAN = 1 << 3
 };
@@ -3227,7 +3271,7 @@ enum mark_preprocess_type {
 /*
  * A mapping from ufid to to CT rte_flow.
  */
-static struct cmap mark_to_ct_ctx = CMAP_INITIALIZER;
+static struct cmap mark_to_miss_ctx = CMAP_INITIALIZER;
 
 #define INVALID_IN_PORT 0xffff
 
@@ -3247,6 +3291,7 @@ struct mark_to_miss_ctx_data {
         struct {
             uint16_t outer_id;
             uint32_t hw_id;
+            uint32_t recirc_id;
             bool     is_port;
             uint32_t in_port;
         } flow;
@@ -3295,7 +3340,7 @@ netdev_dpdk_find_miss_ctx(uint32_t mark, struct mark_to_miss_ctx_data **ctx)
     struct mark_to_miss_ctx_data *data;
 
     CMAP_FOR_EACH_WITH_HASH (data, node, hash,
-            &mark_to_ct_ctx) {
+            &mark_to_miss_ctx) {
         if (data->mark == mark) {
             *ctx = data;
             return true;
@@ -3318,7 +3363,7 @@ netdev_dpdk_get_flow_miss_ctx(uint32_t mark)
         data->ct.outer_id[CT_OFFLOAD_DIR_INIT] = INVALID_OUTER_ID;
         data->ct.odp_port[CT_OFFLOAD_DIR_REP] = INVALID_IN_PORT;
         data->ct.odp_port[CT_OFFLOAD_DIR_INIT] = INVALID_IN_PORT;
-        cmap_insert(&mark_to_ct_ctx,
+        cmap_insert(&mark_to_miss_ctx,
                 CONST_CAST(struct cmap_node *, &data->node), hash);
     }
 
@@ -3326,20 +3371,21 @@ netdev_dpdk_get_flow_miss_ctx(uint32_t mark)
 }
 
 static int
-netdev_dpdk_save_flow_miss_ctx(uint32_t mark, uint32_t hw_id, bool is_port,
+netdev_dpdk_save_flow_miss_ctx(uint32_t mark, uint32_t hw_id, uint32_t recirc_id,
                                uint32_t outer_id, uint32_t in_port,
-                               bool has_ct)
+                               int miss_type)
 {
-    struct mark_to_miss_ctx_data * data = netdev_dpdk_get_flow_miss_ctx(mark);
+    struct mark_to_miss_ctx_data *data = netdev_dpdk_get_flow_miss_ctx(mark);
     if (!data) {
         return -1;
     }
 
-    data->type = has_ct?MARK_PREPROCESS_FLOW_CT:MARK_PREPROCESS_FLOW;
+    data->type = miss_type;
     data->mark = mark;
     data->flow.outer_id = outer_id;
     data->flow.hw_id = hw_id;
-   data->flow.is_port = is_port;
+    data->flow.recirc_id = recirc_id;
+    data->flow.is_port = !recirc_id;
     data->flow.in_port = in_port;
     return 0;
 }
@@ -3351,10 +3397,9 @@ netdev_dpdk_del_miss_ctx(uint32_t mark)
     struct mark_to_miss_ctx_data *data;
 
     CMAP_FOR_EACH_WITH_HASH (data, node, hash,
-                      &mark_to_ct_ctx) {
+                      &mark_to_miss_ctx) {
         if (data->mark == mark) {
-                VLOG_DBG("Free miss context for mark=%d", mark);
-                cmap_remove(&mark_to_ct_ctx,
+                cmap_remove(&mark_to_miss_ctx,
                         CONST_CAST(struct cmap_node *, &data->node), hash);
                 ovsrcu_postpone(free, data);
                 return;
@@ -3767,7 +3812,7 @@ netdev_dpdk_offload_classify(struct netdev_rte_port *rte_port,
     } else if (cls_info->actions.has_ct) {
         cls_info->actions.type = ACTION_OFFLOAD_TYPE_CT;
     } else if (cls_info->actions.push_tnl) {
-        cls_info->actions.type = ACTION_OFFLOAD_TYPE_TNL_PUSH; 
+        cls_info->actions.type = ACTION_OFFLOAD_TYPE_TNL_PUSH;
     } else if (cls_info->actions.odp_port) {
         cls_info->actions.type = ACTION_OFFLOAD_TYPE_OUTPUT;
     }
@@ -3795,6 +3840,7 @@ netdev_dpdk_offload_add_vport_root_patterns(struct flow_data *fdata,
     struct tun_ctx_outer_id_data *data;
 
     cls_info->match.outer_id = netdev_dpdk_tun_id_get_ref(
+                                       match->flow.in_port.odp_port,
                                        cls_info->match.ip_dst,
                                        cls_info->match.ip_src,
                                        cls_info->match.tun_id);
@@ -3839,6 +3885,7 @@ netdev_dpdk_offload_add_recirc_patterns(struct flow_data *fdata,
     if (cls_info->match.tun_id) {
         /* if we should match tun id */
         cls_info->match.outer_id = netdev_dpdk_tun_id_get_ref(
+                                       match->flow.in_port.odp_port,
                                        cls_info->match.ip_dst,
                                        cls_info->match.ip_src,
                                        cls_info->match.tun_id);
@@ -4052,7 +4099,7 @@ netdev_dpdk_offload_ct_actions(struct flow_data *fdata,
                                     flow_actions);
 
     /* TODO: add all actions until CT
-     * read all actions for actions and add them to rte_flow 
+     * read all actions for actions and add them to rte_flow
      * can push_vlan, set_eth...etc */
     if (cls_info->actions.has_nat) {
         /* TODO: we need to create the table if doesn't exists -- will be done implicitly with the first flow */
@@ -4305,14 +4352,31 @@ netdev_dpdk_offload_put_handle(struct netdev *netdev,
     if(netdev_dpdk_offload_set_group_id(rte_port, &cls_info, &flow_attr, workaround_needed)) {
         goto roll_back;
     }
-    /* for all cases, we need to save all resources allocated */
-    ret = netdev_dpdk_save_flow_miss_ctx(info->flow_mark,
-                                         cls_info.actions.hw_id,
-                                         !cls_info.actions.recirc_id,
-                                         cls_info.match.outer_id,
-                                         match->flow.in_port.odp_port,
-                                         cls_info.actions.type == ACTION_OFFLOAD_TYPE_CT);
-    if (ret) {
+
+    int miss_type;
+    switch (cls_info.actions.type) {
+    case ACTION_OFFLOAD_TYPE_CT:
+        miss_type = MARK_PREPROCESS_FLOW_WITH_CT;
+        break;
+    case ACTION_OFFLOAD_TYPE_OUTPUT:
+    case ACTION_OFFLOAD_TYPE_TNL_PUSH:
+        miss_type = MARK_PREPROCESS_FLOW;
+        break;
+    case ACTION_OFFLOAD_TYPE_TNL_POP:
+        miss_type = MARK_PREPROCESS_VXLAN;
+        break;
+    default:
+        VLOG_ERR("Illegal classified action type %d", cls_info.actions.type);
+        goto roll_back;
+        break;
+    }
+    /* Save flow related meta data with mark as key */
+    if (netdev_dpdk_save_flow_miss_ctx(info->flow_mark,
+                                       cls_info.actions.hw_id,
+                                       cls_info.actions.recirc_id,
+                                       cls_info.match.outer_id,
+                                       match->flow.in_port.odp_port,
+                                       miss_type)) {
         goto roll_back;
     }
 
@@ -4454,6 +4518,7 @@ netdev_dpdk_ct_ctx_get_ref_outer_id(struct mark_to_miss_ctx_data *data,
 
     if (ct_offload1->tun.ip_dst) {
         data->ct.outer_id[dir1] = netdev_dpdk_tun_id_get_ref(
+                                       ct_offload1->odp_port,
                                        ct_offload1->tun.ip_dst,
                                        ct_offload1->tun.ip_src,
                                        ct_offload1->tun.tun_id);
@@ -4469,6 +4534,7 @@ netdev_dpdk_ct_ctx_get_ref_outer_id(struct mark_to_miss_ctx_data *data,
     }
     if (ct_offload2->tun.ip_dst) {
         data->ct.outer_id[dir2] = netdev_dpdk_tun_id_get_ref(
+                                       ct_offload2->odp_port,
                                        ct_offload2->tun.ip_dst,
                                        ct_offload2->tun.ip_src,
                                        ct_offload2->tun.tun_id);
@@ -4653,7 +4719,7 @@ netdev_dpdk_offload_ct_put(struct ct_flow_offload_item *ct_offload,
                            uint32_t mark)
 {
     struct mark_to_miss_ctx_data *data =
-                        netdev_dpdk_get_flow_miss_ctx(mark);
+        netdev_dpdk_get_flow_miss_ctx(mark);
     if (!data) {
         return -1;
     }
@@ -4996,6 +5062,7 @@ static int
 restore_packet_state(uint32_t flow_mark, struct dp_packet *packet)
 {
     struct mark_to_miss_ctx_data *miss_ctx;
+    uint16_t outer_id;
     uint32_t hw_id;
     struct ct_flow_offload_item *ct_offload = NULL;
     struct ct_flow_offload_item *ct_init, *ct_rep;
@@ -5005,38 +5072,67 @@ restore_packet_state(uint32_t flow_mark, struct dp_packet *packet)
     if (!miss_ctx)
         return -1;
 
-    ct_init = miss_ctx->ct.ct_offload[CT_OFFLOAD_DIR_INIT];
-    ct_rep = miss_ctx->ct.ct_offload[CT_OFFLOAD_DIR_REP];
-    rte_port = netdev_rte_port_search(packet->md.in_port.odp_port, &port_map);
-    if ((packet->md.in_port.odp_port == ct_init->odp_port) ||
-       (rte_port->is_uplink && ct_init->tun.ip_dst)) {
-        ct_offload = ct_init;
-    }
-    else if ((packet->md.in_port.odp_port == ct_rep->odp_port) ||
-            (rte_port->is_uplink && ct_rep->tun.ip_dst)) {
-        ct_offload = ct_rep;
-    } else {
-        VLOG_DBG("Could not match any direction for CT miss handling");
-    }
+    switch (miss_ctx->type) {
+    case MARK_PREPROCESS_VXLAN:
+        /* Pop header that will also restore meta data */
+        packet = netdev_vxlan_pop_header(packet);
+        if (!packet) {
+            return -1;
+        }
+        return 0;
+        break;
 
-    packet->md.ct_zone = miss_ctx->ct.ct_zone;
-    packet->md.ct_state = ct_offload->ct_state;
-    packet->md.in_port.odp_port = ct_offload->odp_port;
-    packet->md.recirc_id = 0;
-    if (!dp_packet_has_flow_meta(packet, &hw_id)) {
-        hw_id = 0;
-    }
-    if (hw_id && netdev_dpdk_get_id_from_hw_id(hw_id, false,
-                                               &packet->md.recirc_id)) {
-        VLOG_DBG("Failed to get recirc_id from hw_id %u", hw_id);
+    case MARK_PREPROCESS_CT:
+        ct_init = miss_ctx->ct.ct_offload[CT_OFFLOAD_DIR_INIT];
+        ct_rep = miss_ctx->ct.ct_offload[CT_OFFLOAD_DIR_REP];
+        rte_port = netdev_rte_port_search(packet->md.in_port.odp_port, &port_map);
+        if ((packet->md.in_port.odp_port == ct_init->odp_port) ||
+           (rte_port->is_uplink && ct_init->tun.ip_dst)) {
+            ct_offload = ct_init;
+        }
+        else if ((packet->md.in_port.odp_port == ct_rep->odp_port) ||
+                (rte_port->is_uplink && ct_rep->tun.ip_dst)) {
+            ct_offload = ct_rep;
+        } else {
+            VLOG_DBG("Could not match any direction for CT miss handling");
+        }
+
+        packet->md.ct_zone = miss_ctx->ct.ct_zone;
+        packet->md.ct_state = ct_offload->ct_state;
+        packet->md.in_port.odp_port = ct_offload->odp_port;
+        packet->md.recirc_id = 0;
+        if (!dp_packet_has_flow_meta(packet, &hw_id)) {
+            hw_id = 0;
+        }
+        if (hw_id && netdev_dpdk_get_id_from_hw_id(hw_id, false,
+                                                   &packet->md.recirc_id)) {
+            VLOG_DBG("Failed to get recirc_id from hw_id %u", hw_id);
+            return -1;
+        }
+        memset(&packet->md.tunnel, 0, sizeof packet->md.tunnel);
+        /* TODO - should use ct outer id in miss_ctx? Seems like duplicated information to tun */
+        if (ct_offload && ct_offload->tun.ip_dst) {
+            packet->md.tunnel.ip_dst = ct_offload->tun.ip_dst;
+            packet->md.tunnel.ip_src = ct_offload->tun.ip_src;
+            packet->md.tunnel.tun_id = ct_offload->tun.tun_id;
+        }
+    break;
+
+    case MARK_PREPROCESS_FLOW_WITH_CT:
+    case MARK_PREPROCESS_FLOW:
+        packet->md.in_port.odp_port = miss_ctx->flow.in_port;
+        packet->md.recirc_id = miss_ctx->flow.recirc_id;
+        outer_id = miss_ctx->flow.outer_id;
+        if (outer_id && netdev_rte_vxlan_restore(outer_id, packet)) {
+            VLOG_DBG("Failed to restore VXLAN tunnel for outer_id %u", outer_id );
+            return -1;
+        }
+    break;
+
+    default:
+        VLOG_ERR("Unknown preprocess type %d", miss_ctx->type);
         return -1;
-    }
-    memset(&packet->md.tunnel, 0, sizeof packet->md.tunnel);
-    /* TODO - should use ct outer id in miss_ctx? Seems like duplicated information to tun */
-    if (ct_offload && ct_offload->tun.ip_dst) {
-        packet->md.tunnel.ip_dst = ct_offload->tun.ip_dst;
-        packet->md.tunnel.ip_src = ct_offload->tun.ip_src;
-        packet->md.tunnel.tun_id = ct_offload->tun.tun_id;
+    break;
     }
 
     packet->md.ct_zone = miss_ctx->ct.ct_zone;
