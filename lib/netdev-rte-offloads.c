@@ -3276,6 +3276,24 @@ static struct hw_table_id hw_table_id = {
 };
 
 static int
+netdev_dpdk_get_id_from_hw_id(uint32_t hw_id, bool is_port, uint32_t *id)
+{
+    struct hw_table_id_node *data = NULL;
+    struct cmap *smap = is_port ? &port_id_to_tbl_id_map:
+                                  &recirc_id_to_tbl_id_map;
+
+    CMAP_FOR_EACH (data, node, smap) {
+    /* TODO: create a cmap of hwid to id for faster search */
+        if (data->hw_id == hw_id && data->is_port == is_port) {
+            *id = data->id;
+            return 0;
+        }
+    }
+
+    return -1;
+}
+
+static int
 netdev_dpdk_get_hw_id(uint32_t id, uint32_t *hw_id, bool is_port, bool peek)
 {
     size_t hash = hash_bytes(&id, sizeof id, 0);
