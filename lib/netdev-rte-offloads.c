@@ -2972,6 +2972,7 @@ struct tun_ctx_outer_id_data {
     ovs_be32 ip_dst;
     ovs_be32 ip_src;
     ovs_be64 tun_id;
+    uint32_t tun_vport;
     int      ref_count;
 };
 
@@ -3308,6 +3309,7 @@ netdev_dpdk_tun_recover_meta_data(struct dp_packet *p, uint32_t outer_id)
         p->md.tunnel.ip_dst = data->ip_dst;
         p->md.tunnel.ip_src = data->ip_src;
         p->md.tunnel.tun_id = data->tun_id;
+        p->md.in_port.odp_port = data->tun_vport;
     }
 }
 
@@ -3729,6 +3731,8 @@ netdev_dpdk_offload_add_vport_root_patterns(struct flow_data *fdata,
                              struct match *match,
                              struct offload_item_cls_info *cls_info)
 {
+    struct tun_ctx_outer_id_data *data;
+
     cls_info->match.outer_id = netdev_dpdk_tun_id_get_ref(
                                        cls_info->match.ip_dst,
                                        cls_info->match.ip_src,
@@ -3742,7 +3746,11 @@ netdev_dpdk_offload_add_vport_root_patterns(struct flow_data *fdata,
                                         &fdata->mask_outer, match)) {
         return -1;
     }
- 
+
+    /* save the vport ID of the tunnel */
+    data = netdev_dpdk_tun_data_find(cls_info->match.outer_id);
+    data->tun_vport = match->flow.in_port.odp_port;
+
 
     if (add_flow_patterns(patterns, &fdata->spec, &fdata->mask, match)) {
         return -1;
@@ -4893,9 +4901,9 @@ restore_packet_state(uint32_t flow_mark, struct dp_packet *packet)
         packet->md.ct_state = miss_ctx->ct.ct_offload[CT_OFFLOAD_DIR_REP]->ct_state;
         packet->md.recirc_id = 2;//FIX
     }
-    else
-        VLOG_DBG("error");
 
     packet->md.ct_zone = miss_ctx->ct.ct_zone;
+    netdev_dpdk_tun_recover_meta_data(packet, miss_ctx->flow.outer_id);
+
     return 0;
 }
