@@ -3965,10 +3965,10 @@ netdev_dpdk_offload_ct_actions(struct flow_data *fdata,
     int ret = 0;
 
     if (cls_info->actions.zone) {
-        netdev_dpdk_add_action_set_reg(&fdata->actions, flow_actions,
-                                       TAG_FIELD_CT_ZONE,
-                                       cls_info->actions.zone);
-        return -1;
+        if (netdev_dpdk_add_action_set_reg(&fdata->actions, flow_actions,
+                                           TAG_FIELD_CT_ZONE,
+                                           cls_info->actions.zone))
+            return -1;
     }
 
     netdev_rte_add_mark_flow_action(&fdata->actions.mark, flow_mark, flow_actions);
