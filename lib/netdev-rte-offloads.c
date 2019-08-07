@@ -4263,7 +4263,8 @@ netdev_dpdk_offload_put_handle(struct netdev *netdev,
 
     workaround_needed = !is_vport &&
         (cls_info.actions.type == ACTION_OFFLOAD_TYPE_TNL_PUSH ||
-         cls_info.actions.type == ACTION_OFFLOAD_TYPE_OUTPUT);
+         cls_info.actions.type == ACTION_OFFLOAD_TYPE_OUTPUT) &&
+         cls_info.match.type != MATCH_OFFLOAD_TYPE_RECIRC;
     if(netdev_dpdk_offload_set_group_id(rte_port, &cls_info, &flow_attr, workaround_needed)) {
         goto roll_back;
     }
