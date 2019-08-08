@@ -833,6 +833,10 @@ add_flow_patterns(struct flow_patterns *patterns,
         break;
     }
 
+    if (match->flow.recirc_id == 0) {
+        return 0;
+    }
+
     if (match->wc.masks.ct_state) {
         netdev_dpdk_add_pattern_match_reg(spec, mask, patterns,
                                           TAG_FIELD_CT_STATE,
