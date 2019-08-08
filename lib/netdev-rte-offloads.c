@@ -4526,11 +4526,11 @@ netdev_dpdk_offload_ct_session(struct mark_to_miss_ctx_data *data,
     if (dir1 == dir2) {
         /* TODO: add warning */
         VLOG_ERR("got two established events on same dir");
-        goto fail;
+        return -1;
     }
 
     if (netdev_dpdk_ct_ctx_get_ref_outer_id(data, ct_offload1, ct_offload2)) {
-        goto fail;
+        return -1;
     }
 
     struct netdev_rte_port *rte_port;
@@ -4539,8 +4539,8 @@ netdev_dpdk_offload_ct_session(struct mark_to_miss_ctx_data *data,
 
     rte_port = netdev_rte_port_search(ct_offload1->odp_port, &port_map);
     if (!rte_port) {
-        VLOG_DBG("port %d has no rte_port", ct_offload1->odp_port);
-        goto fail;
+        VLOG_DBG("dir=INIT, port %d has no rte_port", ct_offload1->odp_port);
+        goto err_port1;
     }
     fill_ct_match(&match, ct_offload1);
     /* Add flow to CT table */
@@ -4549,7 +4549,7 @@ netdev_dpdk_offload_ct_session(struct mark_to_miss_ctx_data *data,
                                    false, NULL /*struct ct_stats *stats OVS_UNUSED*/);
     if (ret) {
         VLOG_DBG("failed to offload CT mark=%u dir=INIT", data->mark);
-        goto fail;
+        goto err_port1;
     }
     if (ct_offload1->mod_flags) {
         /* Add flow to CT-NAT table */
@@ -4559,7 +4559,7 @@ netdev_dpdk_offload_ct_session(struct mark_to_miss_ctx_data *data,
                                        true, NULL /*struct ct_stats *stats OVS_UNUSED*/);
         if (ret) {
             VLOG_DBG("failed to offload CT-NAT mark=%u dir=INIT", data->mark);
-            goto fail;
+            goto err_dir1;
         }
     }
     data->ct.rteflow[dir1] = true;
@@ -4567,8 +4567,8 @@ netdev_dpdk_offload_ct_session(struct mark_to_miss_ctx_data *data,
 
     rte_port = netdev_rte_port_search(ct_offload2->odp_port, &port_map);
     if (!rte_port) {
-        VLOG_DBG("port %d has no rte_port", ct_offload2->odp_port);
-        goto fail;
+        VLOG_DBG("dir=REP, port %d has no rte_port", ct_offload2->odp_port);
+        goto err_dir1;
     }
     fill_ct_match(&match, ct_offload2);
     /* Add flow to CT table in the other direction */
@@ -4577,7 +4577,7 @@ netdev_dpdk_offload_ct_session(struct mark_to_miss_ctx_data *data,
                                    false, NULL /*struct ct_stats *stats OVS_UNUSED*/);
     if (ret) {
         VLOG_DBG("failed to offload CT mark=%u dir=REP", data->mark);
-        goto fail;
+        goto err_dir1;
     }
     if (ct_offload2->mod_flags) {
         /* Add flow to CT-NAT table in the other direction */
@@ -4586,7 +4586,7 @@ netdev_dpdk_offload_ct_session(struct mark_to_miss_ctx_data *data,
                                        true, NULL /*struct ct_stats *stats OVS_UNUSED*/);
         if (ret) {
             VLOG_DBG("failed to offload CT-NAT mark=%u dir=REP", data->mark);
-            goto fail;
+            goto err_dir2;
         }
     }
 
@@ -4597,9 +4597,13 @@ netdev_dpdk_offload_ct_session(struct mark_to_miss_ctx_data *data,
      * for nat we need the exact same match, but we need to add
      * modify action on the needed header fields */
     return 0;
-fail:
-    netdev_dpdk_release_ct_flow(data, dir1);
+
+err_dir2:
     netdev_dpdk_release_ct_flow(data, dir2);
+err_dir1:
+    netdev_dpdk_release_ct_flow(data, dir1);
+err_port1:
+    netdev_dpdk_ct_ctx_unref_outer_id(data, ct_offload1, ct_offload2);
     return -1;
 }
 
