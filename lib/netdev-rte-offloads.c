@@ -4387,13 +4387,47 @@ netdev_dpdk_reset_actions(struct flow_actions *actions)
     actions->actions = NULL;
 }
 
+static void
+netdev_dpdk_ct_ctx_unref_outer_id(struct mark_to_miss_ctx_data *data,
+                                  struct ct_flow_offload_item *ct_offload1,
+                                  struct ct_flow_offload_item *ct_offload2)
+{
+    int dir1 = ct_offload1->reply ? CT_OFFLOAD_DIR_REP : CT_OFFLOAD_DIR_INIT;
+    int dir2 = ct_offload2->reply ? CT_OFFLOAD_DIR_REP : CT_OFFLOAD_DIR_INIT;
+
+    if (data->ct.outer_id[dir1] != INVALID_OUTER_ID) {
+        VLOG_DBG("dir=%d, netdev_dpdk_tun_outer_id_unref for "
+                 "dst="IP_FMT", src="IP_FMT", tun_id=%"PRIu64,
+                 dir1,
+                 IP_ARGS(ct_offload1->tun.ip_dst),
+                 IP_ARGS(ct_offload1->tun.ip_src),
+                 ct_offload1->tun.tun_id);
+        netdev_dpdk_tun_outer_id_unref(ct_offload1->tun.ip_dst,
+                                       ct_offload1->tun.ip_src,
+                                       ct_offload1->tun.tun_id);
+        data->ct.outer_id[dir1] = INVALID_OUTER_ID;
+    }
+    if (data->ct.outer_id[dir2] != INVALID_OUTER_ID) {
+        VLOG_DBG("dir=%d, netdev_dpdk_tun_outer_id_unref for "
+                 "dst="IP_FMT", src="IP_FMT", tun_id=%"PRIu64,
+                 dir2,
+                 IP_ARGS(ct_offload2->tun.ip_dst),
+                 IP_ARGS(ct_offload2->tun.ip_src),
+                 ct_offload2->tun.tun_id);
+        netdev_dpdk_tun_outer_id_unref(ct_offload2->tun.ip_dst,
+                                       ct_offload2->tun.ip_src,
+                                       ct_offload2->tun.tun_id);
+        data->ct.outer_id[dir2] = INVALID_OUTER_ID;
+    }
+}
+
 static int
 netdev_dpdk_ct_ctx_get_ref_outer_id(struct mark_to_miss_ctx_data *data,
                                     struct ct_flow_offload_item *ct_offload1,
                                     struct ct_flow_offload_item *ct_offload2)
 {
-    int dir1 = ct_offload1->reply?CT_OFFLOAD_DIR_REP:CT_OFFLOAD_DIR_INIT;
-    int dir2 = ct_offload2->reply?CT_OFFLOAD_DIR_REP:CT_OFFLOAD_DIR_INIT;
+    int dir1 = ct_offload1->reply ? CT_OFFLOAD_DIR_REP : CT_OFFLOAD_DIR_INIT;
+    int dir2 = ct_offload2->reply ? CT_OFFLOAD_DIR_REP : CT_OFFLOAD_DIR_INIT;
 
     if (ct_offload1->tun.ip_dst) {
         data->ct.outer_id[dir1] = netdev_dpdk_tun_id_get_ref(
@@ -4401,21 +4435,34 @@ netdev_dpdk_ct_ctx_get_ref_outer_id(struct mark_to_miss_ctx_data *data,
                                        ct_offload1->tun.ip_src,
                                        ct_offload1->tun.tun_id);
         if (data->ct.outer_id[dir1] == INVALID_OUTER_ID) {
-            /* TODO: warn or counter, we can't offload */
-            return -1;
+            VLOG_ERR("dir=%d, netdev_dpdk_tun_id_get_ref failed for "
+                     "dst="IP_FMT", src="IP_FMT", tun_id=%"PRIu64,
+                     dir1,
+                     IP_ARGS(ct_offload1->tun.ip_dst),
+                     IP_ARGS(ct_offload1->tun.ip_src),
+                     ct_offload1->tun.tun_id);
+            goto err;
         }
     }
-    if (ct_offload1->tun.ip_dst) {
+    if (ct_offload2->tun.ip_dst) {
         data->ct.outer_id[dir2] = netdev_dpdk_tun_id_get_ref(
                                        ct_offload2->tun.ip_dst,
                                        ct_offload2->tun.ip_src,
                                        ct_offload2->tun.tun_id);
         if (data->ct.outer_id[dir2] == INVALID_OUTER_ID) {
-            /* TODO: warn or counter, we can't offload */
-            return -1;
+            VLOG_ERR("dir=%d, netdev_dpdk_tun_id_get_ref failed for "
+                     "dst="IP_FMT", src="IP_FMT", tun_id=%"PRIu64,
+                     dir2, IP_ARGS(ct_offload2->tun.ip_dst),
+                     IP_ARGS(ct_offload2->tun.ip_src),
+                     ct_offload2->tun.tun_id);
+            goto err;
         }
     }
     return 0;
+
+err:
+    netdev_dpdk_ct_ctx_unref_outer_id(data, ct_offload1, ct_offload2);
+    return -1;
 }
 
 static void
