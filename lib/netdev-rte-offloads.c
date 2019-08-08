@@ -4599,6 +4599,7 @@ netdev_dpdk_offload_ct_put(struct ct_flow_offload_item *ct_offload,
     if (data->ct.ct_offload[dir_opp]) {
         struct ct_flow_offload_item *ct_off_opp = data->ct.ct_offload[dir_opp];
 
+        data->ct.ct_offload[dir_opp]->ct_state = ct_offload->ct_state;
         if (netdev_dpdk_offload_ct_session(data, ct_off_opp, ct_offload)) {
             free(ct_off_opp);
             return -1;
