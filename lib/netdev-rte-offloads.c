@@ -4996,19 +4996,47 @@ static int
 restore_packet_state(uint32_t flow_mark, struct dp_packet *packet)
 {
     struct mark_to_miss_ctx_data *miss_ctx;
+    uint32_t hw_id;
+    struct ct_flow_offload_item *ct_offload = NULL;
+    struct ct_flow_offload_item *ct_init, *ct_rep;
+    struct netdev_rte_port *rte_port;
 
     miss_ctx = netdev_dpdk_get_flow_miss_ctx(flow_mark);
     if (!miss_ctx)
         return -1;
 
-    if (packet->md.in_port.odp_port == miss_ctx->ct.odp_port[CT_OFFLOAD_DIR_INIT])
-    {
-        packet->md.ct_state = miss_ctx->ct.ct_offload[CT_OFFLOAD_DIR_INIT]->ct_state;
-        packet->md.recirc_id = 1;//FIX
+    ct_init = miss_ctx->ct.ct_offload[CT_OFFLOAD_DIR_INIT];
+    ct_rep = miss_ctx->ct.ct_offload[CT_OFFLOAD_DIR_REP];
+    rte_port = netdev_rte_port_search(packet->md.in_port.odp_port, &port_map);
+    if ((packet->md.in_port.odp_port == ct_init->odp_port) ||
+       (rte_port->is_uplink && ct_init->tun.ip_dst)) {
+        ct_offload = ct_init;
     }
-    else if (packet->md.in_port.odp_port == miss_ctx->ct.odp_port[CT_OFFLOAD_DIR_REP]) {
-        packet->md.ct_state = miss_ctx->ct.ct_offload[CT_OFFLOAD_DIR_REP]->ct_state;
-        packet->md.recirc_id = 2;//FIX
+    else if ((packet->md.in_port.odp_port == ct_rep->odp_port) ||
+            (rte_port->is_uplink && ct_rep->tun.ip_dst)) {
+        ct_offload = ct_rep;
+    } else {
+        VLOG_DBG("Could not match any direction for CT miss handling");
+    }
+
+    packet->md.ct_zone = miss_ctx->ct.ct_zone;
+    packet->md.ct_state = ct_offload->ct_state;
+    packet->md.in_port.odp_port = ct_offload->odp_port;
+    packet->md.recirc_id = 0;
+    if (!dp_packet_has_flow_meta(packet, &hw_id)) {
+        hw_id = 0;
+    }
+    if (hw_id && netdev_dpdk_get_id_from_hw_id(hw_id, false,
+                                               &packet->md.recirc_id)) {
+        VLOG_DBG("Failed to get recirc_id from hw_id %u", hw_id);
+        return -1;
+    }
+    memset(&packet->md.tunnel, 0, sizeof packet->md.tunnel);
+    /* TODO - should use ct outer id in miss_ctx? Seems like duplicated information to tun */
+    if (ct_offload && ct_offload->tun.ip_dst) {
+        packet->md.tunnel.ip_dst = ct_offload->tun.ip_dst;
+        packet->md.tunnel.ip_src = ct_offload->tun.ip_src;
+        packet->md.tunnel.tun_id = ct_offload->tun.tun_id;
     }
 
     packet->md.ct_zone = miss_ctx->ct.ct_zone;
