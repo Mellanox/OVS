@@ -88,6 +88,7 @@ struct netdev_rte_port {
     uint16_t dpdk_port_id; /* Id of the DPDK port. */
     struct netdev *netdev; /* struct *netdev of this port. */
     enum rte_port_type rte_port_type; /* rte ports types. */
+    bool is_uplink; /* Is physical uplink port */
     uint32_t table_id; /* Flow table id per related to this port. */
     uint16_t dpdk_num_queues; /* Number of dpdk queues of this port. */
     uint32_t exception_mark; /* Exception SW handling for this port type. */
@@ -146,7 +147,7 @@ netdev_rte_port_search(odp_port_t dp_port, struct cmap *map)
  */
 static int
 netdev_rte_port_set(struct netdev *netdev, odp_port_t dp_port,
-                    enum rte_port_type port_type,
+                    enum rte_port_type port_type, bool is_uplink,
                     struct netdev_rte_port **rte_port)
 {
     enum ufid_to_rte_type_e ufid_to_rte_type;
@@ -175,6 +176,7 @@ next:
     (*rte_port)->netdev = netdev;
     (*rte_port)->dp_port = dp_port;
     (*rte_port)->rte_port_type = port_type;
+    (*rte_port)->is_uplink = is_uplink;
 
     return 0;
 }
@@ -1881,8 +1883,9 @@ netdev_rte_offloads_port_add(struct netdev *netdev, odp_port_t dp_port)
     int ret = 0;
 
     if (!strcmp("dpdk", type)) {
+        bool is_uplink = netdev_dpdk_is_uplink_port(netdev);
         ret = netdev_rte_port_set(netdev, dp_port, RTE_PORT_TYPE_DPDK,
-                                  &rte_port);
+                                  is_uplink, &rte_port);
         if (!rte_port) {
             goto out;
         }
@@ -1898,7 +1901,7 @@ netdev_rte_offloads_port_add(struct netdev *netdev, odp_port_t dp_port)
     }
     if (!strcmp("vxlan", type)) {
         ret = netdev_rte_port_set(netdev, dp_port, RTE_PORT_TYPE_VXLAN,
-                                  &rte_port);
+                                  false, &rte_port);
         if (!rte_port) {
             goto out;
         }
@@ -4931,8 +4934,7 @@ recirc_handling:
                 goto roll_back;
             }
             /* For vport type consier all uplink DPDK types. */
-            if ((data->rte_port_type == RTE_PORT_TYPE_DPDK) &&
-                (netdev_dpdk_is_uplink_port(data->netdev))) {
+            if (data->is_uplink) {
                 if (is_add) {
                     ret = netdev_rte_add_hwid_mapping(data, 0, hwid,
                                                       port, &rte_flow);
