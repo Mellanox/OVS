@@ -2230,6 +2230,9 @@ ct_to_mark_associate(struct ct_flow_offload_item *item , uint32_t mark)
 static inline bool
 ct_to_mark_compare(struct ct_to_mark_key *key1, struct ct_to_mark_key *key2)
 {
+    if (key1->zone != key2->zone)
+        return false;
+
     if (!key1->is_ipv6 && !key2->is_ipv6) {
         struct ovs_key_ct_tuple_ipv4 * kipv4 = &key1->ct_orig_tuple.ipv4;
         struct ovs_key_ct_tuple_ipv4 * dipv4 = &key2->ct_orig_tuple.ipv4;
