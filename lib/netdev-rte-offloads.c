@@ -4653,9 +4653,31 @@ netdev_dpdk_offload_ct_put(struct ct_flow_offload_item *ct_offload,
     if (data->ct.ct_offload[dir_opp]) {
         struct ct_flow_offload_item *ct_off_opp = data->ct.ct_offload[dir_opp];
 
-        data->ct.ct_offload[dir_opp]->ct_state = ct_offload->ct_state;
-        if (netdev_dpdk_offload_ct_session(data, ct_off_opp, ct_offload)) {
+        /* TODO ************
+         * For NAT, the approach was to get the NAT information from the packet
+         * itself, upon the first packet. The connection is still at NEW state
+         * at this point.
+         * When we get the other direction, the connection is already
+         * ESTABLISHED, so we update the opposite direction it is ESTABLISHED
+         * and not new.
+         * Alternative approach is to have more than two callbacks, or get
+         * callbacks only upon ESTABLISHED, and extract the NAT info in another
+         * way.
+         */
+        if (ct_offload->ct_state & CS_ESTABLISHED &&
+            !(data->ct.ct_offload[dir_opp]->ct_state & CS_ESTABLISHED)) {
+            data->ct.ct_offload[dir_opp]->ct_state |= CS_ESTABLISHED;
+            data->ct.ct_offload[dir_opp]->ct_state &= ~CS_NEW;
+        }
+        if (!(ct_offload->ct_state & CS_ESTABLISHED) &&
+            data->ct.ct_offload[dir_opp]->ct_state & CS_ESTABLISHED) {
+            ct_offload->ct_state |= CS_ESTABLISHED;
+            ct_offload->ct_state &= ~CS_NEW;
+        }
+        if (!(ct_offload->ct_state & CS_ESTABLISHED) ||
+            netdev_dpdk_offload_ct_session(data, ct_off_opp, ct_offload)) {
             free(ct_off_opp);
+            free(data->ct.ct_offload[dir]);
             return -1;
         }
         netdev_dpdk_offload_ct_ctx_update(data, ct_off_opp, ct_offload);
