@@ -182,6 +182,7 @@ next:
 struct ufid_hw_offload {
     struct cmap_node node;
     ovs_u128 ufid;
+    uint32_t mark;
     int max_flows;
     int curr_idx;
     struct rte_flow_params {
@@ -201,7 +202,7 @@ struct ufid_hw_offload {
  * Return allocated struct ufid_hw_offload or NULL if allocation failed.
  */
 static struct ufid_hw_offload *
-netdev_rte_port_ufid_hw_offload_alloc(int max_flows, const ovs_u128 *ufid)
+netdev_rte_port_ufid_hw_offload_alloc(int max_flows, const ovs_u128 *ufid, uint32_t mark)
 {
     struct ufid_hw_offload *ufidol =
         xzalloc(sizeof(struct ufid_hw_offload) +
@@ -210,6 +211,7 @@ netdev_rte_port_ufid_hw_offload_alloc(int max_flows, const ovs_u128 *ufid)
         ufidol->max_flows = max_flows;
         ufidol->curr_idx = 0;
         ufidol->ufid = *ufid;
+        ufidol->mark = mark;
     }
 
     return ufidol;
@@ -1200,7 +1202,7 @@ netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
     }
 
     /* Create ufid_to_rte map for the ufid */
-    ufid_hw_offload = netdev_rte_port_ufid_hw_offload_alloc(2, ufid);
+    ufid_hw_offload = netdev_rte_port_ufid_hw_offload_alloc(2, ufid, info->flow_mark);
     if (!ufid_hw_offload) {
         VLOG_WARN("failed to allocate ufid_hw_offlaod, OOM");
         ret = ENOMEM;
@@ -1538,7 +1540,7 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
     }
 
     ufid_hw_offload =
-        netdev_rte_port_ufid_hw_offload_alloc(dpdk_phy_ports_amount, ufid);
+        netdev_rte_port_ufid_hw_offload_alloc(dpdk_phy_ports_amount, ufid, info->flow_mark);
     if (ufid_hw_offload == NULL) {
         VLOG_WARN("failed to allocate ufid_hw_offlaod, OOM");
         return -1;
@@ -1682,7 +1684,7 @@ ct_add_rte_flow_offload(struct netdev_rte_port *rte_port,
         return -1;
     }
     ctid_hw_offload =
-        netdev_rte_port_ufid_hw_offload_alloc(num_ports, ctid);
+        netdev_rte_port_ufid_hw_offload_alloc(num_ports, ctid, 0);
     if (ctid_hw_offload == NULL) {
         VLOG_WARN("failed to allocate ctid_hw_offlaod, OOM");
         return -1;
