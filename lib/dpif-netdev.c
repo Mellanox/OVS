@@ -2148,10 +2148,10 @@ struct megaflow_to_mark_data {
 };
 
 struct ct_to_mark_key {
-    union {    
+    union {
         struct ovs_key_ct_tuple_ipv4 ipv4;
-        struct ovs_key_ct_tuple_ipv6 ipv6; 
-    } ct_orig_tuple;    
+        struct ovs_key_ct_tuple_ipv6 ipv6;
+    } ct_orig_tuple;
     uint16_t zone;
     bool     is_ipv6;
 };
@@ -2179,23 +2179,25 @@ static inline uint32_t
 ct_item_key_hash(struct ct_to_mark_key *key)
 {
     uint32_t hash = 0;
-    
+
     if (!key->is_ipv6) {
         struct ovs_key_ct_tuple_ipv4 * ipv4 = &key->ct_orig_tuple.ipv4;
-        hash+=hash_add(hash,ipv4->ipv4_src);
-        hash+=hash_add(hash,ipv4->ipv4_dst);
-        hash+=hash_add(hash,ipv4->src_port);
-        hash+=hash_add(hash,ipv4->dst_port);
+
+        hash += hash_add(hash,ipv4->ipv4_src);
+        hash += hash_add(hash,ipv4->ipv4_dst);
+        hash += hash_add(hash,ipv4->src_port);
+        hash += hash_add(hash,ipv4->dst_port);
     } else {
         struct ovs_key_ct_tuple_ipv6 * ipv6 = &key->ct_orig_tuple.ipv6;
         uint32_t *srcip = (uint32_t *) &ipv6->ipv6_src;
         uint32_t *dstip = (uint32_t *) &ipv6->ipv6_dst;
+
         for(int i = 0 ; i < 4 ; i++){
-            hash+=hash_add(hash,srcip[i]);
-            hash+=hash_add(hash,dstip[i]);
+            hash += hash_add(hash,srcip[i]);
+            hash += hash_add(hash,dstip[i]);
         }
-        hash+=hash_add(hash,ipv6->src_port);
-        hash+=hash_add(hash,ipv6->dst_port);
+        hash += hash_add(hash,ipv6->src_port);
+        hash += hash_add(hash,ipv6->dst_port);
     }
 
     return hash;
@@ -2218,7 +2220,7 @@ ct_to_mark_associate(struct ct_flow_offload_item *item , uint32_t mark)
 {
     size_t hash = 0;
     struct ct_to_mark_data *data = xzalloc(sizeof(*data));
-    
+
     ct_item_key_fill(&data->key, item);
     hash = ct_item_key_hash(&data->key);
     data->mark = mark;
@@ -2236,19 +2238,19 @@ ct_to_mark_compare(struct ct_to_mark_key *key1, struct ct_to_mark_key *key2)
     if (!key1->is_ipv6 && !key2->is_ipv6) {
         struct ovs_key_ct_tuple_ipv4 * kipv4 = &key1->ct_orig_tuple.ipv4;
         struct ovs_key_ct_tuple_ipv4 * dipv4 = &key2->ct_orig_tuple.ipv4;
-         
-        return (kipv4->ipv4_src == dipv4->ipv4_src && 
-                kipv4->ipv4_dst == dipv4->ipv4_dst && 
-                kipv4->src_port == dipv4->src_port && 
-                kipv4->dst_port == dipv4->dst_port && 
+
+        return (kipv4->ipv4_src == dipv4->ipv4_src &&
+                kipv4->ipv4_dst == dipv4->ipv4_dst &&
+                kipv4->src_port == dipv4->src_port &&
+                kipv4->dst_port == dipv4->dst_port &&
                 kipv4->ipv4_proto == dipv4->ipv4_proto);
     } else if (key1->is_ipv6 && key2->is_ipv6) {
         struct ovs_key_ct_tuple_ipv6 * kipv6 = &key1->ct_orig_tuple.ipv6;
         struct ovs_key_ct_tuple_ipv6 * dipv6 = &key2->ct_orig_tuple.ipv6;
-        return (!memcmp(&kipv6->ipv6_src,&dipv6->ipv6_src,
-                                 sizeof dipv6->ipv6_src) && 
-                !memcmp(&kipv6->ipv6_dst,&dipv6->ipv6_dst,
-                                 sizeof dipv6->ipv6_dst) &&
+        return (!memcmp(&kipv6->ipv6_src, &dipv6->ipv6_src,
+                        sizeof dipv6->ipv6_src) &&
+                !memcmp(&kipv6->ipv6_dst, &dipv6->ipv6_dst,
+                        sizeof dipv6->ipv6_dst) &&
                 kipv6->src_port == dipv6->src_port &&
                 kipv6->dst_port == dipv6->dst_port &&
                 kipv6->ipv6_proto == dipv6->ipv6_proto);
@@ -2270,10 +2272,10 @@ ct_to_mark_disassociate(struct ct_flow_offload_item *item)
 
     CMAP_FOR_EACH_WITH_HASH (data, node, hash, &flow_mark.ct_to_mark) {
         if(ct_to_mark_compare(&key, &data->key)) {
-                cmap_remove(&flow_mark.ct_to_mark,
+            cmap_remove(&flow_mark.ct_to_mark,
                         CONST_CAST(struct cmap_node *, &data->node), hash);
-                ovsrcu_postpone(free, data);
-                return;
+            ovsrcu_postpone(free, data);
+            return;
         }
     }
 }
