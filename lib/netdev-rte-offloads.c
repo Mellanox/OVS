@@ -275,6 +275,9 @@ ufid_hw_offload_add_rte_flow(struct ufid_hw_offload *hw_offload,
     }
 }
 
+static void
+netdev_dpdk_del_miss_ctx(uint32_t mark);
+
 /*
  * If hw rules were introduced we make sure we clean them before
  * we free the struct.
@@ -302,6 +305,9 @@ netdev_rte_port_ufid_hw_offload_free(struct ufid_hw_offload *hw_offload)
             }
         }
         hw_offload->rte_flow_data[i].flow = NULL;
+    }
+    if (hw_offload->mark) {
+        netdev_dpdk_del_miss_ctx(hw_offload->mark);
     }
 
     free(hw_offload);
@@ -3307,6 +3313,7 @@ netdev_dpdk_del_miss_ctx(uint32_t mark)
     CMAP_FOR_EACH_WITH_HASH (data, node, hash,
                       &mark_to_ct_ctx) {
         if (data->mark == mark) {
+                VLOG_DBG("Free miss context for mark=%d", mark);
                 cmap_remove(&mark_to_ct_ctx,
                         CONST_CAST(struct cmap_node *, &data->node), hash);
                 ovsrcu_postpone(free, data);
@@ -4283,17 +4290,13 @@ netdev_dpdk_offload_put_handle(struct netdev *netdev,
     if(netdev_dpdk_offload_set_group_id(rte_port, &cls_info, &flow_attr, workaround_needed)) {
         goto roll_back;
     }
-    /* handle miss in HW in CT need special handling */
     /* for all cases, we need to save all resources allocated */
-    if (cls_info.actions.type == ACTION_OFFLOAD_TYPE_CT) {
-            ret = netdev_dpdk_save_flow_miss_ctx(info->flow_mark,
-                             cls_info.actions.hw_id,
-                             !cls_info.actions.recirc_id,
-                             cls_info.match.outer_id,
-                             match->flow.in_port.odp_port,
-                             cls_info.actions.type == ACTION_OFFLOAD_TYPE_CT);
-    }
-
+    ret = netdev_dpdk_save_flow_miss_ctx(info->flow_mark,
+                                         cls_info.actions.hw_id,
+                                         !cls_info.actions.recirc_id,
+                                         cls_info.match.outer_id,
+                                         match->flow.in_port.odp_port,
+                                         cls_info.actions.type == ACTION_OFFLOAD_TYPE_CT);
     if (ret) {
         goto roll_back;
     }
