@@ -1777,6 +1777,9 @@ ct_add_rte_flow_offload(struct netdev_rte_port *rte_port,
     }
     if (rte_port->rte_port_type == RTE_PORT_TYPE_VXLAN) {
         CMAP_FOR_EACH (data, node, &port_map) {
+            if (!netdev_dpdk_is_uplink_port(data->netdev)) {
+                continue;
+            }
             if (data->rte_port_type == RTE_PORT_TYPE_DPDK) {
                 flow = netdev_dpdk_rte_flow_create(data->netdev,
                                                    &flow_attr, patterns.items,
