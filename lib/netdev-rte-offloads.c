@@ -313,7 +313,7 @@ netdev_rte_port_ufid_hw_offload_free(struct ufid_hw_offload *hw_offload)
         netdev_dpdk_del_miss_ctx(hw_offload->mark);
     }
 
-    free(hw_offload);
+    ovsrcu_postpone(free, hw_offload);
     return 0;
 }
 
@@ -401,7 +401,7 @@ ufid_to_portid_remove(const ovs_u128 *ufid, struct cmap *cmap)
     if (data != NULL) {
         cmap_remove(cmap,
                     CONST_CAST(struct cmap_node *, &data->node), hash);
-        free(data);
+        ovsrcu_postpone(free, data);
     }
     ovs_mutex_unlock(&ufid_to_portid_mutex);
 }
@@ -2028,7 +2028,7 @@ netdev_rte_offloads_port_del(odp_port_t dp_port)
                     sizeof rte_port->exception_mark,0));
     }
 
-    free(rte_port);
+    ovsrcu_postpone(free, rte_port);
 
     return 0;
 }
@@ -4939,7 +4939,7 @@ netdev_rte_del_hwid_mapping(struct netdev_rte_port *rte_port, uint32_t hwid,
     size_t hash = hash_bytes(&hwid, sizeof hwid, 0);
     cmap_remove(map,
             CONST_CAST(struct cmap_node *, &htf->node), hash);
-    free(htf);
+    ovsrcu_postpone(free, htf);
     struct rte_flow_error error;
     ret = netdev_dpdk_rte_flow_destroy(rte_port->netdev, flow, &error);
     if (ret) {
