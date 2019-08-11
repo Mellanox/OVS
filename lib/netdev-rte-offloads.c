@@ -1211,8 +1211,7 @@ netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
     ufid_hw_offload = netdev_rte_port_ufid_hw_offload_alloc(2, ufid, info->flow_mark);
     if (!ufid_hw_offload) {
         VLOG_WARN("failed to allocate ufid_hw_offlaod, OOM");
-        ret = ENOMEM;
-        goto err;
+        return ENOMEM;
     }
 
     ufid_hw_offload_add(ufid_hw_offload, &rte_port->ufid_to_rte[UFID_TO_RTE_OFFLOADS]);
@@ -1513,7 +1512,7 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
                                         size_t actions_len,
                                         const ovs_u128 *ufid,
                                         struct offload_info *info,
-                                        struct dpif_flow_stats *stats OVS_UNUSED)
+                                        struct dpif_flow_stats *stats)
 {
     VLOG_DBG("Adding rte offload for vport vxlan flow ufid "UUID_FMT,
         UUID_ARGS((struct uuid *)ufid));
@@ -1567,14 +1566,18 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
             flow = netdev_dpdk_offload_put_handle(data->netdev, rte_port, &fdata,
                                               match, nl_actions,
                                               actions_len, info, true);
-            if (flow) {
-                ufid_hw_offload_add_rte_flow(ufid_hw_offload, flow,
-                                             data->netdev);
+            if (!flow) {
+                goto err;
             }
+            ufid_hw_offload_add_rte_flow(ufid_hw_offload, flow, data->netdev);
         }
     }
 
     return ret;
+
+err:
+    netdev_rte_offloads_flow_del(data->netdev, ufid, stats);
+    return -1;
 }
 
 static void
