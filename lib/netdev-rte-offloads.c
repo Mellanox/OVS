@@ -3428,8 +3428,8 @@ struct hw_table_id_node {
 };
 
 struct hw_table_id {
-    struct cmap recirc_id_to_tbl_id_map;
-    struct cmap port_id_to_tbl_id_map;
+    /* struct cmap recirc_id_to_tbl_id_map; */
+    /* struct cmap port_id_to_tbl_id_map; */
     struct id_pool *pool;
     uint32_t hw_id_to_sw[MAX_OUTER_ID];
 };
@@ -3490,11 +3490,13 @@ netdev_dpdk_put_hw_id(uint32_t id, bool is_port)
     CMAP_FOR_EACH_WITH_HASH (data, node, hash, smap) {
         if (data->id == id && data->is_port == is_port) {
             data->ref_cnt--;
-            if (data->ref_cnt == 0) {
+            if (data->ref_cnt <= 0) {
                 /*TODO: delete table (if recirc_id). DONE -- implicitly */
                 /*TODO: update mapping table. - DONE -- during flow_put and flow_del */
                 /* Both tables should be updated under flow_del() */
                 id_pool_free_id(hw_table_id.pool, data->hw_id);
+                cmap_remove(smap,
+                            CONST_CAST(struct cmap_node *, &data->node), hash);
                 ovsrcu_postpone(free, data);
             }
             return;
