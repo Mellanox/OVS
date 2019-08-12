@@ -308,6 +308,8 @@ struct conntrack_off_class {
     void (*conn_add)(struct ct_flow_offload_item *,struct pkt_metadata *);
 
     void (*conn_del)(struct ct_flow_offload_item *);
+
+    bool (*conn_active)(struct ct_flow_offload_item *);
 };
 
 struct conntrack {
