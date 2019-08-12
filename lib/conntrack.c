@@ -1799,6 +1799,18 @@ set_label(struct dp_packet *pkt, struct conn *conn,
     }
 }
 
+static bool
+conn_hw_active(struct conntrack *ct,
+               struct conn *conn)
+{
+    struct ct_flow_offload_item off_item;
+
+    memset(&off_item, 0, sizeof off_item);
+    conntrack_off_fill_key(&off_item, &conn->key);
+    return netdev_is_flow_api_enabled() &&
+           ct && ct->off_class && ct->off_class->conn_active(&off_item);
+}
+
 
 /* Delete the expired connections from 'ctb', up to 'limit'. Returns the
  * earliest expiration time among the remaining connections in 'ctb'.  Returns
@@ -1815,6 +1827,9 @@ sweep_bucket(struct conntrack *ct, struct conntrack_bucket *ctb,
 
     for (unsigned i = 0; i < N_CT_TM; i++) {
         LIST_FOR_EACH_SAFE (conn, next, exp_node, &ctb->exp_lists[i]) {
+            if (conn_hw_active(ct, conn)) {
+                conn_update_expiration(ctb, conn, CT_TM_HW_OFFLOAD, now);
+            }
             if (!conn_expired(conn, now) || count >= limit) {
                 min_expiration = MIN(min_expiration, conn->expiration);
                 if (count >= limit) {
