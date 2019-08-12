@@ -3605,6 +3605,7 @@ enum {
   ACTION_OFFLOAD_TYPE_CT          =  1 << 4,
   ACTION_OFFLOAD_TYPE_OUTPUT      =  1 << 5,
   ACTION_OFFLOAD_TYPE_TNL_PUSH    =  1 << 6,
+  ACTION_OFFLOAD_TYPE_DROP        =  1 << 7,
 };
 
 struct offload_item_cls_info {
@@ -4200,7 +4201,12 @@ netdev_dpdk_offload_put_add_actions(struct netdev_rte_port *rte_port,
                                                     actions_len);
             break;
         default:
-            VLOG_WARN("unexpected offload action type %d",cls_info->actions.type);
+            if (cls_info->actions.type) {
+                VLOG_ERR("unexpected offload action type %d",cls_info->actions.type);
+            } else {
+                /* Currently no support for offloaded DROP action */
+                VLOG_DBG("offload action type 0, namely no actions (DROP)");
+            }
             ret = -1;
             break;
     }
