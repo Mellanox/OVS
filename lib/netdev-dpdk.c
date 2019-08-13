@@ -4513,6 +4513,17 @@ dump_flow_pattern(struct rte_flow_item *item, struct ds *s)
         } else {
             ds_put_cstr(s, "  Mask = null\n");
         }
+    } else if (item->type == RTE_FLOW_ITEM_TYPE_META) {
+        const struct rte_flow_item_meta *meta_spec = item->spec;
+
+        ds_put_cstr(s, "rte flow meta pattern:\n");
+        if (meta_spec) {
+            ds_put_format(s,
+                          "  Spec: data=%d\n",
+                          RTE_BE32(meta_spec->data));
+        } else {
+            ds_put_cstr(s, "  Spec = null\n");
+        }
     } else {
         ds_put_format(s, "rte flow UNKNOWN pattern (type=%d)\n", item->type);
     }
