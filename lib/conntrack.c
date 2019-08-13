@@ -1611,6 +1611,19 @@ conntrack_fill_ipv4_ct_tuple_from_key(struct ovs_key_ct_tuple_ipv4 *tuple,
 }
 
 static void
+conntrack_off_fill_key(struct ct_flow_offload_item *msg,
+                       struct conn_key *key)
+{
+    msg->ct_ipv6 = key->dl_type == htons(ETH_TYPE_IPV6);
+    msg->zone = key->zone;
+    if (msg->ct_ipv6) {
+        VLOG_DBG("not supported yet");
+    } else {
+        conntrack_fill_ipv4_ct_tuple_from_key(&msg->ct_key.ipv4, key);
+    }
+}
+
+static void
 conntrack_off_fill_match(struct ct_flow_offload_item *msg,
                        struct conn_lookup_ctx *ctx)
 {
@@ -1638,8 +1651,7 @@ conntrack_off_put_conn(struct conntrack *ct, struct conn_lookup_ctx *ctx,
     struct ct_flow_offload_item off_item;
     memset(&off_item,0,sizeof off_item);
     off_item.op = CT_OFFLOAD_OP_ADD;
-    off_item.ct_ipv6 = (ctx->key.dl_type == htons(ETH_TYPE_IPV6));
-    off_item.zone = ctx->key.zone;
+    conntrack_off_fill_key(&off_item, &ctx->key);
     off_item.reply = reply;
 
     if (off_item.ct_ipv6) {
@@ -1664,8 +1676,7 @@ conntrack_off_del_conn(struct conntrack *ct, struct conn *conn)
         struct ct_flow_offload_item msg;
         memset(&msg,0,sizeof msg);
         msg.op = CT_OFFLOAD_OP_DEL;
-        msg.zone = conn->key.zone;
-        conntrack_fill_ipv4_ct_tuple_from_key(&msg.ct_key.ipv4, &conn->key);
+        conntrack_off_fill_key(&msg, &conn->key);
         ct->off_class->conn_del(&msg);
     }
 }
