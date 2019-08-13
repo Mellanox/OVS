@@ -1375,6 +1375,14 @@ netdev_rte_offloads_flow_stats_get(struct netdev *netdev OVS_UNUSED,
 }
 
 static int
+net_rte_offloads_ct_stats_get(const ovs_u128 *ctid,
+                              struct dpif_flow_stats *stats)
+{
+    return netdev_rte_offloads_stats_get(ctid, stats, UFID_TO_RTE_CT);
+}
+
+
+static int
 netdev_offloads_flow_del(const ovs_u128 *ufid,
                          enum ufid_to_rte_type_e ufid_to_rte_type)
 {
@@ -4835,8 +4843,35 @@ netdev_dpdk_offload_ct_del(uint32_t mark)
 bool
 netdev_dpdk_offload_ct_active(uint32_t mark)
 {
-    VLOG_DBG("%s,%d: mark=%d", __FUNCTION__, __LINE__, mark);
-    return false;
+    struct mark_to_miss_ctx_data *data;
+    struct dpif_flow_stats stats;
+    ovs_u128 ctid;
+    bool active;
+    int dir;
+
+    if (!netdev_dpdk_find_miss_ctx(mark, &data)) {
+        VLOG_WARN("%s: cannot find context for mark=%d", __FUNCTION__, mark);
+        return false;
+    }
+    if (!(data->ct.ct_offload[CT_OFFLOAD_DIR_INIT]->ct_state & CS_ESTABLISHED) ||
+        !(data->ct.ct_offload[CT_OFFLOAD_DIR_REP]->ct_state & CS_ESTABLISHED)) {
+        VLOG_DBG("%s: ct for mark=%d is not established", __FUNCTION__, mark);
+        return false;
+    }
+
+    for (active = false, dir = CT_OFFLOAD_DIR_INIT;
+         dir < CT_OFFLOAD_NUM && !active; dir++) {
+        build_ctid(data->mark, dir, false, &ctid);
+        memset(&stats, 0, sizeof stats);
+        if (net_rte_offloads_ct_stats_get(&ctid, &stats)) {
+            VLOG_WARN("%s failed for mark=%d", __FUNCTION__, mark);
+            return false;
+        }
+        active = active || (stats.n_packets != 0);
+        VLOG_DBG("dir=%d, n_packets=%"PRIu64", active=%d", dir, stats.n_packets, active);
+    }
+    VLOG_DBG("mark=%d is %sactive", mark, active ? "" : "not ");
+    return active;
 }
 
 struct hwid_to_flow {
