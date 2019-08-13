@@ -5082,12 +5082,10 @@ restore_packet_state(uint32_t flow_mark, struct dp_packet *packet)
 
     switch (miss_ctx->type) {
     case MARK_PREPROCESS_VXLAN:
-        /* Pop header that will also restore meta data */
-        packet = netdev_vxlan_pop_header(packet);
-        if (!packet) {
-            return -1;
-        }
-        return 0;
+        /* 
+         * No need for individual mark handling. There is a
+         * default rule in VXLAN table for default Mark+RSS
+         * */
         break;
 
     case MARK_PREPROCESS_CT:
@@ -5127,7 +5125,6 @@ restore_packet_state(uint32_t flow_mark, struct dp_packet *packet)
     break;
 
     case MARK_PREPROCESS_FLOW_WITH_CT:
-    case MARK_PREPROCESS_FLOW:
         packet->md.in_port.odp_port = miss_ctx->flow.in_port;
         packet->md.recirc_id = miss_ctx->flow.recirc_id;
         outer_id = miss_ctx->flow.outer_id;
@@ -5136,6 +5133,10 @@ restore_packet_state(uint32_t flow_mark, struct dp_packet *packet)
             return -1;
         }
     break;
+
+    case MARK_PREPROCESS_FLOW:
+        /* No use case here */
+        break;
 
     default:
         VLOG_ERR("Unknown preprocess type %d", miss_ctx->type);
