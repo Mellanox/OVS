@@ -2699,6 +2699,7 @@ static void ct_offload_dump_ipv6_item(struct ds *s,
 static void ct_offload_dump_item(struct ds *s,
                                  struct ct_flow_offload_item *item)
 {
+    ds_put_format(s, "    IPv%d, zone=%d\n", item->ct_ipv6 ? 6 : 4, item->zone);
     if (!item->ct_ipv6) {
         ct_offload_dump_ipv4_item(s, item);
     } else {
