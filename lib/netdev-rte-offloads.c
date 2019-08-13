@@ -2701,7 +2701,7 @@ netdev_rte_offloads_add_relay(const char *pci,
     }
 
     /* create vf:*/
-    ret = rte_eal_hotplug_add("pci", pci, NULL);
+    ret = rte_eal_hotplug_add("pci", pci, "");
     if (ret) {
         VLOG_ERR("rte_eal_hotplug_add pci failed\n");
         goto err_vf;
