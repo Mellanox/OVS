@@ -1664,6 +1664,7 @@ conntrack_off_del_conn(struct conntrack *ct, struct conn *conn)
         struct ct_flow_offload_item msg;
         memset(&msg,0,sizeof msg);
         msg.op = CT_OFFLOAD_OP_DEL;
+        msg.zone = conn->key.zone;
         conntrack_fill_ipv4_ct_tuple_from_key(&msg.ct_key.ipv4, &conn->key);
         ct->off_class->conn_del(&msg);
     }
