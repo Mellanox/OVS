@@ -1589,8 +1589,8 @@ conntrack_off_fill_nat(struct ct_flow_offload_item *item,
 }
 
 static void
-conntrack_off_fill_key(struct ct_flow_offload_item *msg,
-                       struct dp_packet *packet)
+conntrack_off_fill_key_by_packet(struct ct_flow_offload_item *msg,
+                                 struct dp_packet *packet)
 {
     if (msg->ct_ipv6) {
         VLOG_DBG("IPV6 not supported yet");
@@ -1648,7 +1648,7 @@ conntrack_off_put_conn(struct conntrack *ct, struct conn_lookup_ctx *ctx,
     }
 
     if (ct->off_class && ct->off_class->conn_add) {
-        conntrack_off_fill_key(&off_item, packet);
+        conntrack_off_fill_key_by_packet(&off_item, packet);
         conntrack_off_fill_match(&off_item, ctx);
         conntrack_off_fill_nat(&off_item, packet, reply);
         conntrack_off_fill_tun(&off_item, packet);
