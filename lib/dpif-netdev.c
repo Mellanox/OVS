@@ -464,11 +464,14 @@ ct_offload_add_item(struct ct_flow_offload_item *item,struct pkt_metadata *md);
 static void
 ct_offload_del_item(struct ct_flow_offload_item *item);
 
+static bool
+dp_ct_offload_active(struct ct_flow_offload_item *item);
 
 static struct conntrack_off_class dpif_ct_off_class = {
     .type = "dpif",
     .conn_add = ct_offload_add_item,
     .conn_del = ct_offload_del_item,
+    .conn_active = dp_ct_offload_active,
 };
 
 
@@ -2793,6 +2796,30 @@ dp_ct_offload_del(struct ct_flow_offload_item *item)
 out:
     ds_destroy(&s);
     return ret;
+}
+
+static bool
+dp_ct_offload_active(struct ct_flow_offload_item *item)
+{
+    uint32_t mark;
+    bool active = false;
+    struct ds s;
+
+    ds_init(&s);
+    ct_offload_dump_item(&s, item);
+
+    mark = ct_to_mark_find(item);
+    if (mark == INVALID_FLOW_MARK) {
+        VLOG_DBG("CT active query no mark\n%s", ds_cstr(&s));
+        goto out;
+    }
+
+    active = netdev_dpdk_offload_ct_active(mark);
+    VLOG_DBG("mark %d\n%s-- is %sactive", mark, ds_cstr(&s), active ? "" : "not ");
+
+out:
+    ds_destroy(&s);
+    return active;
 }
 
 

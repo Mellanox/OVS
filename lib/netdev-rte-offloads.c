@@ -4711,6 +4711,13 @@ netdev_dpdk_offload_ct_del(uint32_t mark)
     return 0;
 }
 
+bool
+netdev_dpdk_offload_ct_active(uint32_t mark)
+{
+    VLOG_DBG("%s,%d: mark=%d", __FUNCTION__, __LINE__, mark);
+    return false;
+}
+
 struct hwid_to_flow {
     struct cmap_node node;
     uint32_t hwid;
