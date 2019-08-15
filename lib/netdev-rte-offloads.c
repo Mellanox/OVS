@@ -4441,7 +4441,9 @@ roll_back:
                                        cls_info.match.tun_id);
     }
 
-    /* No need to put the hw_id as it is done when the flow is deleted */
+    if (cls_info.match.hw_id != INVALID_HW_ID) {
+        netdev_dpdk_put_recirc_id_hw_id(cls_info.match.hw_id);
+    }
 
     netdev_dpdk_del_miss_ctx(info->flow_mark);
     free_flow_patterns(&patterns);
