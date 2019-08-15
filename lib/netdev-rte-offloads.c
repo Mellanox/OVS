@@ -1354,6 +1354,8 @@ netdev_offloads_flow_del(const ovs_u128 *ufid, struct cmap *cmap,
                          enum ufid_to_rte_type_e ufid_to_rte_type)
 {
     odp_port_t port_num = ufid_to_portid_search(ufid, cmap);
+    struct ufid_hw_offload *hw_offload;
+    int i=0;
 
     if (port_num == INVALID_ODP_PORT) {
         return EINVAL;
@@ -1368,15 +1370,24 @@ netdev_offloads_flow_del(const ovs_u128 *ufid, struct cmap *cmap,
         return ENODEV;
     }
 
-    struct ufid_to_odp *uto =
-        ufid_to_portid_get(ufid, &ufid_to_portid_map);
-    if (uto && uto->recirc_id) {
-        bool is_add = false;
-        bool is_port = false;
-        uint32_t hwid;
-        netdev_dpdk_peek_recirc_hw_id(uto->recirc_id, &hwid);
-        netdev_rte_update_hwid_mapping(rte_port, 0, hwid, is_add, is_port);
-        netdev_dpdk_put_recirc_id_hw_id(uto->recirc_id);
+    hw_offload = ufid_hw_offload_find(ufid, &rte_port->ufid_to_rte[ufid_to_rte_type]);
+    for (i = 0 ; i < hw_offload->curr_idx ; i++) {
+            struct netdev *netd = hw_offload->rte_flow_data[i].netdev;
+
+            if (netd == rte_port->netdev && hw_offload->rte_flow_data[i].flow != NULL) {
+                struct ufid_to_odp *uto =
+                    ufid_to_portid_get(ufid, &ufid_to_portid_map);
+                /* If a recirc_id flow was offloaded then remove its hw_id ref */
+                if (uto && uto->recirc_id) {
+                    bool is_add = false;
+                    bool is_port = false;
+                    uint32_t hwid;
+                    netdev_dpdk_peek_recirc_hw_id(uto->recirc_id, &hwid);
+                    netdev_rte_update_hwid_mapping(rte_port, 0, hwid, is_add, is_port);
+                    netdev_dpdk_put_recirc_id_hw_id(uto->recirc_id);
+
+            }
+       }
     }
     ufid_to_portid_remove(ufid, cmap);
     ufid_hw_offload = ufid_hw_offload_remove(ufid, &rte_port->ufid_to_rte[ufid_to_rte_type]);
