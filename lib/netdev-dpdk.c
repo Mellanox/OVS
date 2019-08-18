@@ -4242,6 +4242,8 @@ unlock:
     return err;
 }
 
+//dump start - used for get the dump code to DPDK tree by script
+//this is just a comment to mark the script where the dump functions start
 static void
 dump_flow_attr(struct rte_flow_attr *attr, struct ds *s)
 {
@@ -4769,6 +4771,8 @@ dump_flow_info(const char *title,
     VLOG_DBG("%s", ds_cstr(&s));
     ds_destroy(&s);
 }
+//dump end - used for get the dump code to DPDK tree by script
+//this is just a comment to mark the script where the dump functions end
 
 static struct rte_flow *
 (*ovs_rte_flow_create)(uint16_t port_id,
