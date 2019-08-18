@@ -4628,7 +4628,7 @@ dump_flow_action(struct rte_flow_action *actions, struct ds *s)
             }
     } else if (actions->type == RTE_FLOW_ACTION_TYPE_RAW_ENCAP) {
         const struct rte_flow_action_raw_encap *raw_encap = actions->conf;
-        char encap_str[1000];
+        char encap_str[1000] = {};
 
         ds_put_cstr(s, "rte flow raw-encap action:\n");
         if (raw_encap) {
