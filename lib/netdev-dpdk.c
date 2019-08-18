@@ -4515,6 +4515,7 @@ dump_flow_pattern(struct rte_flow_item *item, struct ds *s)
         }
     } else if (item->type == RTE_FLOW_ITEM_TYPE_META) {
         const struct rte_flow_item_meta *meta_spec = item->spec;
+        const struct rte_flow_item_meta *meta_mask = item->mask;
 
         ds_put_cstr(s, "rte flow meta pattern:\n");
         if (meta_spec) {
@@ -4523,6 +4524,13 @@ dump_flow_pattern(struct rte_flow_item *item, struct ds *s)
                           RTE_BE32(meta_spec->data));
         } else {
             ds_put_cstr(s, "  Spec = null\n");
+        }
+        if (meta_mask) {
+            ds_put_format(s,
+                          "  Mask: data=0x%04x\n",
+                          RTE_BE32(meta_mask->data));
+        } else {
+            ds_put_cstr(s, "  Mask = null\n");
         }
     } else {
         ds_put_format(s, "rte flow UNKNOWN pattern (type=%d)\n", item->type);
@@ -4613,7 +4621,7 @@ dump_flow_action(struct rte_flow_action *actions, struct ds *s)
             ds_put_cstr(s, "rte flow meta action:\n");
             if (meta) {
                 ds_put_format(s,
-                              "  meta: data=%d mask=%x\n",
+                              "  meta: data=%d mask=0x%x\n",
                               RTE_BE32(meta->data), RTE_BE32(meta->mask));
             } else {
                 ds_put_cstr(s, "  meta = null\n");
