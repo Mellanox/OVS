@@ -5140,7 +5140,6 @@ restore_packet_state(uint32_t flow_mark, struct dp_packet *packet)
 
     case MARK_PREPROCESS_FLOW_WITH_CT:
         packet->md.in_port.odp_port = miss_ctx->flow.in_port;
-        packet->md.recirc_id = miss_ctx->flow.recirc_id;
         outer_id = miss_ctx->flow.outer_id;
         if (outer_id && netdev_rte_vxlan_restore(outer_id, packet)) {
             VLOG_DBG("Failed to restore VXLAN tunnel for outer_id %u", outer_id );
