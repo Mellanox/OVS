@@ -4109,6 +4109,9 @@ netdev_dpdk_offload_ct_actions(struct flow_data *fdata,
     }
 
     /* TODO: set hw_id in meta data, will be used by mapping table -- DONE */
+    netdev_dpdk_add_action_set_reg(&fdata->actions, flow_actions,
+                                   TAG_FIELD_HW_ID,
+                                   cls_info->actions.hw_id);
     netdev_rte_add_meta_flow_action(&fdata->actions.meta,
                                     cls_info->actions.hw_id,
                                     flow_actions);
@@ -4838,7 +4841,9 @@ netdev_rte_create_hwid_flow(struct netdev *netdev, uint32_t hwid, uint16_t dpdk_
     memset(&mask, 0, sizeof mask);
 
     /* Match on hwid by setting meta data */
-    ret = netdev_dpdk_add_pattern_match_meta(&spec, &patterns, hwid);
+    ret = netdev_dpdk_add_pattern_match_reg(&spec, &mask, &patterns,
+                                            TAG_FIELD_HW_ID,
+                                            hwid, 0xFFFFFFFF);
     if (ret) {
         return NULL;
     }
