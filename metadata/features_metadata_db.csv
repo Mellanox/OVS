@@ -1,0 +1,2 @@
+name=rebase; type=kernel; upstream_status=ignore;
+name=ofed_scripts; type=scripts; upstream_status=ignore;
