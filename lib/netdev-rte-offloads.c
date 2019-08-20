@@ -5118,7 +5118,7 @@ restore_packet_state(uint32_t flow_mark, struct dp_packet *packet)
                 (rte_port->is_uplink && ct_rep->tun.ip_dst)) {
             dir = CT_OFFLOAD_DIR_REP;
         } else {
-            VLOG_DBG("Could not match any direction for CT miss handling");
+            VLOG_ERR("Could not match any direction for CT miss handling");
             return -1;
         }
         ct_offload = miss_ctx->ct.ct_offload[dir];
@@ -5132,7 +5132,7 @@ restore_packet_state(uint32_t flow_mark, struct dp_packet *packet)
         }
         if (hw_id && netdev_dpdk_get_id_from_hw_id(hw_id, false,
                                                    &packet->md.recirc_id)) {
-            VLOG_DBG("Failed to get recirc_id from hw_id %u", hw_id);
+            VLOG_ERR("Failed to get recirc_id from hw_id %u", hw_id);
             return -1;
         }
         netdev_dpdk_tun_recover_meta_data(packet, miss_ctx->ct.outer_id[dir]);
@@ -5142,7 +5142,7 @@ restore_packet_state(uint32_t flow_mark, struct dp_packet *packet)
         packet->md.in_port.odp_port = miss_ctx->flow.in_port;
         outer_id = miss_ctx->flow.outer_id;
         if (outer_id && netdev_rte_vxlan_restore(outer_id, packet)) {
-            VLOG_DBG("Failed to restore VXLAN tunnel for outer_id %u", outer_id );
+            VLOG_ERR("Failed to restore VXLAN tunnel for outer_id %u", outer_id );
             return -1;
         }
     break;
