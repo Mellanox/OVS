@@ -3023,16 +3023,6 @@ netdev_rte_offloads_hw_pr_remove(int relay_id)
 }
 
 /* Connection tracking code */
-static int
-netdev_dpdk_add_pattern_match_meta(struct flow_items *spec,
-                                   struct flow_patterns *patterns,
-                                   ovs_be32 val)
-{
-    spec->meta.data = RTE_BE32(val);
-    add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_META, &spec->meta, NULL);
-    return 0;
-}
-
 #define INVALID_OUTER_ID  0Xffffffff
 #define INVALID_HW_ID     0Xffffffff
 #define MAX_OUTER_ID  0xffff
