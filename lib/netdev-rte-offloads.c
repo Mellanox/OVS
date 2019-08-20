@@ -188,6 +188,7 @@ struct ufid_hw_offload {
     uint32_t mark;
     int max_flows;
     int curr_idx;
+    int hw_stats_adjust;
     struct rte_flow_params {
         struct rte_flow *flow;
         struct netdev *netdev;
@@ -213,6 +214,7 @@ netdev_rte_port_ufid_hw_offload_alloc(int max_flows, const ovs_u128 *ufid, uint3
     if (ufidol) {
         ufidol->max_flows = max_flows;
         ufidol->curr_idx = 0;
+        ufidol->hw_stats_adjust = 0;
         ufidol->ufid = *ufid;
         ufidol->mark = mark;
     }
@@ -610,6 +612,8 @@ struct flow_data {
     struct flow_action_items actions;
     /* WA flow */
     struct rte_flow *flow0;
+    /* WA encap HW stats */
+    int hw_stats_adjust;
 };
 
 
@@ -1257,6 +1261,7 @@ netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
         ret = ENODEV;
         goto err;
     }
+    ufid_hw_offload->hw_stats_adjust = flow_data.hw_stats_adjust;
 
     if (flow_data.flow0) {
         ufid_hw_offload_add_rte_flow(ufid_hw_offload, flow_data.flow0, netdev);
@@ -1336,7 +1341,8 @@ netdev_rte_offloads_flow_stats_get(struct netdev *netdev OVS_UNUSED,
                     continue;
                 }
                 stats->n_packets += (query.hits_set) ? query.hits : 0;
-                stats->n_bytes += (query.bytes_set) ? query.bytes : 0;
+                stats->n_bytes += (query.bytes_set) ? query.bytes +
+                                  (stats->n_packets * uho->hw_stats_adjust) : 0;
             }
         }
     }
@@ -3928,8 +3934,9 @@ netdev_dpdk_offload_tnl_push(struct flow_data *fdata,
     fdata->actions.clone_raw_encap.data =
                              (uint8_t *)cls_info->actions.push_tnl->header;
     fdata->actions.clone_raw_encap.preserve = NULL;
-    fdata->actions.clone_raw_encap.size =
-                                       cls_info->actions.push_tnl->header_len;
+    uint32_t header_len = cls_info->actions.push_tnl->header_len;
+    fdata->actions.clone_raw_encap.size = header_len;
+    fdata->hw_stats_adjust -= header_len;
     add_flow_action(flow_actions, RTE_FLOW_ACTION_TYPE_RAW_ENCAP,
                                             &fdata->actions.clone_raw_encap);
 
