@@ -202,6 +202,7 @@ dist-hook-git: distfiles
 	    LC_ALL=C sort -u > all-distfiles; \
 	  (cd $(srcdir) && git ls-files) | grep -v '\.gitignore$$' | \
 	    grep -v '\.gitattributes$$' | \
+	    grep -v -f ofed_scripts/mellanox_ignore_list | \
 	    LC_ALL=C sort -u > all-gitfiles; \
 	  LC_ALL=C comm -1 -3 all-distfiles all-gitfiles > missing-distfiles; \
 	  if test -s missing-distfiles; then \
@@ -309,7 +310,8 @@ check-endian:
 ALL_LOCAL += check-echo-n
 check-echo-n:
 	@if test -e $(srcdir)/.git && (git --version) >/dev/null 2>&1 && \
-	  git --no-pager grep -n 'echo'' -n' $(srcdir); \
+	  git --no-pager grep -n 'echo'' -n' $(srcdir) | \
+	    grep -v -f ofed_scripts/mellanox_ignore_list ; \
 	then \
 	  echo "See above for uses for \"echo"" -n\", which is non-POSIX"; \
 	  echo "and does not work with all shells.  Use \"printf\" instead."; \
@@ -323,6 +325,7 @@ check-tabs:
 	if test -e .git && (git --version) >/dev/null 2>&1 && \
 	  grep -ln "^	" \
 	    `git ls-files \
+	      | grep -v -f ofed_scripts/mellanox_ignore_list  \
 	      | grep -v -f build-aux/initial-tab-whitelist` /dev/null \
 	      | $(EGREP) -v ':[ 	]*/?\*'; \
 	then \
