@@ -6693,9 +6693,8 @@ packet_batch_per_flow_execute(struct packet_batch_per_flow *batch,
     size_t updated_actions_size;
 
     /* update the stats only if the flow was not fully offloaded */
-    if (!flow->is_hwol)
-        dp_netdev_flow_used(flow, batch->array.count, batch->byte_count,
-                            batch->tcp_flags, pmd->ctx.now / 1000);
+    dp_netdev_flow_used(flow, batch->array.count, batch->byte_count,
+                        batch->tcp_flags, pmd->ctx.now / 1000);
 
     /* skip the actions that were executed by the HW */
     actions = dp_netdev_flow_get_actions(flow);
