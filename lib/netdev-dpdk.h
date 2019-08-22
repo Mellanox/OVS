@@ -56,7 +56,12 @@ netdev_dpdk_rte_flow_create(struct netdev *netdev,
                             const struct rte_flow_item *items,
                             const struct rte_flow_action *actions,
                             struct rte_flow_error *error);
-
+int
+netdev_dpdk_rte_flow_query(struct netdev *netdev,
+                           struct rte_flow *flow,
+                           const struct rte_flow_action *action,
+                           void *data,
+                           struct rte_flow_error *error);
 int netdev_dpdk_get_port_id(const struct netdev *netdev);
 bool netdev_dpdk_is_uplink_port(const struct netdev *netdev);
 

@@ -4856,6 +4856,22 @@ netdev_dpdk_rte_flow_create(struct netdev *netdev,
     return flow;
 }
 
+int
+netdev_dpdk_rte_flow_query(struct netdev *netdev,
+                           struct rte_flow *flow,
+                           const struct rte_flow_action *action,
+                           void *data,
+                           struct rte_flow_error *error)
+{
+    int ret;
+    struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
+
+    ovs_mutex_lock(&dev->mutex);
+    ret = ovs_rte_flow_query(dev->port_id, flow, action, data, error);
+    ovs_mutex_unlock(&dev->mutex);
+    return ret;
+}
+
 struct rte_mempool *
 netdev_dpdk_hw_forwarder_get_mempool(const char *name)
 {
