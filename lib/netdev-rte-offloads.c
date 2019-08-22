@@ -4632,6 +4632,10 @@ fill_ct_match(struct match *match, struct ct_flow_offload_item *item)
     match->wc.masks.tp_dst = 0xFFFF;
     match->flow.ct_zone = item->zone;
     match->wc.masks.ct_zone = 0xFFFF;
+    /* Metadata matches are not done in recirc 0. In CT matches, set the
+     * recirc to a non-zero value.
+     */
+    match->flow.recirc_id = 1;
 }
 
 /* Build 2 HW flows, one per direction and offload to relevant port.
