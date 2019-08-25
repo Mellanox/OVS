@@ -3427,6 +3427,7 @@ netdev_dpdk_del_miss_ctx(uint32_t mark)
     CMAP_FOR_EACH_WITH_HASH (data, node, hash,
                       &mark_to_miss_ctx) {
         if (data->mark == mark) {
+                VLOG_DBG("Free miss context for mark=%d", mark);
                 cmap_remove(&mark_to_miss_ctx,
                         CONST_CAST(struct cmap_node *, &data->node), hash);
                 ovsrcu_postpone(free, data);

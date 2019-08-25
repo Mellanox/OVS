@@ -2783,11 +2783,11 @@ dp_ct_offload_del(struct ct_flow_offload_item *item)
         goto out;
     }
 
+    ret = netdev_dpdk_offload_ct_del(mark);
+
     ct_to_mark_disassociate(item);
     flow_mark_free(mark);
     VLOG_DBG("mark %d returned to pool\n%s", mark, ds_cstr(&s));
-
-    ret = netdev_dpdk_offload_ct_del(mark);
 
 out:
     ds_destroy(&s);
