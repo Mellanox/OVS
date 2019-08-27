@@ -46,9 +46,12 @@ conn_icmp_cast(const struct conn *conn)
 }
 
 static int
-icmp_get_tm(struct conn *conn_ OVS_UNUSED, enum ct_timeout *tm OVS_UNUSED)
+icmp_get_tm(struct conn *conn_, enum ct_timeout *tm)
 {
-    return -1;
+    struct conn_icmp *conn = conn_icmp_cast(conn_);
+
+    *tm = icmp_timeouts[conn->state];
+    return 0;
 }
 
 static enum ct_update_res

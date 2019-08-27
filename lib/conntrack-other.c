@@ -43,9 +43,12 @@ conn_other_cast(const struct conn *conn)
 }
 
 static int
-other_get_tm(struct conn *conn_ OVS_UNUSED, enum ct_timeout *tc OVS_UNUSED)
+other_get_tm(struct conn *conn_, enum ct_timeout *tm)
 {
-    return -1;
+    struct conn_other *conn = conn_other_cast(conn_);
+
+    *tm = other_timeouts[conn->state];
+    return 0;
 }
 
 static enum ct_update_res

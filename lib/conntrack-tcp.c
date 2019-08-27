@@ -165,9 +165,14 @@ tcp_states_to_tm(struct tcp_peer *src, struct tcp_peer *dst)
 }
 
 static int
-tcp_get_tm(struct conn *conn_ OVS_UNUSED, enum ct_timeout *tm OVS_UNUSED)
+tcp_get_tm(struct conn *conn_, enum ct_timeout *tm)
 {
-    return -1;
+    struct conn_tcp *conn = conn_tcp_cast(conn_);
+    struct tcp_peer *peer1 = &conn->peer[0];
+    struct tcp_peer *peer2 = &conn->peer[1];
+
+    *tm = tcp_states_to_tm(peer1, peer2);
+    return 0;
 }
 
 #include "lib/netdev.h"
