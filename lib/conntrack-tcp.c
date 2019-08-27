@@ -164,6 +164,12 @@ tcp_states_to_tm(struct tcp_peer *src, struct tcp_peer *dst)
     }
 }
 
+static int
+tcp_get_tm(struct conn *conn_ OVS_UNUSED, enum ct_timeout *tm OVS_UNUSED)
+{
+    return -1;
+}
+
 #include "lib/netdev.h"
 #define conntrack_get_tcp_liberal(ct) netdev_is_flow_api_enabled()
 static enum ct_update_res
@@ -504,4 +510,5 @@ struct ct_l4_proto ct_proto_tcp = {
     .valid_new = tcp_valid_new,
     .conn_update = tcp_conn_update,
     .conn_get_protoinfo = tcp_conn_get_protoinfo,
+    .get_tm = tcp_get_tm,
 };

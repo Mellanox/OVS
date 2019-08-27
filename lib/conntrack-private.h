@@ -140,6 +140,7 @@ struct ct_l4_proto {
                                       long long now);
     void (*conn_get_protoinfo)(const struct conn *,
                                struct ct_dpif_protoinfo *);
+    int (*get_tm)(struct conn *conn, enum ct_timeout *tm);
 };
 
 extern struct ct_l4_proto ct_proto_tcp;

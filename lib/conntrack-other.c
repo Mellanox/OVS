@@ -42,6 +42,12 @@ conn_other_cast(const struct conn *conn)
     return CONTAINER_OF(conn, struct conn_other, up);
 }
 
+static int
+other_get_tm(struct conn *conn_ OVS_UNUSED, enum ct_timeout *tc OVS_UNUSED)
+{
+    return -1;
+}
+
 static enum ct_update_res
 other_conn_update(struct conn *conn_, struct conntrack_bucket *ctb,
                   struct dp_packet *pkt OVS_UNUSED, bool reply, long long now)
@@ -83,4 +89,5 @@ struct ct_l4_proto ct_proto_other = {
     .new_conn = other_new_conn,
     .valid_new = other_valid_new,
     .conn_update = other_conn_update,
+    .get_tm = other_get_tm,
 };

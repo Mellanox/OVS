@@ -45,6 +45,12 @@ conn_icmp_cast(const struct conn *conn)
     return CONTAINER_OF(conn, struct conn_icmp, up);
 }
 
+static int
+icmp_get_tm(struct conn *conn_ OVS_UNUSED, enum ct_timeout *tm OVS_UNUSED)
+{
+    return -1;
+}
+
 static enum ct_update_res
 icmp_conn_update(struct conn *conn_, struct conntrack_bucket *ctb,
                  struct dp_packet *pkt OVS_UNUSED, bool reply, long long now)
@@ -102,4 +108,5 @@ struct ct_l4_proto ct_proto_icmp6 = {
     .new_conn = icmp_new_conn,
     .valid_new = icmp6_valid_new,
     .conn_update = icmp_conn_update,
+    .get_tm = icmp_get_tm,
 };
