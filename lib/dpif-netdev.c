@@ -6892,9 +6892,9 @@ dfc_processing(struct dp_netdev_pmd_thread *pmd,
 
         if ((*recirc_depth_get() == 0) &&
             dp_packet_has_flow_mark(packet, &mark)) {
+            tcp_flags = parse_tcp_flags(packet);
             flow = process_partial_offload(pmd, port_no, mark, packet);
             if (OVS_LIKELY(flow)) {
-                tcp_flags = parse_tcp_flags(packet);
                 if (OVS_LIKELY(batch_enable)) {
                     dp_netdev_queue_batches(packet, flow, tcp_flags, batches,
                                             n_batches);

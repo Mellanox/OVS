@@ -50,6 +50,9 @@ bool dpif_is_netdev(const struct dpif *);
 #define MIN_FLOW_MARK            RESERVED_FLOW_MARK_SIZE
 #define AVAILABLE_FLOW_MARK_SIZE (MAX_FLOW_MARK - MIN_FLOW_MARK + 1)
 #define MIN_RESERVED_MARK        1
-#define MAX_RESERVED_MARK        (RESERVED_FLOW_MARK_SIZE - 1)
+
+#define CT_HIT_MARK(zone)        (RESERVED_FLOW_MARK_SIZE - 1)
+/* we ignore for now the zone */
+#define MAX_RESERVED_MARK        (RESERVED_FLOW_MARK_SIZE - 2)
 
 #endif /* netdev.h */

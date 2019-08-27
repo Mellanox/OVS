@@ -1701,11 +1701,11 @@ ct_add_rte_flow_offload(struct netdev_rte_port *rte_port,
                         struct match *match,
                         struct ct_flow_offload_item *ct_offload,
                         const ovs_u128 *ctid,
-                        uint32_t mark_id,
                         bool nat,
                         struct ct_stats *stats OVS_UNUSED)
 {
     struct flow_action_items action_items;
+    uint32_t mark_id;
     int ret = 0;
 
     /* If an old rte_flow exists, it means it's a flow modification.
@@ -1804,6 +1804,7 @@ ct_add_rte_flow_offload(struct netdev_rte_port *rte_port,
     }
 
     netdev_rte_add_count_flow_action(&count, &actions);
+    mark_id = CT_HIT_MARK(ct_offload->zone);
     netdev_rte_add_mark_flow_action(&mark, mark_id, &actions);
     netdev_rte_add_jump_flow_action(&jump, MAPPING_TABLE_ID, &actions);
     add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_END, NULL);
@@ -3278,11 +3279,16 @@ enum mark_preprocess_type {
  * A mapping from ufid to to CT rte_flow.
  */
 static struct cmap mark_to_miss_ctx = CMAP_INITIALIZER;
+/* for each direction, with and without NAT */
+static struct cmap ip_5tup_to_miss_ctx[CT_OFFLOAD_NUM][2] = {
+    {CMAP_INITIALIZER, CMAP_INITIALIZER},
+    {CMAP_INITIALIZER, CMAP_INITIALIZER}, };
 
 #define INVALID_IN_PORT 0xffff
 
 struct mark_to_miss_ctx_data {
     struct cmap_node node;
+    struct cmap_node ip_5tup_node[CT_OFFLOAD_NUM][2];
     uint32_t mark;
     int type;
     union {
@@ -3410,6 +3416,204 @@ netdev_dpdk_del_miss_ctx(uint32_t mark)
                 ovsrcu_postpone(free, data);
                 return;
         }
+    }
+}
+
+static bool
+netdev_rte_offloads_modify_ipv4_tuple(struct ovs_key_ct_tuple_ipv4 *tuple,
+                                      uint8_t mod_flags,
+                                      struct ovs_key_ct_tuple_ipv4 *mod_tuple)
+{
+    if (mod_flags & CT_OFFLOAD_MODIFY_DST_IP) {
+        tuple->ipv4_dst = mod_tuple->ipv4_dst;
+    }
+    if (mod_flags & CT_OFFLOAD_MODIFY_DST_PORT) {
+        tuple->dst_port = mod_tuple->dst_port;
+    }
+    if (mod_flags & CT_OFFLOAD_MODIFY_SRC_IP) {
+        tuple->ipv4_src = mod_tuple->ipv4_src;
+    }
+    if (mod_flags & CT_OFFLOAD_MODIFY_SRC_PORT) {
+        tuple->src_port = mod_tuple->src_port;
+    }
+
+    return !!mod_flags;
+}
+
+static void
+netdev_rte_offloads_map_ct_ipv4_ctx(struct ct_flow_offload_item *item, int dir,
+                                    struct mark_to_miss_ctx_data *ctx)
+{
+    struct ovs_key_ct_tuple_ipv4 tuple;
+    uint32_t hash;
+
+    tuple = item->ct_match.ipv4;
+
+    hash = hash_add_bytes32(0, (void *)&tuple, sizeof tuple);
+    VLOG_DBG("map ct ctx for (%s) "IP_FMT":%u -> "IP_FMT":%u",
+             (tuple.ipv4_proto == IPPROTO_TCP) ? "TCP" :
+              (tuple.ipv4_proto == IPPROTO_UDP) ? "UDP" : "OTHER",
+             IP_ARGS(tuple.ipv4_src), htons(tuple.src_port),
+             IP_ARGS(tuple.ipv4_dst), htons(tuple.dst_port));
+    cmap_insert(&ip_5tup_to_miss_ctx[dir][0],
+                CONST_CAST(struct cmap_node *, &ctx->ip_5tup_node[dir][0]), hash);
+
+    if (netdev_rte_offloads_modify_ipv4_tuple(&tuple, item->mod_flags,
+                                              &item->ct_modify.ipv4)) {
+        hash = hash_add_bytes32(0, (void *)&tuple, sizeof tuple);
+        VLOG_DBG("map ct ctx for (%s) "IP_FMT":%u -> "IP_FMT":%u",
+                 (tuple.ipv4_proto == IPPROTO_TCP) ? "TCP" :
+                  (tuple.ipv4_proto == IPPROTO_UDP) ? "UDP" : "OTHER",
+                 IP_ARGS(tuple.ipv4_src), htons(tuple.src_port),
+                 IP_ARGS(tuple.ipv4_dst), htons(tuple.dst_port));
+        cmap_insert(&ip_5tup_to_miss_ctx[dir][1],
+                    CONST_CAST(struct cmap_node *, &ctx->ip_5tup_node[dir][1]),
+                               hash);
+    }
+}
+
+static void
+netdev_rte_offloads_map_ct_ctx(struct ct_flow_offload_item *item, int dir,
+                               struct mark_to_miss_ctx_data *ctx)
+{
+    if (item->ct_ipv6) {
+        return;
+    } else {
+        netdev_rte_offloads_map_ct_ipv4_ctx(item, dir, ctx);
+    }
+}
+
+static bool
+netdev_rte_offloads_find_ct_ipv4_ctx(struct dp_packet *packet,
+                                     struct mark_to_miss_ctx_data **ctx)
+{
+    const struct ip_header *l3 = dp_packet_l3(packet);
+    struct ovs_key_ct_tuple_ipv4 tuple, orig_tuple = {
+        .ipv4_dst = get_16aligned_be32(&l3->ip_dst),
+        .ipv4_src = get_16aligned_be32(&l3->ip_src),
+        .ipv4_proto = l3->ip_proto,
+    };
+    struct mark_to_miss_ctx_data *data;
+    bool ret = false;
+    uint32_t hash;
+    int dir;
+
+    if (orig_tuple.ipv4_proto == IPPROTO_TCP) {
+        const struct tcp_header *th = dp_packet_l4(packet);
+
+        orig_tuple.src_port = th->tcp_src;
+        orig_tuple.dst_port = th->tcp_dst;
+    } else if (orig_tuple.ipv4_proto == IPPROTO_UDP) {
+        const struct udp_header *uh = dp_packet_l4(packet);
+
+        orig_tuple.src_port = uh->udp_src;
+        orig_tuple.dst_port = uh->udp_dst;
+    }
+
+    for (dir = 0; dir < CT_OFFLOAD_NUM; dir++) {
+        tuple = orig_tuple;
+        hash = hash_add_bytes32(0, (void *)&tuple, sizeof tuple);
+        CMAP_FOR_EACH_WITH_HASH (data, ip_5tup_node[dir][0], hash,
+                                 &ip_5tup_to_miss_ctx[dir][0]) {
+            struct ct_flow_offload_item *item = data->ct.ct_offload[dir];
+
+            if (!memcmp(&tuple, &item->ct_match.ipv4, sizeof tuple)) {
+                *ctx = data;
+                ret = true;
+                goto out;
+            }
+            if (!netdev_rte_offloads_modify_ipv4_tuple(&tuple, item->mod_flags,
+                                                       &item->ct_modify.ipv4)) {
+
+                hash = hash_add_bytes32(0, (void *)&tuple, sizeof tuple);
+                CMAP_FOR_EACH_WITH_HASH (data, ip_5tup_node[dir][1], hash,
+                                         &ip_5tup_to_miss_ctx[dir][1]) {
+                    if (!memcmp(&tuple, &item->ct_match.ipv4, sizeof tuple)) {
+                        *ctx = data;
+                        ret = true;
+                        goto out;
+                    }
+                }
+            }
+        }
+    }
+
+out:
+    VLOG_DBG("%s ct ctx for (%s) "IP_FMT":%u -> "IP_FMT":%u",
+             ret ? "found" : "could not find",
+             (tuple.ipv4_proto == IPPROTO_TCP) ? "TCP" :
+              (tuple.ipv4_proto == IPPROTO_UDP) ? "UDP" : "OTHER",
+             IP_ARGS(tuple.ipv4_src), htons(tuple.src_port),
+             IP_ARGS(tuple.ipv4_dst), htons(tuple.dst_port));
+    return ret;
+}
+
+static bool
+netdev_rte_offloads_find_ct_ctx(struct dp_packet *packet,
+                                struct mark_to_miss_ctx_data **ctx)
+{
+    const struct eth_header *eh = dp_packet_eth(packet);
+
+    if (!eh) {
+        return false;
+    }
+
+    if (eh->eth_type == htons(ETH_TYPE_IP)) {
+        return netdev_rte_offloads_find_ct_ipv4_ctx(packet, ctx);
+    } else if (eh->eth_type == htons(ETH_TYPE_IPV6)) {
+        return false;
+    } else {
+        return false;
+    }
+}
+
+static void
+netdev_rte_offloads_del_ct_ipv4_ctx(struct mark_to_miss_ctx_data *ctx, int dir)
+{
+    struct ovs_key_ct_tuple_ipv4 tuple;
+    struct mark_to_miss_ctx_data *data;
+    uint32_t hash;
+
+    tuple = ctx->ct.ct_offload[dir]->ct_match.ipv4;
+    hash = hash_add_bytes32(0, (void *)&tuple, sizeof tuple);
+    CMAP_FOR_EACH_WITH_HASH (data, ip_5tup_node[dir][0], hash,
+                             &ip_5tup_to_miss_ctx[dir][0]) {
+        struct ct_flow_offload_item *item = data->ct.ct_offload[dir];
+
+        if (!memcmp(&tuple, &item->ct_match.ipv4, sizeof tuple)) {
+            VLOG_DBG("del ct ctx for (%s) "IP_FMT":%u -> "IP_FMT":%u",
+                     (tuple.ipv4_proto == IPPROTO_TCP) ? "TCP" :
+                      (tuple.ipv4_proto == IPPROTO_UDP) ? "UDP" : "OTHER",
+                     IP_ARGS(tuple.ipv4_src), htons(tuple.src_port),
+                     IP_ARGS(tuple.ipv4_dst), htons(tuple.dst_port));
+            cmap_remove(&ip_5tup_to_miss_ctx[dir][0],
+                        CONST_CAST(struct cmap_node *, &data->ip_5tup_node[dir][0]), hash);
+            if (netdev_rte_offloads_modify_ipv4_tuple(&tuple, item->mod_flags,
+                                                      &item->ct_modify.ipv4)) {
+                hash = hash_add_bytes32(0, (void *)&tuple, sizeof tuple);
+                VLOG_DBG("del ct ctx for (%s) "IP_FMT":%u -> "IP_FMT":%u",
+                         (tuple.ipv4_proto == IPPROTO_TCP) ? "TCP" :
+                          (tuple.ipv4_proto == IPPROTO_UDP) ? "UDP" : "OTHER",
+                         IP_ARGS(tuple.ipv4_src), htons(tuple.src_port),
+                         IP_ARGS(tuple.ipv4_dst), htons(tuple.dst_port));
+                cmap_remove(&ip_5tup_to_miss_ctx[dir][1],
+                            CONST_CAST(struct cmap_node *, &data->ip_5tup_node[dir][1]),
+                                       hash);
+            }
+            return;
+        }
+    }
+}
+
+static void
+netdev_rte_offloads_del_ct_ctx(struct mark_to_miss_ctx_data *ctx, int dir)
+{
+    struct ct_flow_offload_item *item = ctx->ct.ct_offload[dir];
+
+    if (item->ct_ipv6) {
+        return;
+    } else {
+        netdev_rte_offloads_del_ct_ipv4_ctx(ctx, dir);
     }
 }
 
@@ -4652,8 +4856,8 @@ netdev_dpdk_offload_ct_session(struct mark_to_miss_ctx_data *data,
     fill_ct_match(&match, ct_offload1);
     /* Add flow to CT table */
     build_ctid(data->mark, dir1, false, &ctid);
-    ret =  ct_add_rte_flow_offload(rte_port, &match, ct_offload1, &ctid, data->mark,
-                                   false, NULL /*struct ct_stats *stats OVS_UNUSED*/);
+    ret = ct_add_rte_flow_offload(rte_port, &match, ct_offload1, &ctid, false,
+                                  NULL);
     if (ret) {
         VLOG_DBG("failed to offload CT mark=%u dir=INIT", data->mark);
         goto err_port1;
@@ -4662,8 +4866,8 @@ netdev_dpdk_offload_ct_session(struct mark_to_miss_ctx_data *data,
         /* Add flow to CT-NAT table */
         build_ctid(data->mark, dir1, true, &ctid);
         /* Add flow to CT-NAT table */
-        ret =  ct_add_rte_flow_offload(rte_port, &match, ct_offload1, &ctid, data->mark,
-                                       true, NULL /*struct ct_stats *stats OVS_UNUSED*/);
+        ret = ct_add_rte_flow_offload(rte_port, &match, ct_offload1, &ctid,
+                                      true, NULL);
         if (ret) {
             VLOG_DBG("failed to offload CT-NAT mark=%u dir=INIT", data->mark);
             goto err_dir1;
@@ -4680,8 +4884,8 @@ netdev_dpdk_offload_ct_session(struct mark_to_miss_ctx_data *data,
     fill_ct_match(&match, ct_offload2);
     /* Add flow to CT table in the other direction */
     build_ctid(data->mark, dir2, false, &ctid);
-    ret =  ct_add_rte_flow_offload(rte_port, &match, ct_offload2, &ctid, data->mark,
-                                   false, NULL /*struct ct_stats *stats OVS_UNUSED*/);
+    ret = ct_add_rte_flow_offload(rte_port, &match, ct_offload2, &ctid, false,
+                                  NULL);
     if (ret) {
         VLOG_DBG("failed to offload CT mark=%u dir=REP", data->mark);
         goto err_dir1;
@@ -4689,8 +4893,8 @@ netdev_dpdk_offload_ct_session(struct mark_to_miss_ctx_data *data,
     if (ct_offload2->mod_flags) {
         /* Add flow to CT-NAT table in the other direction */
         build_ctid(data->mark, dir2, true, &ctid);
-        ret =  ct_add_rte_flow_offload(rte_port, &match, ct_offload2, &ctid, data->mark,
-                                       true, NULL /*struct ct_stats *stats OVS_UNUSED*/);
+        ret = ct_add_rte_flow_offload(rte_port, &match, ct_offload2, &ctid,
+                                      true, NULL);
         if (ret) {
             VLOG_DBG("failed to offload CT-NAT mark=%u dir=REP", data->mark);
             goto err_dir2;
@@ -4751,6 +4955,7 @@ netdev_dpdk_offload_ct_put(struct ct_flow_offload_item *ct_offload,
         data->ct.rteflow[dir] = false;
     }
     data->ct.ct_offload[dir] = netdev_dpdk_offload_ct_dup(ct_offload);
+    netdev_rte_offloads_map_ct_ctx(data->ct.ct_offload[dir], dir, data);
 
     /* we offload only when we have both sides */
     /* this might need to change if we want to support single dir flow */
@@ -4800,6 +5005,8 @@ netdev_dpdk_offload_ct_del(uint32_t mark)
     if (!netdev_dpdk_find_miss_ctx(mark, &data)) {
         return 0;
     }
+    netdev_rte_offloads_del_ct_ctx(data, CT_OFFLOAD_DIR_REP);
+    netdev_rte_offloads_del_ct_ctx(data, CT_OFFLOAD_DIR_INIT);
     netdev_dpdk_release_ct_flow(data, CT_OFFLOAD_DIR_REP);
     netdev_dpdk_release_ct_flow(data, CT_OFFLOAD_DIR_INIT);
 
@@ -5081,7 +5288,7 @@ roll_back:
 static int
 restore_packet_state(uint32_t flow_mark, struct dp_packet *packet)
 {
-    struct mark_to_miss_ctx_data *miss_ctx;
+    struct mark_to_miss_ctx_data *miss_ctx = NULL;
     uint16_t outer_id;
     uint32_t hw_id;
     struct ct_flow_offload_item *ct_offload = NULL;
@@ -5089,7 +5296,9 @@ restore_packet_state(uint32_t flow_mark, struct dp_packet *packet)
     struct netdev_rte_port *rte_port;
     int dir;
 
-    if (!netdev_dpdk_find_miss_ctx(flow_mark, &miss_ctx)) {
+    if ((((flow_mark & FLOW_MARK_UPPER_MASK) == CT_HIT_MARK(0)) &&
+         !netdev_rte_offloads_find_ct_ctx(packet, &miss_ctx)) ||
+        (!miss_ctx && !netdev_dpdk_find_miss_ctx(flow_mark, &miss_ctx))) {
         return -1;
     }
 
