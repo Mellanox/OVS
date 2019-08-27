@@ -2135,12 +2135,6 @@ dp_netdev_pmd_find_dpcls(struct dp_netdev_pmd_thread *pmd,
     return cls;
 }
 
-#define INVALID_FLOW_MARK        (UINT32_MAX)
-#define MAX_FLOW_MARK            (UINT32_MAX - 1)
-#define RESERVED_FLOW_MARK_SIZE  (64)
-#define MIN_FLOW_MARK            RESERVED_FLOW_MARK_SIZE
-#define AVAILABLE_FLOW_MARK_SIZE (MAX_FLOW_MARK - MIN_FLOW_MARK + 1)
-
 struct megaflow_to_mark_data {
     const struct cmap_node node;
     ovs_u128 mega_ufid;
