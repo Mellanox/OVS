@@ -42,8 +42,10 @@ bool dpif_is_netdev(const struct dpif *);
 }
 #endif
 
+#define FLOW_MARK_UPPER_SHIFT    24
+#define FLOW_MARK_UPPER_MASK     ((1 << FLOW_MARK_UPPER_SHIFT) - 1)
 #define INVALID_FLOW_MARK        (UINT32_MAX)
-#define MAX_FLOW_MARK            (UINT32_MAX - 1)
+#define MAX_FLOW_MARK            FLOW_MARK_UPPER_MASK
 #define RESERVED_FLOW_MARK_SIZE  (64)
 #define MIN_FLOW_MARK            RESERVED_FLOW_MARK_SIZE
 #define AVAILABLE_FLOW_MARK_SIZE (MAX_FLOW_MARK - MIN_FLOW_MARK + 1)
