@@ -1857,7 +1857,7 @@ out:
 }
 
 static struct mark_to_miss_ctx_data *
-    netdev_dpdk_get_flow_miss_ctx(uint32_t mark, bool create);
+    netdev_dpdk_get_flow_miss_ctx(uint32_t mark);
 
 static int
 netdev_rte_vport_flow_put(struct netdev *netdev OVS_UNUSED,
@@ -3352,11 +3352,11 @@ netdev_dpdk_find_miss_ctx(uint32_t mark, struct mark_to_miss_ctx_data **ctx)
 }
 
 static struct mark_to_miss_ctx_data *
-netdev_dpdk_get_flow_miss_ctx(uint32_t mark, bool create)
+netdev_dpdk_get_flow_miss_ctx(uint32_t mark)
 {
     struct mark_to_miss_ctx_data * data = NULL;
 
-    if (!netdev_dpdk_find_miss_ctx(mark, &data) && create) {
+    if (!netdev_dpdk_find_miss_ctx(mark, &data)) {
         size_t hash = hash_add(0,mark);
         data = xzalloc(sizeof *data);
         data->mark = mark;
@@ -3376,7 +3376,7 @@ netdev_dpdk_save_flow_miss_ctx(uint32_t mark, uint32_t hw_id, uint32_t recirc_id
                                uint32_t outer_id, uint32_t in_port,
                                int miss_type)
 {
-    struct mark_to_miss_ctx_data *data = netdev_dpdk_get_flow_miss_ctx(mark, true);
+    struct mark_to_miss_ctx_data *data = netdev_dpdk_get_flow_miss_ctx(mark);
     if (!data) {
         return -1;
     }
@@ -4732,7 +4732,7 @@ netdev_dpdk_offload_ct_put(struct ct_flow_offload_item *ct_offload,
                            uint32_t mark)
 {
     struct mark_to_miss_ctx_data *data =
-        netdev_dpdk_get_flow_miss_ctx(mark, true);
+        netdev_dpdk_get_flow_miss_ctx(mark);
     if (!data) {
         return -1;
     }
@@ -5084,9 +5084,9 @@ restore_packet_state(uint32_t flow_mark, struct dp_packet *packet)
     struct netdev_rte_port *rte_port;
     int dir;
 
-    miss_ctx = netdev_dpdk_get_flow_miss_ctx(flow_mark, false);
-    if (!miss_ctx)
+    if (!netdev_dpdk_find_miss_ctx(flow_mark, &miss_ctx)) {
         return -1;
+    }
 
     switch (miss_ctx->type) {
     case MARK_PREPROCESS_VXLAN:
