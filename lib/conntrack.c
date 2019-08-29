@@ -89,6 +89,7 @@ static bool valid_new(struct dp_packet *pkt, struct conn_key *);
 static struct conn *new_conn(struct conntrack_bucket *, struct dp_packet *pkt,
                              struct conn_key *, long long now);
 static void delete_conn(struct conn *);
+static int get_tm(struct conn *, enum ct_timeout *);
 static enum ct_update_res conn_update(struct conn *,
                                       struct conntrack_bucket *ctb,
                                       struct dp_packet *, bool reply,
@@ -1032,6 +1033,12 @@ nat_res_exhaustion:
     return NULL;
 }
 
+static int
+get_tm(struct conn *conn_, enum ct_timeout *tm)
+{
+    return l4_protos[conn_->key.nw_proto]->get_tm(conn_, tm);
+}
+
 static bool
 conn_update_state(struct conntrack *ct, struct dp_packet *pkt,
                   struct conn_lookup_ctx *ctx, struct conn **conn,
@@ -1589,8 +1596,8 @@ conntrack_off_fill_nat(struct ct_flow_offload_item *item,
 }
 
 static void
-conntrack_off_fill_key(struct ct_flow_offload_item *msg,
-                       struct dp_packet *packet)
+conntrack_off_fill_key_by_packet(struct ct_flow_offload_item *msg,
+                                 struct dp_packet *packet)
 {
     if (msg->ct_ipv6) {
         VLOG_DBG("IPV6 not supported yet");
@@ -1608,6 +1615,19 @@ conntrack_fill_ipv4_ct_tuple_from_key(struct ovs_key_ct_tuple_ipv4 *tuple,
         tuple->src_port  = key->src.port;
         tuple->dst_port  = key->dst.port;
         tuple->ipv4_proto  = key->nw_proto;
+}
+
+static void
+conntrack_off_fill_key(struct ct_flow_offload_item *msg,
+                       struct conn_key *key)
+{
+    msg->ct_ipv6 = key->dl_type == htons(ETH_TYPE_IPV6);
+    msg->zone = key->zone;
+    if (msg->ct_ipv6) {
+        VLOG_DBG("not supported yet");
+    } else {
+        conntrack_fill_ipv4_ct_tuple_from_key(&msg->ct_key.ipv4, key);
+    }
 }
 
 static void
@@ -1638,8 +1658,7 @@ conntrack_off_put_conn(struct conntrack *ct, struct conn_lookup_ctx *ctx,
     struct ct_flow_offload_item off_item;
     memset(&off_item,0,sizeof off_item);
     off_item.op = CT_OFFLOAD_OP_ADD;
-    off_item.ct_ipv6 = (ctx->key.dl_type == htons(ETH_TYPE_IPV6));
-    off_item.zone = ctx->key.zone;
+    conntrack_off_fill_key(&off_item, &ctx->key);
     off_item.reply = reply;
 
     if (off_item.ct_ipv6) {
@@ -1648,7 +1667,7 @@ conntrack_off_put_conn(struct conntrack *ct, struct conn_lookup_ctx *ctx,
     }
 
     if (ct->off_class && ct->off_class->conn_add) {
-        conntrack_off_fill_key(&off_item, packet);
+        conntrack_off_fill_key_by_packet(&off_item, packet);
         conntrack_off_fill_match(&off_item, ctx);
         conntrack_off_fill_nat(&off_item, packet, reply);
         conntrack_off_fill_tun(&off_item, packet);
@@ -1664,8 +1683,7 @@ conntrack_off_del_conn(struct conntrack *ct, struct conn *conn)
         struct ct_flow_offload_item msg;
         memset(&msg,0,sizeof msg);
         msg.op = CT_OFFLOAD_OP_DEL;
-        msg.zone = conn->key.zone;
-        conntrack_fill_ipv4_ct_tuple_from_key(&msg.ct_key.ipv4, &conn->key);
+        conntrack_off_fill_key(&msg, &conn->key);
         ct->off_class->conn_del(&msg);
     }
 }
@@ -1690,10 +1708,12 @@ conntrack_add_ct_off_item(struct conntrack *ct,
         }
 
         if (ctx->reply && !(ctx->conn->offload_flags & CT_OFF_REP)) {
+                (void)&get_tm;
                 conntrack_off_put_conn(ct, ctx, packet, ctx->reply);
                 ctx->conn->offload_flags |= CT_OFF_REP;
             } else if (!ctx->reply &&
                        !(ctx->conn->offload_flags & CT_OFF_INIT)) {
+                (void)&get_tm;
                 conntrack_off_put_conn(ct, ctx, packet, ctx->reply);
                 ctx->conn->offload_flags |= CT_OFF_INIT;
             }
@@ -1786,6 +1806,20 @@ set_label(struct dp_packet *pkt, struct conn *conn,
                               | (pkt->md.ct_label.u64.hi & ~(m.u64.hi));
         conn->label = pkt->md.ct_label;
     }
+}
+
+static bool
+conn_hw_active(struct conntrack *ct,
+               struct conn *conn)
+{
+    struct ct_flow_offload_item off_item;
+
+    memset(&off_item, 0, sizeof off_item);
+    conntrack_off_fill_key(&off_item, &conn->key);
+    return netdev_is_flow_api_enabled() &&
+        ct && ct->off_class &&
+        ct->off_class->conn_active &&
+        ct->off_class->conn_active(&off_item);
 }
 
 
@@ -2928,6 +2962,13 @@ conntrack_dump_next(struct conntrack_dump *dump, struct ct_dpif_entry *entry)
             INIT_CONTAINER(conn, node, node);
             if ((!dump->filter_zone || conn->key.zone == dump->zone) &&
                  (conn->conn_type != CT_CONN_TYPE_UN_NAT)) {
+                if (conn_hw_active(ct, conn)) {
+                    enum ct_timeout tm;
+                    if (!get_tm(conn, &tm)) {
+                        conn_update_expiration(&ct->buckets[dump->bucket],
+                                               conn, tm, now);
+                    }
+                }
                 conn_to_ct_dpif_entry(conn, entry, now, dump->bucket);
                 break;
             }

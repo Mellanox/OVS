@@ -324,9 +324,21 @@ struct ufid_to_odp {
     uint32_t recirc_id;
 };
 
-static struct cmap ufid_to_portid_map = CMAP_INITIALIZER;
-static struct cmap ctid_to_portid_map = CMAP_INITIALIZER;
-static struct ovs_mutex ufid_to_portid_mutex = OVS_MUTEX_INITIALIZER;
+struct ufid_portid_map {
+    struct cmap cmap;
+    struct ovs_mutex mutex;
+};
+
+static struct ufid_portid_map ufid_portid_maps[] = {
+    [UFID_TO_RTE_OFFLOADS] = {
+        .cmap = CMAP_INITIALIZER,
+        .mutex = OVS_MUTEX_INITIALIZER,
+    },
+    [UFID_TO_RTE_CT] = {
+        .cmap = CMAP_INITIALIZER,
+        .mutex = OVS_MUTEX_INITIALIZER,
+    },
+};
 
 /*
  * Search for ufid mapping
@@ -392,18 +404,21 @@ ufid_to_portid_add(const ovs_u128 *ufid, odp_port_t dp_port,
  * Remove the mapping if exists.
  */
 static void
-ufid_to_portid_remove(const ovs_u128 *ufid, struct cmap *cmap)
+ufid_to_portid_remove(const ovs_u128 *ufid,
+                      enum ufid_to_rte_type_e ufid_to_rte_type)
 {
     size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
+    struct cmap *cmap = &ufid_portid_maps[ufid_to_rte_type].cmap;
+    struct ovs_mutex *mutex = &ufid_portid_maps[ufid_to_rte_type].mutex;
     struct ufid_to_odp *data = ufid_to_portid_get(ufid, cmap);
 
-    ovs_mutex_lock(&ufid_to_portid_mutex);
+    ovs_mutex_lock(mutex);
     if (data != NULL) {
         cmap_remove(cmap,
                     CONST_CAST(struct cmap_node *, &data->node), hash);
         ovsrcu_postpone(free, data);
     }
-    ovs_mutex_unlock(&ufid_to_portid_mutex);
+    ovs_mutex_unlock(mutex);
 }
 
 /*
@@ -1241,7 +1256,7 @@ netdev_rte_offloads_flow_put(struct netdev *netdev, struct match *match,
 
     ufid_hw_offload_add(ufid_hw_offload, &rte_port->ufid_to_rte[UFID_TO_RTE_OFFLOADS]);
     ufid_to_portid_add(ufid, rte_port->dp_port, match->flow.recirc_id,
-                       &ufid_to_portid_map);
+                       &ufid_portid_maps[UFID_TO_RTE_OFFLOADS].cmap);
 
     ret = netdev_rte_offloads_validate_flow(match, false);
     if (ret < 0) {
@@ -1270,11 +1285,12 @@ err:
     return ret;
 }
 
-int
-netdev_rte_offloads_flow_stats_get(struct netdev *netdev OVS_UNUSED,
-                                   const ovs_u128 *ufid,
-                                   struct dpif_flow_stats *stats)
+static int
+netdev_rte_offloads_stats_get(const ovs_u128 *ufid,
+                              struct dpif_flow_stats *stats,
+                              enum ufid_to_rte_type_e ufid_to_rte_type)
 {
+    struct ovs_mutex *mutex = &ufid_portid_maps[ufid_to_rte_type].mutex;
     struct flow_actions actions = { .actions = NULL, .cnt = 0 };
     struct rte_flow_action_count count = {0};
     struct rte_flow_query_count query;
@@ -1289,9 +1305,10 @@ netdev_rte_offloads_flow_stats_get(struct netdev *netdev OVS_UNUSED,
 
     memset(stats, 0, sizeof *stats);
 
-    ovs_mutex_lock(&ufid_to_portid_mutex);
+    ovs_mutex_lock(mutex);
 
-    uto = ufid_to_portid_get(ufid, &ufid_to_portid_map);
+    uto = ufid_to_portid_get(ufid,
+                             &ufid_portid_maps[ufid_to_rte_type].cmap);
     if (!uto) {
         ret = EINVAL;
         goto err;
@@ -1301,7 +1318,7 @@ netdev_rte_offloads_flow_stats_get(struct netdev *netdev OVS_UNUSED,
         ret = EINVAL;
         goto err;
     }
-    uho = ufid_hw_offload_find(ufid, &rte_port->ufid_to_rte[UFID_TO_RTE_OFFLOADS]);
+    uho = ufid_hw_offload_find(ufid, &rte_port->ufid_to_rte[ufid_to_rte_type]);
     if (!uho) {
         ret = EINVAL;
         goto err;
@@ -1345,14 +1362,32 @@ netdev_rte_offloads_flow_stats_get(struct netdev *netdev OVS_UNUSED,
     ret = 0;
 
 err:
-    ovs_mutex_unlock(&ufid_to_portid_mutex);
+    ovs_mutex_unlock(mutex);
     return ret;
 }
 
+int
+netdev_rte_offloads_flow_stats_get(struct netdev *netdev OVS_UNUSED,
+                                   const ovs_u128 *ufid,
+                                   struct dpif_flow_stats *stats)
+{
+    return netdev_rte_offloads_stats_get(ufid, stats, UFID_TO_RTE_OFFLOADS);
+}
+
 static int
-netdev_offloads_flow_del(const ovs_u128 *ufid, struct cmap *cmap,
+net_rte_offloads_ct_stats_get(const ovs_u128 *ctid,
+                              struct dpif_flow_stats *stats)
+{
+    return netdev_rte_offloads_stats_get(ctid, stats, UFID_TO_RTE_CT);
+}
+
+
+static int
+netdev_offloads_flow_del(const ovs_u128 *ufid,
                          enum ufid_to_rte_type_e ufid_to_rte_type)
 {
+    struct cmap *cmap = &ufid_portid_maps[ufid_to_rte_type].cmap;
+
     odp_port_t port_num = ufid_to_portid_search(ufid, cmap);
     struct ufid_hw_offload *hw_offload;
     int i=0;
@@ -1376,7 +1411,7 @@ netdev_offloads_flow_del(const ovs_u128 *ufid, struct cmap *cmap,
 
             if (netd == rte_port->netdev && hw_offload->rte_flow_data[i].flow != NULL) {
                 struct ufid_to_odp *uto =
-                    ufid_to_portid_get(ufid, &ufid_to_portid_map);
+                    ufid_to_portid_get(ufid, cmap);
                 /* If a recirc_id flow was offloaded then remove its hw_id ref */
                 if (uto && uto->recirc_id) {
                     bool is_add = false;
@@ -1389,7 +1424,7 @@ netdev_offloads_flow_del(const ovs_u128 *ufid, struct cmap *cmap,
             }
        }
     }
-    ufid_to_portid_remove(ufid, cmap);
+    ufid_to_portid_remove(ufid, ufid_to_rte_type);
     ufid_hw_offload = ufid_hw_offload_remove(ufid, &rte_port->ufid_to_rte[ufid_to_rte_type]);
     if (ufid_hw_offload) {
         netdev_rte_port_ufid_hw_offload_free(ufid_hw_offload);
@@ -1403,7 +1438,7 @@ netdev_rte_offloads_flow_del(struct netdev *netdev OVS_UNUSED,
                              const ovs_u128 *ufid,
                              struct dpif_flow_stats *stats OVS_UNUSED)
 {
-    return netdev_offloads_flow_del(ufid, &ufid_to_portid_map, UFID_TO_RTE_OFFLOADS);
+    return netdev_offloads_flow_del(ufid, UFID_TO_RTE_OFFLOADS);
 }
 
 static int
@@ -1411,7 +1446,7 @@ netdev_rte_vport_flow_del(struct netdev *netdev OVS_UNUSED,
                           const ovs_u128 *ufid,
                           struct dpif_flow_stats *stats OVS_UNUSED)
 {
-    return netdev_offloads_flow_del(ufid, &ufid_to_portid_map, UFID_TO_RTE_OFFLOADS);
+    return netdev_offloads_flow_del(ufid, UFID_TO_RTE_OFFLOADS);
 }
 
 static int
@@ -1419,7 +1454,7 @@ netdev_rte_ct_flow_del(struct netdev *netdev OVS_UNUSED,
                        const ovs_u128 *ufid,
                        struct dpif_flow_stats *stats OVS_UNUSED)
 {
-    return netdev_offloads_flow_del(ufid, &ctid_to_portid_map, UFID_TO_RTE_CT);
+    return netdev_offloads_flow_del(ufid, UFID_TO_RTE_CT);
 }
 
 static int
@@ -1589,7 +1624,7 @@ netdev_vport_vxlan_add_rte_flow_offload(struct netdev_rte_port *rte_port,
 
     ufid_hw_offload_add(ufid_hw_offload, &rte_port->ufid_to_rte[UFID_TO_RTE_OFFLOADS]);
     ufid_to_portid_add(ufid, rte_port->dp_port, match->flow.recirc_id,
-                       &ufid_to_portid_map);
+                       &ufid_portid_maps[UFID_TO_RTE_OFFLOADS].cmap);
 
     struct netdev_rte_port *data;
     struct rte_flow *flow;
@@ -1738,7 +1773,7 @@ ct_add_rte_flow_offload(struct netdev_rte_port *rte_port,
 
     ufid_hw_offload_add(ctid_hw_offload, &rte_port->ufid_to_rte[UFID_TO_RTE_CT]);
     ufid_to_portid_add(ctid, rte_port->dp_port, match->flow.recirc_id,
-                       &ctid_to_portid_map);
+                       &ufid_portid_maps[UFID_TO_RTE_CT].cmap);
 
     struct rte_flow_attr flow_attr = {
         .group = nat ? CONNTRACK_NAT_TABLE_ID : CONNTRACK_TABLE_ID,
@@ -3023,16 +3058,6 @@ netdev_rte_offloads_hw_pr_remove(int relay_id)
 }
 
 /* Connection tracking code */
-static int
-netdev_dpdk_add_pattern_match_meta(struct flow_items *spec,
-                                   struct flow_patterns *patterns,
-                                   ovs_be32 val)
-{
-    spec->meta.data = RTE_BE32(val);
-    add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_META, &spec->meta, NULL);
-    return 0;
-}
-
 #define INVALID_OUTER_ID  0Xffffffff
 #define INVALID_HW_ID     0Xffffffff
 #define MAX_OUTER_ID  0xffff
@@ -4813,6 +4838,40 @@ netdev_dpdk_offload_ct_del(uint32_t mark)
     /* TODO - destroy rte_flows from tables -- DONE in netdev_dpdk_release_ct_flow()
      */
     return 0;
+}
+
+bool
+netdev_dpdk_offload_ct_active(uint32_t mark)
+{
+    struct mark_to_miss_ctx_data *data;
+    struct dpif_flow_stats stats;
+    ovs_u128 ctid;
+    bool active;
+    int dir;
+
+    if (!netdev_dpdk_find_miss_ctx(mark, &data)) {
+        VLOG_WARN("%s: cannot find context for mark=%d", __FUNCTION__, mark);
+        return false;
+    }
+    if (!(data->ct.ct_offload[CT_OFFLOAD_DIR_INIT]->ct_state & CS_ESTABLISHED) ||
+        !(data->ct.ct_offload[CT_OFFLOAD_DIR_REP]->ct_state & CS_ESTABLISHED)) {
+        VLOG_DBG("%s: ct for mark=%d is not established", __FUNCTION__, mark);
+        return false;
+    }
+
+    for (active = false, dir = CT_OFFLOAD_DIR_INIT;
+         dir < CT_OFFLOAD_NUM && !active; dir++) {
+        build_ctid(data->mark, dir, false, &ctid);
+        memset(&stats, 0, sizeof stats);
+        if (net_rte_offloads_ct_stats_get(&ctid, &stats)) {
+            VLOG_WARN("%s failed for mark=%d", __FUNCTION__, mark);
+            return false;
+        }
+        active = active || (stats.n_packets != 0);
+        VLOG_DBG("dir=%d, n_packets=%"PRIu64", active=%d", dir, stats.n_packets, active);
+    }
+    VLOG_DBG("mark=%d is %sactive", mark, active ? "" : "not ");
+    return active;
 }
 
 struct hwid_to_flow {

@@ -200,7 +200,7 @@ static inline void ct_rwlock_destroy(struct ct_rwlock *lock)
     CT_TIMEOUT(TCP_CLOSED, 30 * 1000) \
     CT_TIMEOUT(OTHER_FIRST, 60 * 1000) \
     CT_TIMEOUT(OTHER_MULTIPLE, 60 * 1000) \
-    CT_TIMEOUT(OTHER_BIDIR, 24 * 60 * 60 * 1000) \
+    CT_TIMEOUT(OTHER_BIDIR, 30 * 1000) \
     CT_TIMEOUT(ICMP_FIRST, 60 * 1000) \
     CT_TIMEOUT(ICMP_REPLY, 30 * 1000)
 
@@ -308,6 +308,8 @@ struct conntrack_off_class {
     void (*conn_add)(struct ct_flow_offload_item *,struct pkt_metadata *);
 
     void (*conn_del)(struct ct_flow_offload_item *);
+
+    bool (*conn_active)(struct ct_flow_offload_item *);
 };
 
 struct conntrack {

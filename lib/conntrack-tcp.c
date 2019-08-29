@@ -144,6 +144,37 @@ tcp_get_wscale(const struct tcp_header *tcp)
     return wscale;
 }
 
+static enum ct_timeout
+tcp_states_to_tm(struct tcp_peer *src, struct tcp_peer *dst)
+{
+    if (src->state >= CT_DPIF_TCPS_FIN_WAIT_2
+        && dst->state >= CT_DPIF_TCPS_FIN_WAIT_2) {
+        return CT_TM_TCP_CLOSED;
+    } else if (src->state >= CT_DPIF_TCPS_CLOSING
+               && dst->state >= CT_DPIF_TCPS_CLOSING) {
+        return CT_TM_TCP_FIN_WAIT;
+    } else if (src->state < CT_DPIF_TCPS_ESTABLISHED
+               || dst->state < CT_DPIF_TCPS_ESTABLISHED) {
+        return CT_TM_TCP_OPENING;
+    } else if (src->state >= CT_DPIF_TCPS_CLOSING
+               || dst->state >= CT_DPIF_TCPS_CLOSING) {
+        return CT_TM_TCP_CLOSING;
+    } else {
+        return CT_TM_TCP_ESTABLISHED;
+    }
+}
+
+static int
+tcp_get_tm(struct conn *conn_, enum ct_timeout *tm)
+{
+    struct conn_tcp *conn = conn_tcp_cast(conn_);
+    struct tcp_peer *peer1 = &conn->peer[0];
+    struct tcp_peer *peer2 = &conn->peer[1];
+
+    *tm = tcp_states_to_tm(peer1, peer2);
+    return 0;
+}
+
 #include "lib/netdev.h"
 #define conntrack_get_tcp_liberal(ct) netdev_is_flow_api_enabled()
 static enum ct_update_res
@@ -319,21 +350,8 @@ tcp_conn_update(struct conn *conn_, struct conntrack_bucket *ctb,
             src->state = dst->state = CT_DPIF_TCPS_TIME_WAIT;
         }
 
-        if (src->state >= CT_DPIF_TCPS_FIN_WAIT_2
-            && dst->state >= CT_DPIF_TCPS_FIN_WAIT_2) {
-            conn_update_expiration(ctb, &conn->up, CT_TM_TCP_CLOSED, now);
-        } else if (src->state >= CT_DPIF_TCPS_CLOSING
-                   && dst->state >= CT_DPIF_TCPS_CLOSING) {
-            conn_update_expiration(ctb, &conn->up, CT_TM_TCP_FIN_WAIT, now);
-        } else if (src->state < CT_DPIF_TCPS_ESTABLISHED
-                   || dst->state < CT_DPIF_TCPS_ESTABLISHED) {
-            conn_update_expiration(ctb, &conn->up, CT_TM_TCP_OPENING, now);
-        } else if (src->state >= CT_DPIF_TCPS_CLOSING
-                   || dst->state >= CT_DPIF_TCPS_CLOSING) {
-            conn_update_expiration(ctb, &conn->up, CT_TM_TCP_CLOSING, now);
-        } else {
-            conn_update_expiration(ctb, &conn->up, CT_TM_TCP_ESTABLISHED, now);
-        }
+        enum ct_timeout tm = tcp_states_to_tm(src, dst);
+        conn_update_expiration(ctb, &conn->up, tm, now);
     } else if ((dst->state < CT_DPIF_TCPS_SYN_SENT
                 || dst->state >= CT_DPIF_TCPS_FIN_WAIT_2
                 || src->state >= CT_DPIF_TCPS_FIN_WAIT_2)
@@ -497,4 +515,5 @@ struct ct_l4_proto ct_proto_tcp = {
     .valid_new = tcp_valid_new,
     .conn_update = tcp_conn_update,
     .conn_get_protoinfo = tcp_conn_get_protoinfo,
+    .get_tm = tcp_get_tm,
 };
