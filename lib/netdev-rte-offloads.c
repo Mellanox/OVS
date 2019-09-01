@@ -1179,8 +1179,12 @@ netdev_rte_offloads_flow_restore(OVS_UNUSED struct netdev *netdev,
     unsigned int hw_actions_len = 0;
     const struct nlattr *a;
     unsigned int left;
+    int ret;
 
-    restore_packet_state(flow_mark, packet);
+    ret = restore_packet_state(flow_mark, packet);
+    if (ret) {
+        return ret;
+    }
 
     NL_ATTR_FOR_EACH_UNSAFE (a, left, actions, actions_len) {
         int type = nl_attr_type(a);
@@ -1194,7 +1198,8 @@ netdev_rte_offloads_flow_restore(OVS_UNUSED struct netdev *netdev,
 
     if (offloaded_actions_len && hw_actions_len < actions_len)
         *offloaded_actions_len = hw_actions_len;
-    return 0;
+
+    return ret;
 }
 
 int

@@ -6820,10 +6820,12 @@ process_partial_offload(struct dp_netdev_pmd_thread *pmd, odp_port_t port_no,
     if (flow)
         actions = dp_netdev_flow_get_actions(flow);
 
-    netdev_flow_restore_state(port->netdev, mark, packet,
-                              (actions? actions->actions: NULL),
-                              (actions? actions->size : 0),
-                              (flow? &flow->offloaded_actions_len : 0));
+    if (netdev_flow_restore_state(port->netdev, mark, packet,
+                                  (actions ? actions->actions: NULL),
+                                  (actions ? actions->size : 0),
+                                  (flow ? &flow->offloaded_actions_len : 0))) {
+        return NULL;
+    }
     return flow;
 }
 /* Try to process all ('cnt') the 'packets' using only the datapath flow cache
