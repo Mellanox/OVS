@@ -80,6 +80,14 @@ struct netdev_rte_port {
     struct cmap ufid_to_rte;
 };
 
+struct flow_data;
+static struct rte_flow*
+netdev_offload_dpdk_put_handler(struct netdev *netdev,
+                                struct netdev_rte_port *rte_port,
+                                struct flow_data *fdata, struct match *match,
+                                struct nlattr *actions, size_t actions_len,
+                                struct offload_info *info);
+
 static struct cmap port_map = CMAP_INITIALIZER;
 
 static uint32_t dpdk_phy_ports_amount = 0;
@@ -673,6 +681,13 @@ struct flow_items {
     };
 };
 
+struct flow_data {
+    struct flow_items spec;
+    struct flow_items mask;
+    struct flow_items spec_outer;
+    struct flow_items mask_outer;
+};
+
 static int
 add_flow_patterns(struct flow_patterns *patterns,
                   struct flow_items *spec,
@@ -845,59 +860,55 @@ add_flow_patterns(struct flow_patterns *patterns,
 }
 
 static struct rte_flow *
-netdev_offload_dpdk_add_flow(struct netdev *netdev,
-                             const struct match *match,
-                             struct nlattr *nl_actions OVS_UNUSED,
-                             size_t actions_len OVS_UNUSED,
-                             const ovs_u128 *ufid,
-                             struct offload_info *info)
+netdev_rte_offload_mark_rss(struct netdev *netdev,
+                            uint32_t mark_id,
+                            struct flow_patterns *patterns,
+                            struct flow_actions *actions,
+                            const struct rte_flow_attr *flow_attr)
 {
-    const struct rte_flow_attr flow_attr = {
-        .group = 0,
-        .priority = 0,
-        .ingress = 1,
-        .egress = 0
-    };
-    struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
-    struct flow_actions actions = { .actions = NULL, .cnt = 0 };
     struct rte_flow *flow = NULL;
     struct rte_flow_error error;
-    struct flow_items spec, mask;
 
-    memset(&spec, 0, sizeof spec);
-    memset(&mask, 0, sizeof mask);
+    struct rte_flow_action_mark mark = {0};
+    mark.id = mark_id;
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_MARK, &mark);
 
-    if (add_flow_patterns(&patterns, &spec, &mask, match)) {
-        VLOG_WARN("Adding rte match patterns for flow ufid"UUID_FMT" failed",
-                  UUID_ARGS((struct uuid *)ufid));
-        goto out;
-    }
+    struct action_rss_data *rss = NULL;
+    rss = add_flow_rss_action(actions, netdev);
 
-    add_flow_pattern(&patterns, RTE_FLOW_ITEM_TYPE_END, NULL, NULL);
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_END, NULL);
 
-    struct rte_flow_action_mark mark;
-    struct action_rss_data *rss;
-
-    mark.id = info->flow_mark;
-    add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_MARK, &mark);
-
-    rss = add_flow_rss_action(&actions, netdev);
-    add_flow_action(&actions, RTE_FLOW_ACTION_TYPE_END, NULL);
-
-    flow = netdev_dpdk_rte_flow_create(netdev, &flow_attr,
-                                       patterns.items,
-                                       actions.actions, &error);
+    flow = netdev_dpdk_rte_flow_create(netdev, flow_attr, patterns->items,
+                                       actions->actions, &error);
 
     free(rss);
     if (!flow) {
-        VLOG_ERR("%s: rte flow create error: %u : message : %s\n",
-                 netdev_get_name(netdev), error.type, error.message);
-        goto out;
+        VLOG_ERR("%s: rte flow create offload error: %u : message : %s\n",
+                netdev_get_name(netdev), error.type, error.message);
     }
 
-out:
-    free_flow_patterns(&patterns);
-    free_flow_actions(&actions);
+    return flow;
+}
+
+static struct rte_flow *
+netdev_rte_offload_flow(struct netdev *netdev,
+                        struct offload_info *info OVS_UNUSED,
+                        struct flow_patterns *patterns,
+                        struct flow_actions *actions,
+                        const struct rte_flow_attr *flow_attr)
+{
+    struct rte_flow *flow = NULL;
+    struct rte_flow_error error;
+
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_END, NULL);
+
+    flow = netdev_dpdk_rte_flow_create(netdev, flow_attr, patterns->items,
+                                       actions->actions, &error);
+    if (!flow) {
+        VLOG_ERR("%s: rte flow create offload error: %u : message : %s\n",
+                netdev_get_name(netdev), error.type, error.message);
+    }
+
     return flow;
 }
 
@@ -1015,7 +1026,9 @@ netdev_offload_dpdk_flow_put (struct netdev *netdev, struct match *match,
 {
     struct rte_flow *rte_flow;
     int ret;
+    struct flow_data flow_data;
 
+    memset(&flow_data, 0, sizeof flow_data);
     odp_port_t in_port = match->flow.in_port.odp_port;
     struct netdev_rte_port *rte_port =
         netdev_rte_port_search(in_port, &port_map);
@@ -1058,8 +1071,9 @@ netdev_offload_dpdk_flow_put (struct netdev *netdev, struct match *match,
         goto err;
     }
 
-    rte_flow = netdev_offload_dpdk_add_flow(netdev, match, actions,
-                                            actions_len, ufid, info);
+    rte_flow = netdev_offload_dpdk_put_handler(netdev, rte_port, &flow_data,
+                                               match, actions,
+                                               actions_len, info);
     if (!rte_flow) {
         ret = ENODEV;
         goto err;
@@ -1160,4 +1174,111 @@ netdev_offloads_port_del(odp_port_t dp_port)
     }
 
     return 0;
+}
+
+struct offload_cls_info;
+
+static int
+netdev_offload_dpdk_classify(struct netdev_rte_port *rte_port OVS_UNUSED,
+                             struct offload_cls_info *cls_info OVS_UNUSED,
+                             struct match *match OVS_UNUSED,
+                             struct nlattr *actions OVS_UNUSED,
+                             size_t actions_len OVS_UNUSED)
+
+{
+    return 0;
+}
+
+static int
+netdev_offload_dpdk_put_add_patterns(struct flow_data *fdata,
+                                     struct flow_patterns *patterns,
+                                     struct match *match,
+                                     struct offload_cls_info *cls_info OVS_UNUSED)
+{
+    if (add_flow_patterns(patterns, &fdata->spec, &fdata->mask, match)) {
+        return -1;
+    }
+    add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_END, NULL, NULL);
+        return 0;
+}
+
+static int
+netdev_offload_dpdk_put_add_actions(struct netdev_rte_port *rte_port OVS_UNUSED,
+                                    struct flow_data *fdata OVS_UNUSED,
+                                    struct flow_actions *flow_actions OVS_UNUSED,
+                                    struct match *match OVS_UNUSED OVS_UNUSED,
+                                    struct nlattr *actions OVS_UNUSED,
+                                    size_t actions_len OVS_UNUSED,
+                                    struct offload_cls_info *cls_info OVS_UNUSED)
+{
+    return 0;
+}
+
+static int
+netdev_offload_dpdk_set_group_id(struct netdev_rte_port *rte_port OVS_UNUSED,
+                                 struct offload_cls_info *cls_info OVS_UNUSED,
+                                 struct rte_flow_attr *flow_attr OVS_UNUSED)
+{
+    return 0;
+}
+
+static struct rte_flow *
+netdev_offload_dpdk_put_handler(struct netdev *netdev,
+                                struct netdev_rte_port *rte_port,
+                                struct flow_data *fdata, struct match *match,
+                                struct nlattr *actions, size_t actions_len,
+                                struct offload_info *info)
+{
+    struct rte_flow *flow;
+
+    struct rte_flow_attr flow_attr = {
+        .group = 0,
+        .priority = 0,
+        .ingress = 1,
+        .egress = 0,
+        .transfer = 1
+    };
+
+
+    struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
+    struct flow_actions  flow_actions = { .actions = NULL, .cnt = 0 };
+
+    if (netdev_offload_dpdk_classify(rte_port, NULL, match,
+                                      actions, actions_len)) {
+        goto roll_back;
+    }
+
+    if (netdev_offload_dpdk_put_add_patterns(fdata, &patterns, match, NULL)) {
+        goto roll_back;
+    }
+
+    if (netdev_offload_dpdk_put_add_actions(rte_port, fdata, &flow_actions,
+                                    match, actions, actions_len, NULL)) {
+        goto roll_back;
+    }
+
+    if(netdev_offload_dpdk_set_group_id(rte_port, NULL, &flow_attr)) {
+        goto roll_back;
+    }
+
+    /* if fail goto roleback. */
+    flow = netdev_rte_offload_flow(netdev, NULL, &patterns, &flow_actions,
+                                   &flow_attr);
+
+    /* failed, we try only mark rss */
+    if (!flow) {
+        free_flow_actions(&flow_actions);
+        flow_attr.transfer = 0;
+        flow = netdev_rte_offload_mark_rss(netdev, info->flow_mark, &patterns,
+                                           &flow_actions, &flow_attr);
+    }
+
+    free_flow_patterns(&patterns);
+    free_flow_actions(&flow_actions);
+    return flow;
+
+roll_back:
+    free_flow_patterns(&patterns);
+    free_flow_actions(&flow_actions);
+    return NULL;
 }
