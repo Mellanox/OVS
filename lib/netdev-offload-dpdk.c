@@ -1253,6 +1253,39 @@ netdev_rte_add_decap_flow_action(struct flow_actions *actions)
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_VXLAN_DECAP, NULL);
 }
 
+static int
+netdev_offload_vxlan_flow_put(struct netdev *netdev OVS_UNUSED,
+                              struct match *match OVS_UNUSED,
+                              struct nlattr *actions OVS_UNUSED,
+                              size_t actions_len OVS_UNUSED,
+                              const ovs_u128 *ufid OVS_UNUSED,
+                              struct offload_info *info OVS_UNUSED,
+                              struct dpif_flow_stats *stats OVS_UNUSED)
+{
+    return EOPNOTSUPP;
+}
+
+static int
+netdev_offload_vxlan_flow_del(struct netdev * netdev OVS_UNUSED,
+                              const ovs_u128 * ufid OVS_UNUSED,
+                              struct dpif_flow_stats * flow_stats OVS_UNUSED)
+{
+    return EOPNOTSUPP;
+}
+
+static int
+netdev_offload_vxlan_init_flow_api(struct netdev *netdev)
+{
+    return netdev_vport_flow_api_supported(netdev) ? 0 : EOPNOTSUPP;
+}
+
+const struct netdev_flow_api netdev_offload_vxlan = {
+    .type = "vxlan_flow_api",
+    .flow_put = netdev_offload_vxlan_flow_put,
+    .flow_del = netdev_offload_vxlan_flow_del,
+    .init_flow_api = netdev_offload_vxlan_init_flow_api,
+};
+
 /*
  * Called when adding a new dpif netdev port.
  */

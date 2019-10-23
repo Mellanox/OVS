@@ -1256,3 +1256,13 @@ netdev_vport_patch_register(void)
     simap_init(&patch_class.global_cfg_tracker);
     netdev_register_provider(&patch_class.netdev_class);
 }
+
+bool
+netdev_vport_flow_api_supported(struct netdev *netdev)
+{
+    if (!is_vport_class(netdev->netdev_class)) {
+        return false;
+    }
+
+    return true;
+}

@@ -41,6 +41,7 @@ void netdev_vport_inc_tx(const struct netdev *,
 
 bool netdev_vport_is_vport_class(const struct netdev_class *);
 const char *netdev_vport_class_get_dpif_port(const struct netdev_class *);
+bool netdev_vport_flow_api_supported(struct netdev *);
 
 #ifndef _WIN32
 enum { NETDEV_VPORT_NAME_BUFSIZE = 16 };
