@@ -74,6 +74,7 @@ enum exception_marks {
 struct netdev_rte_port {
     struct cmap_node node; /* Map by datapath port number. */
     odp_port_t dp_port; /* Datapath port number. */
+    uint16_t dpdk_port_id; /* Id of the DPDK port. */
     struct netdev *netdev; /* struct *netdev of this port. */
     enum rte_port_type rte_port_type; /* rte ports types. */
     uint32_t table_id; /* Flow table id per related to this port. */
@@ -687,6 +688,7 @@ struct flow_items {
 struct flow_action_items {
     struct rte_flow_action_jump jump;
     struct rte_flow_action_count count;
+    struct rte_flow_action_port_id output;
 };
 
 struct flow_data {
@@ -975,6 +977,13 @@ netdev_rte_add_count_flow_action(struct rte_flow_action_count *count,
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_COUNT, count);
 }
 
+static void
+netdev_rte_add_port_id_flow_action(struct rte_flow_action_port_id *port_id,
+                                   struct flow_actions *actions)
+{
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_PORT_ID, port_id);
+}
+
 static struct rte_flow *
 netdev_rte_offload_mark_rss(struct netdev *netdev,
                             uint32_t mark_id,
@@ -1027,6 +1036,29 @@ netdev_rte_offload_flow(struct netdev *netdev,
 
     info->is_hwol = (flow) ? true : false;
     return flow;
+}
+
+static int
+add_jump_to_port_id_action(odp_port_t target_port,
+                struct flow_actions *flow_actions,
+                struct rte_flow_action_port_id *port_id_action)
+{
+    struct netdev_rte_port *output_rte_port;
+
+    /* Output port should be hardware port number. */
+    output_rte_port = netdev_rte_port_search(target_port, &port_map);
+
+    if (!output_rte_port) {
+        VLOG_DBG("No rte port was found for odp_port %u",
+                 odp_to_u32(target_port));
+        return EINVAL;
+    }
+
+    port_id_action->id = output_rte_port->dpdk_port_id;
+    port_id_action->original = 0;
+
+    netdev_rte_add_port_id_flow_action(port_id_action, flow_actions);
+    return 0;
 }
 
 /*
@@ -1481,6 +1513,7 @@ netdev_offloads_port_add(struct netdev *netdev, odp_port_t dp_port)
         if (!rte_port) {
             goto out;
         }
+        rte_port->dpdk_port_id = netdev_dpdk_get_port_id(netdev);
         dpdk_phy_ports_amount++;
         VLOG_INFO("Rte dpdk port %d allocated.", dp_port);
         goto out;
@@ -1571,6 +1604,7 @@ enum {
   MATCH_OFFLOAD_TYPE_ROOT         =  1 << 0,
   MATCH_OFFLOAD_TYPE_VPORT_ROOT   =  1 << 1,
   ACTION_OFFLOAD_TYPE_TNL_POP     =  1 << 2,
+  ACTION_OFFLOAD_TYPE_OUTPUT      =  1 << 3,
 };
 
 struct offload_cls_info {
@@ -1608,14 +1642,21 @@ netdev_offload_dpdk_fill_cls_info(struct netdev_rte_port *rte_port,
 
     NL_ATTR_FOR_EACH_UNSAFE (a, left, actions, actions_len) {
         int type = nl_attr_type(a);
+        bool last_action = (left <= NLA_ALIGN(a->nla_len));
 
         switch ((enum ovs_action_attr) type) {
+            case OVS_ACTION_ATTR_OUTPUT:
+                cls_info->actions.odp_port = nl_attr_get_odp_port(a);
+                if (!last_action) {
+                    goto no_support;
+                }
+                break;
+
             case OVS_ACTION_ATTR_TUNNEL_POP:    /* u32 port number. */
                 cls_info->actions.pop_tnl = true;
                 cls_info->actions.odp_port = nl_attr_get_odp_port(a);
                 break;
 
-            case OVS_ACTION_ATTR_OUTPUT:
             case OVS_ACTION_ATTR_HASH:
             case OVS_ACTION_ATTR_UNSPEC:
             case OVS_ACTION_ATTR_USERSPACE:
@@ -1678,6 +1719,8 @@ netdev_offload_dpdk_classify(struct netdev_rte_port *rte_port,
 
     if (cls_info->actions.pop_tnl) {
         cls_info->actions.type = ACTION_OFFLOAD_TYPE_TNL_POP;
+    } else if (cls_info->actions.odp_port) {
+        cls_info->actions.type = ACTION_OFFLOAD_TYPE_OUTPUT;
     }
 
     return 0;
@@ -1745,6 +1788,20 @@ netdev_offload_dpdk_vxlan_actions(struct netdev_rte_port *rte_port,
 }
 
 static int
+netdev_offload_dpdk_output_actions(struct flow_data *fdata,
+                                   struct flow_actions *flow_actions,
+                                   struct offload_cls_info *cls_info,
+                                   struct nlattr *actions OVS_UNUSED,
+                                   size_t actions_len OVS_UNUSED)
+{
+    netdev_rte_add_count_flow_action(&fdata->actions.count, flow_actions);
+
+    return add_jump_to_port_id_action(cls_info->actions.odp_port,
+                flow_actions,
+                &fdata->actions.output);
+}
+
+static int
 netdev_offload_dpdk_put_add_actions(struct netdev_rte_port *rte_port,
                                     struct flow_data *fdata,
                                     struct flow_actions *flow_actions,
@@ -1764,6 +1821,11 @@ netdev_offload_dpdk_put_add_actions(struct netdev_rte_port *rte_port,
         case ACTION_OFFLOAD_TYPE_TNL_POP:
             ret = netdev_offload_dpdk_vxlan_actions(rte_port, fdata,
                                                  flow_actions,cls_info);
+            break;
+        case ACTION_OFFLOAD_TYPE_OUTPUT:
+            ret = netdev_offload_dpdk_output_actions(fdata, flow_actions,
+                                                     cls_info, actions,
+                                                     actions_len);
             break;
         default:
             if (cls_info->actions.type) {

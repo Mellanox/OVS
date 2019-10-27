@@ -490,6 +490,12 @@ is_dpdk_class(const struct netdev_class *class)
            || class->destruct == netdev_dpdk_vhost_destruct;
 }
 
+int
+netdev_dpdk_get_port_id(const struct netdev *netdev)
+{
+    return CONTAINER_OF(netdev, struct netdev_dpdk, up)->port_id;
+}
+
 bool
 netdev_dpdk_is_uplink_port(const struct netdev *netdev)
 {
