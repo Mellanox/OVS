@@ -689,6 +689,7 @@ struct flow_action_items {
     struct rte_flow_action_jump jump;
     struct rte_flow_action_count count;
     struct rte_flow_action_port_id output;
+    struct rte_flow_action_raw_encap clone_raw_encap;
 };
 
 struct flow_data {
@@ -1605,6 +1606,7 @@ enum {
   MATCH_OFFLOAD_TYPE_VPORT_ROOT   =  1 << 1,
   ACTION_OFFLOAD_TYPE_TNL_POP     =  1 << 2,
   ACTION_OFFLOAD_TYPE_OUTPUT      =  1 << 3,
+  ACTION_OFFLOAD_TYPE_TNL_PUSH    =  1 << 4,
 };
 
 struct offload_cls_info {
@@ -1619,6 +1621,7 @@ struct offload_cls_info {
         uint32_t odp_port;
         int type;
         bool pop_tnl;
+        const struct ovs_action_push_tnl *push_tnl;
     } actions;
 };
 
@@ -1657,6 +1660,25 @@ netdev_offload_dpdk_fill_cls_info(struct netdev_rte_port *rte_port,
                 cls_info->actions.odp_port = nl_attr_get_odp_port(a);
                 break;
 
+            case OVS_ACTION_ATTR_CLONE: {
+                const struct nlattr *clone_actions = nl_attr_get(a);
+                size_t clone_actions_len = nl_attr_get_size(a);
+                const struct nlattr *ca;
+                unsigned int cleft;
+
+                NL_ATTR_FOR_EACH_UNSAFE (ca, cleft, clone_actions, clone_actions_len) {
+                    int clone_type = nl_attr_type(ca);
+                    if (clone_type == OVS_ACTION_ATTR_TUNNEL_PUSH) {
+                        cls_info->actions.push_tnl = nl_attr_get(ca);
+                    } else if (clone_type == OVS_ACTION_ATTR_OUTPUT) {
+                        cls_info->actions.odp_port = nl_attr_get_odp_port(ca);
+                    } else {
+                        goto no_support;
+                    }
+                }
+                break;
+            }
+
             case OVS_ACTION_ATTR_HASH:
             case OVS_ACTION_ATTR_UNSPEC:
             case OVS_ACTION_ATTR_USERSPACE:
@@ -1676,7 +1698,6 @@ netdev_offload_dpdk_fill_cls_info(struct netdev_rte_port *rte_port,
             case OVS_ACTION_ATTR_PUSH_NSH:
             case OVS_ACTION_ATTR_POP_NSH:
             case OVS_ACTION_ATTR_METER:
-            case OVS_ACTION_ATTR_CLONE:
             case OVS_ACTION_ATTR_CHECK_PKT_LEN:
             case OVS_ACTION_ATTR_TUNNEL_PUSH:
                 VLOG_DBG_RL(&error_rl,
@@ -1719,6 +1740,8 @@ netdev_offload_dpdk_classify(struct netdev_rte_port *rte_port,
 
     if (cls_info->actions.pop_tnl) {
         cls_info->actions.type = ACTION_OFFLOAD_TYPE_TNL_POP;
+    } else if (cls_info->actions.push_tnl) {
+        cls_info->actions.type = ACTION_OFFLOAD_TYPE_TNL_PUSH;
     } else if (cls_info->actions.odp_port) {
         cls_info->actions.type = ACTION_OFFLOAD_TYPE_OUTPUT;
     }
@@ -1776,6 +1799,26 @@ netdev_offload_dpdk_put_add_patterns(struct flow_data *fdata,
 }
 
 static int
+netdev_offload_dpdk_tnl_push(struct flow_data *fdata,
+                             struct flow_actions *flow_actions,
+                             struct offload_cls_info *cls_info)
+{
+    fdata->actions.clone_raw_encap.data =
+                             (uint8_t *)cls_info->actions.push_tnl->header;
+    fdata->actions.clone_raw_encap.preserve = NULL;
+    fdata->actions.clone_raw_encap.size =
+                                       cls_info->actions.push_tnl->header_len;
+    add_flow_action(flow_actions, RTE_FLOW_ACTION_TYPE_RAW_ENCAP,
+                                            &fdata->actions.clone_raw_encap);
+
+    netdev_rte_add_count_flow_action(&fdata->actions.count, flow_actions);
+
+    return add_jump_to_port_id_action(cls_info->actions.odp_port,
+                flow_actions,
+                &fdata->actions.output);
+}
+
+static int
 netdev_offload_dpdk_vxlan_actions(struct netdev_rte_port *rte_port,
                                   struct flow_data *fdata,
                                   struct flow_actions *flow_actions,
@@ -1821,6 +1864,10 @@ netdev_offload_dpdk_put_add_actions(struct netdev_rte_port *rte_port,
         case ACTION_OFFLOAD_TYPE_TNL_POP:
             ret = netdev_offload_dpdk_vxlan_actions(rte_port, fdata,
                                                  flow_actions,cls_info);
+            break;
+        case ACTION_OFFLOAD_TYPE_TNL_PUSH:
+            ret = netdev_offload_dpdk_tnl_push(fdata, flow_actions,
+                                               cls_info);
             break;
         case ACTION_OFFLOAD_TYPE_OUTPUT:
             ret = netdev_offload_dpdk_output_actions(fdata, flow_actions,
