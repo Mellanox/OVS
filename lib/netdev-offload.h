@@ -67,10 +67,11 @@ struct offload_info {
     uint8_t tunnel_csum_on; /* Tunnel header with checksum */
 
     /*
-     * The flow mark id assigened to the flow. If any pkts hit the flow,
+     * The flow mark id assigned to the flow. If any pkts hit the flow,
      * it will be in the pkt meta data.
      */
     uint32_t flow_mark;
+    bool is_hwol; /* true if flow is fully offloaded */
 };
 
 int netdev_flow_flush(struct netdev *);
@@ -118,6 +119,8 @@ int netdev_ports_flow_get(const struct dpif_class *, struct match *match,
                           struct dpif_flow_stats *stats,
                           struct dpif_flow_attrs *attrs,
                           struct ofpbuf *buf);
+int netdev_offloads_port_add(struct netdev *netdev, odp_port_t dp_port);
+int netdev_offloads_port_del(odp_port_t dp_port);
 
 #ifdef  __cplusplus
 }

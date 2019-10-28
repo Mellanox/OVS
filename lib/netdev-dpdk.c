@@ -83,12 +83,13 @@ static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 20);
  * The minimum mbuf size is limited to avoid scatter behaviour and drop in
  * performance for standard Ethernet MTU.
  */
-#define ETHER_HDR_MAX_LEN           (ETHER_HDR_LEN + ETHER_CRC_LEN \
+#define ETHER_HDR_MAX_LEN           (RTE_ETHER_HDR_LEN + RTE_ETHER_CRC_LEN \
                                      + (2 * VLAN_HEADER_LEN))
-#define MTU_TO_FRAME_LEN(mtu)       ((mtu) + ETHER_HDR_LEN + ETHER_CRC_LEN)
+#define MTU_TO_FRAME_LEN(mtu)       ((mtu) + RTE_ETHER_HDR_LEN + \
+                                     RTE_ETHER_CRC_LEN)
 #define MTU_TO_MAX_FRAME_LEN(mtu)   ((mtu) + ETHER_HDR_MAX_LEN)
 #define FRAME_LEN_TO_MTU(frame_len) ((frame_len)                    \
-                                     - ETHER_HDR_LEN - ETHER_CRC_LEN)
+                                     - RTE_ETHER_HDR_LEN - RTE_ETHER_CRC_LEN)
 #define NETDEV_DPDK_MBUF_ALIGN      1024
 #define NETDEV_DPDK_MAX_PKT_LEN     9728
 
@@ -298,14 +299,17 @@ struct dpdk_mp {
  };
 
 /* There should be one 'struct dpdk_tx_queue' created for
- * each cpu core. */
+ * each netdev tx queue. */
 struct dpdk_tx_queue {
-    rte_spinlock_t tx_lock;        /* Protects the members and the NIC queue
-                                    * from concurrent access.  It is used only
-                                    * if the queue is shared among different
-                                    * pmd threads (see 'concurrent_txq'). */
-    int map;                       /* Mapping of configured vhost-user queues
-                                    * to enabled by guest. */
+    /* Padding to make dpdk_tx_queue exactly one cache line long. */
+    PADDED_MEMBERS(CACHE_LINE_SIZE,
+        /* Protects the members and the NIC queue from concurrent access.
+         * It is used only if the queue is shared among different pmd threads
+         * (see 'concurrent_txq'). */
+        rte_spinlock_t tx_lock;
+        /* Mapping of configured vhost-user queue to enabled by guest. */
+        int map;
+    );
 };
 
 /* dpdk has no way to remove dpdk ring ethernet devices
@@ -378,6 +382,7 @@ struct netdev_dpdk {
         };
         struct dpdk_tx_queue *tx_q;
         struct rte_eth_link link;
+        bool is_uplink_port; /* True=uplink port, false=representor port. */
     );
 
     PADDED_MEMBERS_CACHELINE_MARKER(CACHE_LINE_SIZE, cacheline1,
@@ -485,6 +490,18 @@ is_dpdk_class(const struct netdev_class *class)
            || class->destruct == netdev_dpdk_vhost_destruct;
 }
 
+int
+netdev_dpdk_get_port_id(const struct netdev *netdev)
+{
+    return CONTAINER_OF(netdev, struct netdev_dpdk, up)->port_id;
+}
+
+bool
+netdev_dpdk_is_uplink_port(const struct netdev *netdev)
+{
+    return CONTAINER_OF(netdev, struct netdev_dpdk, up)->is_uplink_port;
+}
+
 /* DPDK NIC drivers allocate RX buffers at a particular granularity, typically
  * aligned at 1k or less. If a declared mbuf size is not a multiple of this
  * value, insufficient buffers are allocated to accomodate the packet in its
@@ -581,7 +598,7 @@ dpdk_calculate_mbufs(struct netdev_dpdk *dev, int mtu, bool per_port_mp)
          * can change dynamically at runtime. For now, use this rough
          * heurisitic.
          */
-        if (mtu >= ETHER_MTU) {
+        if (mtu >= RTE_ETHER_MTU) {
             n_mbufs = MAX_NB_MBUF;
         } else {
             n_mbufs = MIN_NB_MBUF;
@@ -896,7 +913,7 @@ dpdk_eth_dev_port_config(struct netdev_dpdk *dev, int n_rxq, int n_txq)
      * scatter to support jumbo RX.
      * Setting scatter for the device is done after checking for
      * scatter support in the device capabilites. */
-    if (dev->mtu > ETHER_MTU) {
+    if (dev->mtu > RTE_ETHER_MTU) {
         if (dev->hw_ol_features & NETDEV_RX_HW_SCATTER) {
             conf.rxmode.offloads |= DEV_RX_OFFLOAD_SCATTER;
         }
@@ -1008,7 +1025,7 @@ dpdk_eth_dev_init(struct netdev_dpdk *dev)
 {
     struct rte_pktmbuf_pool_private *mbp_priv;
     struct rte_eth_dev_info info;
-    struct ether_addr eth_addr;
+    struct rte_ether_addr eth_addr;
     int diag;
     int n_rxq, n_txq;
     uint32_t rx_chksm_offload_capa = DEV_RX_OFFLOAD_UDP_CKSUM |
@@ -1039,6 +1056,8 @@ dpdk_eth_dev_init(struct netdev_dpdk *dev)
         /* Do not warn on lack of scatter support */
         dev->hw_ol_features &= ~NETDEV_RX_HW_SCATTER;
     }
+
+    dev->is_uplink_port = !(*info.dev_flags & RTE_ETH_DEV_REPRESENTOR);
 
     n_rxq = MIN(info.max_rx_queues, dev->up.n_rxq);
     n_txq = MIN(info.max_tx_queues, dev->up.n_txq);
@@ -1133,7 +1152,7 @@ common_construct(struct netdev *netdev, dpdk_port_t port_no,
     dev->port_id = port_no;
     dev->type = type;
     dev->flags = 0;
-    dev->requested_mtu = ETHER_MTU;
+    dev->requested_mtu = RTE_ETHER_MTU;
     dev->max_packet_len = MTU_TO_FRAME_LEN(dev->mtu);
     dev->requested_lsc_interrupt_mode = 0;
     ovsrcu_index_init(&dev->vid, -1);
@@ -1660,7 +1679,7 @@ netdev_dpdk_get_port_by_mac(const char *mac_str)
     }
 
     RTE_ETH_FOREACH_DEV (port_id) {
-        struct ether_addr ea;
+        struct rte_ether_addr ea;
 
         rte_eth_macaddr_get(port_id, &ea);
         memcpy(port_mac.ea, ea.addr_bytes, ETH_ADDR_LEN);
@@ -2043,10 +2062,10 @@ netdev_dpdk_policer_pkt_handle(struct rte_meter_srtcm *meter,
                                struct rte_meter_srtcm_profile *profile,
                                struct rte_mbuf *pkt, uint64_t time)
 {
-    uint32_t pkt_len = rte_pktmbuf_pkt_len(pkt) - sizeof(struct ether_hdr);
+    uint32_t pkt_len = rte_pktmbuf_pkt_len(pkt) - sizeof(struct rte_ether_hdr);
 
     return rte_meter_srtcm_color_blind_check(meter, profile, time, pkt_len) ==
-                                             e_RTE_METER_GREEN;
+                                             RTE_COLOR_GREEN;
 }
 
 static int
@@ -2590,7 +2609,7 @@ netdev_dpdk_set_mtu(struct netdev *netdev, int mtu)
      * a method to retrieve the upper bound MTU for a given device.
      */
     if (MTU_TO_MAX_FRAME_LEN(mtu) > NETDEV_DPDK_MAX_PKT_LEN
-        || mtu < ETHER_MIN_MTU) {
+        || mtu < RTE_ETHER_MIN_MTU) {
         VLOG_WARN("%s: unsupported MTU %d\n", dev->up.name, mtu);
         return EINVAL;
     }
