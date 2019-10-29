@@ -116,13 +116,9 @@ ufid_to_rte_flow_disassociate(const ovs_u128 *ufid)
               UUID_ARGS((struct uuid *) ufid));
 }
 
-static int
-netdev_offload_dpdk_add_flow(struct netdev *netdev,
-                             const struct match *match,
-                             struct nlattr *nl_actions OVS_UNUSED,
-                             size_t actions_len OVS_UNUSED,
-                             const ovs_u128 *ufid,
-                             struct offload_info *info)
+static struct rte_flow *
+netdev_offload_dpdk_mark_rss(struct flow_patterns *patterns,
+                             struct netdev *netdev, uint32_t flow_mark)
 {
     const struct rte_flow_attr flow_attr = {
         .group = 0,
@@ -130,9 +126,62 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
         .ingress = 1,
         .egress = 0
     };
-    struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
     struct flow_actions actions = { .actions = NULL, .cnt = 0 };
     struct rte_flow_error error;
+    struct rte_flow *flow;
+
+    netdev_dpdk_flow_actions_add_mark_rss(&actions, netdev, flow_mark);
+    flow = netdev_dpdk_rte_flow_create(netdev, &flow_attr,
+                                       patterns->items,
+                                       actions.actions, &error);
+    if (!flow) {
+        VLOG_ERR("%s: rte flow create error: %u : message : %s\n",
+                 netdev_get_name(netdev), error.type, error.message);
+    }
+    netdev_dpdk_flow_actions_free(&actions);
+    return flow;
+}
+
+static struct rte_flow *
+netdev_offload_dpdk_actions(struct netdev *netdev,
+                            struct flow_patterns *patterns,
+                            struct nlattr *nl_actions,
+                            size_t actions_len,
+                            struct offload_info *info)
+{
+    const struct rte_flow_attr flow_attr = { .ingress = 1, .transfer = 1 };
+    struct flow_actions actions = { .actions = NULL, .cnt = 0 };
+    struct rte_flow *flow = NULL;
+    struct rte_flow_error error;
+    int ret;
+
+    ret = netdev_dpdk_flow_actions_add(&actions, nl_actions, actions_len, info);
+    if (ret) {
+        goto out;
+    }
+    flow = netdev_dpdk_rte_flow_create(netdev, &flow_attr, patterns->items,
+                                       actions.actions, &error);
+    if (!flow) {
+        VLOG_ERR("%s: rte flow create error: %u : message : %s\n",
+                 netdev_get_name(netdev), error.type, error.message);
+    }
+    if (flow && info->actions_offloaded) {
+        *info->actions_offloaded = true;
+    }
+out:
+    netdev_dpdk_flow_actions_free(&actions);
+    return flow;
+}
+
+static int
+netdev_offload_dpdk_add_flow(struct netdev *netdev,
+                             const struct match *match,
+                             struct nlattr *nl_actions,
+                             size_t actions_len,
+                             const ovs_u128 *ufid,
+                             struct offload_info *info)
+{
+    struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
     struct rte_flow *flow;
     int ret = 0;
 
@@ -143,16 +192,15 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
         goto out;
     }
 
-    netdev_dpdk_flow_actions_add_mark_rss(&actions, netdev,
-                                          info->flow_mark);
-
-    flow = netdev_dpdk_rte_flow_create(netdev, &flow_attr,
-                                       patterns.items,
-                                       actions.actions, &error);
-
+    flow = netdev_offload_dpdk_actions(netdev, &patterns, nl_actions,
+                                       actions_len, info);
     if (!flow) {
-        VLOG_ERR("%s: rte flow create error: %u : message : %s\n",
-                 netdev_get_name(netdev), error.type, error.message);
+        /* if we failed to offload the rule actions fallback to mark rss
+         * actions.
+         */
+        flow = netdev_offload_dpdk_mark_rss(&patterns, netdev, info->flow_mark);
+    }
+    if (!flow) {
         ret = -1;
         goto out;
     }
@@ -162,7 +210,6 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
 
 out:
     netdev_dpdk_flow_patterns_free(&patterns);
-    netdev_dpdk_flow_actions_free(&actions);
     return ret;
 }
 
