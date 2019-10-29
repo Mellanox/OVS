@@ -61,6 +61,8 @@ struct action_rss_data {
     uint16_t queue[0];
 };
 
+struct flow_action_items;
+
 void
 netdev_dpdk_flow_free_patterns(struct flow_patterns *patterns);
 void
@@ -84,5 +86,11 @@ netdev_dpdk_flow_dump(const char *title,
                       const struct rte_flow_action *_actions,
                       struct rte_flow *flow,
                       int *result);
+int
+netdev_dpdk_flow_add_actions(struct nlattr *nl_actions,
+                             size_t nl_actions_len,
+                             struct offload_info *info,
+                             struct flow_action_items *action_items,
+                             struct flow_actions *actions);
 
 #endif /* netdev-dpdk-flow.h */

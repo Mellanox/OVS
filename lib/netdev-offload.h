@@ -71,6 +71,7 @@ struct offload_info {
      * it will be in the pkt meta data.
      */
     uint32_t flow_mark;
+    bool is_hwol; /* true if flow is fully offloaded */
 };
 
 int netdev_flow_flush(struct netdev *);
