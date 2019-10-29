@@ -49,6 +49,9 @@ netdev_dpdk_rte_flow_create(struct netdev *netdev,
                             struct rte_flow_error *error);
 unsigned int
 netdev_dpdk_get_port_id(const struct netdev *netdev);
+int
+netdev_dpdk_rte_flow_flush(struct netdev *netdev,
+                           struct rte_flow_error *error);
 
 #else
 
