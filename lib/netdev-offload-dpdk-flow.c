@@ -18,12 +18,15 @@
 #include <rte_flow.h>
 
 #include "dpif-netdev.h"
+#include "netdev-offload-provider.h"
 #include "netdev-offload-dpdk-flow.h"
 #include "openvswitch/match.h"
 #include "openvswitch/vlog.h"
 #include "packets.h"
 
 VLOG_DEFINE_THIS_MODULE(netdev_offload_dpdk_flow);
+
+static struct vlog_rate_limit error_rl = VLOG_RATE_LIMIT_INIT(100, 5);
 
 void
 netdev_dpdk_flow_free_patterns(struct flow_patterns *patterns)
@@ -496,6 +499,28 @@ netdev_dpdk_flow_add_patterns(struct flow_patterns *patterns,
     }
 
     add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_END, NULL, NULL);
+    return 0;
+}
+
+int
+netdev_dpdk_flow_add_actions(struct nlattr *nl_actions,
+                             size_t nl_actions_len,
+                             struct offload_info *info OVS_UNUSED,
+                             struct flow_action_items *action_items OVS_UNUSED,
+                             struct flow_actions *actions)
+{
+    struct nlattr *nla;
+    size_t left;
+
+    NL_ATTR_FOR_EACH_UNSAFE (nla, left, nl_actions, nl_actions_len) {
+        int type = nl_attr_type(nla);
+
+        VLOG_DBG_RL(&error_rl,
+                    "Unsupported offload action %d", type);
+        return -1;
+    }
+
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_END, NULL);
     return 0;
 }
 

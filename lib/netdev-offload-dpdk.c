@@ -149,11 +149,47 @@ netdev_offload_dpdk_mark_rss(struct netdev *netdev,
     return flow;
 }
 
+static struct rte_flow *
+netdev_offload_dpdk_full(struct netdev *netdev,
+                         struct rte_flow_item *pattern_items,
+                         struct nlattr *nl_actions,
+                         size_t nl_actions_len,
+                         struct offload_info *info)
+{
+    struct flow_actions actions = { .actions = NULL, .cnt = 0 };
+    const struct rte_flow_attr flow_attr = {
+        .group = 0,
+        .priority = 0,
+        .ingress = 1,
+        .egress = 0,
+        .transfer = 1,
+    };
+    struct rte_flow *flow = NULL;
+    struct rte_flow_error error;
+
+    if (netdev_dpdk_flow_add_actions(nl_actions, nl_actions_len, info,
+                                     NULL, &actions)) {
+        goto out;
+    }
+
+    flow = netdev_dpdk_rte_flow_create(netdev, &flow_attr, pattern_items,
+                                       actions.actions, &error);
+    if (!flow) {
+        VLOG_ERR("%s: rte flow create error: %u : message : %s\n",
+                 netdev_get_name(netdev), error.type, error.message);
+    }
+
+out:
+    netdev_dpdk_flow_free_actions(&actions);
+    info->offloaded = !!flow;
+    return flow;
+}
+
 static int
 netdev_offload_dpdk_add_flow(struct netdev *netdev,
                              const struct match *match,
-                             struct nlattr *nl_actions OVS_UNUSED,
-                             size_t actions_len OVS_UNUSED,
+                             struct nlattr *nl_actions,
+                             size_t actions_len,
                              const ovs_u128 *ufid,
                              struct offload_info *info)
 {
@@ -172,8 +208,13 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
         goto out;
     }
 
-    flow = netdev_offload_dpdk_mark_rss(netdev, patterns.items,
+    flow = netdev_offload_dpdk_full(netdev, patterns.items, nl_actions,
+                                    actions_len, info);
+    if (!flow) {
+        /* fallback to mark_rss */
+        flow = netdev_offload_dpdk_mark_rss(netdev, patterns.items,
                                         info->flow_mark);
+    }
     if (!flow) {
         ret = -1;
         goto out;
