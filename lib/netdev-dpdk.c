@@ -4327,6 +4327,12 @@ unlock:
     return err;
 }
 
+unsigned int
+netdev_dpdk_get_port_id(const struct netdev *netdev)
+{
+    return CONTAINER_OF(netdev, struct netdev_dpdk, up)->port_id;
+}
+
 bool
 netdev_dpdk_flow_api_supported(struct netdev *netdev)
 {
