@@ -115,6 +115,40 @@ ufid_to_rte_flow_disassociate(const ovs_u128 *ufid)
               UUID_ARGS((struct uuid *) ufid));
 }
 
+static struct rte_flow *
+netdev_offload_dpdk_mark_rss(struct netdev *netdev,
+                             struct rte_flow_item *pattern_items,
+                             uint32_t mark_id)
+{
+    struct flow_actions actions = { .actions = NULL, .cnt = 0 };
+    const struct rte_flow_attr flow_attr = {
+        .group = 0,
+        .priority = 0,
+        .ingress = 1,
+        .egress = 0
+    };
+    struct rte_flow_action_mark mark = { .id = mark_id, };
+    struct action_rss_data *rss_data;
+    struct rte_flow_error error;
+    struct rte_flow *flow;
+
+    rss_data = xmalloc(sizeof *rss_data +
+                       netdev_n_rxq(netdev) * sizeof rss_data->queue[0]);
+    netdev_dpdk_flow_add_mark_rss_actions(&actions, &mark, rss_data, netdev,
+                                          mark_id);
+
+    flow = netdev_dpdk_rte_flow_create(netdev, &flow_attr, pattern_items,
+                                       actions.actions, &error);
+    if (!flow) {
+        VLOG_ERR("%s: rte flow create error: %u : message : %s\n",
+                 netdev_get_name(netdev), error.type, error.message);
+    }
+    free(rss_data);
+    netdev_dpdk_flow_free_actions(&actions);
+
+    return flow;
+}
+
 static int
 netdev_offload_dpdk_add_flow(struct netdev *netdev,
                              const struct match *match,
@@ -123,19 +157,9 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
                              const ovs_u128 *ufid,
                              struct offload_info *info)
 {
-    const struct rte_flow_attr flow_attr = {
-        .group = 0,
-        .priority = 0,
-        .ingress = 1,
-        .egress = 0
-    };
     struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
-    struct flow_actions actions = { .actions = NULL, .cnt = 0 };
     struct rte_flow *flow;
-    struct rte_flow_error error;
     int ret = 0;
-    struct rte_flow_action_mark mark;
-    struct action_rss_data *rss_data;
     struct flow_pattern_items spec, mask;
 
     memset(&spec, 0, sizeof spec);
@@ -148,19 +172,9 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
         goto out;
     }
 
-    rss_data = xmalloc(sizeof *rss_data +
-                       netdev_n_rxq(netdev) * sizeof rss_data->queue[0]);
-    netdev_dpdk_flow_add_mark_rss_actions(&actions, &mark, rss_data, netdev,
-                                          info->flow_mark);
-
-    flow = netdev_dpdk_rte_flow_create(netdev, &flow_attr,
-                                       patterns.items,
-                                       actions.actions, &error);
-
-    free(rss_data);
+    flow = netdev_offload_dpdk_mark_rss(netdev, patterns.items,
+                                        info->flow_mark);
     if (!flow) {
-        VLOG_ERR("%s: rte flow creat error: %u : message : %s\n",
-                 netdev_get_name(netdev), error.type, error.message);
         ret = -1;
         goto out;
     }
@@ -170,7 +184,6 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
 
 out:
     netdev_dpdk_flow_free_patterns(&patterns);
-    netdev_dpdk_flow_free_actions(&actions);
     return ret;
 }
 
