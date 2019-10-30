@@ -383,10 +383,46 @@ netdev_offload_dpdk_init_flow_api(struct netdev *netdev)
     return netdev_dpdk_flow_api_supported(netdev) ? 0 : EOPNOTSUPP;
 }
 
+static bool
+netdev_offload_dpdk_flow_dump_next(struct netdev_flow_dump *dump,
+                                   struct match *match OVS_UNUSED,
+                                   struct nlattr **actions OVS_UNUSED,
+                                   struct dpif_flow_stats *stats,
+                                   struct dpif_flow_attrs *attrs OVS_UNUSED,
+                                   ovs_u128 *ufid,
+                                   struct ofpbuf *rbuffer OVS_UNUSED,
+                                   struct ofpbuf *wbuffer OVS_UNUSED)
+{
+    struct rte_flow_query_count query = { .reset = 1 };
+    struct rte_flow_error error;
+    struct rte_flow *rte_flow;
+    int ret;
+
+    rte_flow = ufid_to_rte_flow_find(ufid);
+    if (!rte_flow) {
+        return false;
+    }
+
+    memset(stats, 0, sizeof *stats);
+    ret = netdev_dpdk_rte_flow_query(dump->netdev, rte_flow, &query, &error);
+    if (ret) {
+        VLOG_DBG("ufid "UUID_FMT
+                 " flow %p query for '%s' failed\n",
+                 UUID_ARGS((struct uuid *)ufid), rte_flow,
+                 netdev_get_name(dump->netdev));
+        return false;
+    }
+    stats->n_packets += (query.hits_set) ? query.hits : 0;
+    stats->n_bytes += (query.bytes_set) ? query.bytes : 0;
+
+    return true;
+}
+
 const struct netdev_flow_api netdev_offload_dpdk = {
     .type = "dpdk_flow_api",
     .flow_flush = netdev_offload_dpdk_flow_flush,
     .flow_put = netdev_offload_dpdk_flow_put,
     .flow_del = netdev_offload_dpdk_flow_del,
     .init_flow_api = netdev_offload_dpdk_init_flow_api,
+    .flow_dump_next = netdev_offload_dpdk_flow_dump_next,
 };
