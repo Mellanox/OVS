@@ -61,7 +61,10 @@ struct action_rss_data {
     uint16_t queue[0];
 };
 
-struct flow_action_items;
+struct flow_action_items {
+    struct rte_flow_action_port_id port_id;
+    struct rte_flow_action_count count;
+};
 
 void
 netdev_dpdk_flow_free_patterns(struct flow_patterns *patterns);

@@ -165,11 +165,12 @@ netdev_offload_dpdk_full(struct netdev *netdev,
         .egress = 0,
         .transfer = 1,
     };
+    struct flow_action_items action_items;
     struct rte_flow_error error;
     struct rte_flow *flow;
 
     if (netdev_dpdk_flow_add_actions(nl_actions, nl_actions_len, info,
-                                     NULL, &actions)) {
+                                     &action_items, &actions)) {
         return NULL;
     }
 
