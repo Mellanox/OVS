@@ -54,6 +54,8 @@ struct flow_pattern_items {
 };
 
 struct flow_action_items {
+    struct rte_flow_action_port_id port_id;
+    struct rte_flow_action_count count;
     struct rte_flow_action_mark mark;
     struct action_rss_data {
         struct rte_flow_action_rss conf;

@@ -257,6 +257,28 @@ ds_put_flow_action(struct ds *s, const struct rte_flow_action *actions)
         } else {
             ds_put_cstr(s, "  RSS = null\n");
         }
+    } else if (actions->type == RTE_FLOW_ACTION_TYPE_COUNT) {
+        const struct rte_flow_action_count *count = actions->conf;
+
+        ds_put_cstr(s, "rte flow count action:\n");
+        if (count) {
+            ds_put_format(s,
+                          "  Count: shared=%d, id=%d\n",
+                          count->shared, count->id);
+        } else {
+            ds_put_cstr(s, "  Count = null\n");
+        }
+    } else if (actions->type == RTE_FLOW_ACTION_TYPE_PORT_ID) {
+        const struct rte_flow_action_port_id *port_id = actions->conf;
+
+        ds_put_cstr(s, "rte flow port-id action:\n");
+        if (port_id) {
+            ds_put_format(s,
+                          "  Port-id: original=%d, id=%d\n",
+                          port_id->original, port_id->id);
+        } else {
+            ds_put_cstr(s, "  Port-id = null\n");
+        }
     } else {
         ds_put_format(s, "unknown rte flow action (%d)\n", actions->type);
     }
@@ -483,20 +505,82 @@ netdev_dpdk_flow_patterns_add(struct flow_patterns *patterns,
     return 0;
 }
 
+static void
+netdev_dpdk_flow_add_count_action(struct flow_actions *actions,
+                                  struct flow_action_items *action_items)
+{
+    action_items->count.shared = 0;
+    /* Each flow has a single count action, so no need of id */
+    action_items->count.id = 0;
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_COUNT, &action_items->count);
+}
+
+static void
+netdev_dpdk_flow_add_port_id_action(struct flow_actions *actions,
+                                    struct netdev *outdev,
+                                    struct flow_action_items *action_items)
+{
+    action_items->port_id.id = netdev_dpdk_get_port_id(outdev);
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_PORT_ID, &action_items->port_id);
+}
+
+static int
+netdev_dpdk_flow_add_output_action(struct flow_actions *actions,
+                                   struct flow_action_items *action_items,
+                                   const struct nlattr *nla,
+                                   struct offload_info *info)
+{
+    struct netdev *outdev;
+    odp_port_t port;
+
+    port = nl_attr_get_odp_port(nla);
+    outdev = netdev_ports_get(port, info->dpif_class);
+    if (outdev == NULL) {
+        VLOG_DBG_RL(&error_rl,
+                    "Cannot find netdev for odp port %d", port);
+        return -1;
+    }
+    if (!netdev_dpdk_flow_api_supported(outdev)) {
+        VLOG_DBG_RL(&error_rl,
+                    "Output to %s cannot be offloaded",
+                    netdev_get_name(outdev));
+        return -1;
+    }
+
+    netdev_dpdk_flow_add_count_action(actions, action_items);
+    netdev_dpdk_flow_add_port_id_action(actions, outdev, action_items);
+    netdev_close(outdev);
+
+    return 0;
+}
+
 int
 netdev_dpdk_flow_actions_add_nl(struct flow_actions *actions,
-                                struct flow_action_items *action_items OVS_UNUSED,
+                                struct flow_action_items *action_items,
                                 struct nlattr *nl_actions,
                                 size_t nl_actions_len,
-                                struct offload_info *info OVS_UNUSED)
+                                struct offload_info *info)
 {
     struct nlattr *nla;
     size_t left;
 
     NL_ATTR_FOR_EACH_UNSAFE (nla, left, nl_actions, nl_actions_len) {
-        VLOG_DBG_RL(&error_rl,
-                    "Unsupported action type %d", nl_attr_type(nla));
-        return -1;
+        bool last_action = (left <= NLA_ALIGN(nla->nla_len));
+
+        if (nl_attr_type(nla) == OVS_ACTION_ATTR_OUTPUT) {
+            if (!last_action) {
+                return -1;
+            }
+
+            if (netdev_dpdk_flow_add_output_action(actions, action_items, nla,
+                                                   info)) {
+                return -1;
+            }
+        } else {
+            VLOG_DBG_RL(&error_rl,
+                        "Unsupported action type %d", nl_attr_type(nla));
+            return -1;
+        }
     }
 
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_END, NULL);
