@@ -254,9 +254,7 @@ netdev_offload_dpdk_validate_flow(const struct match *match)
     }
 
     /* Unsupported L3. */
-    if (masks->ipv6_label || masks->ct_nw_src || masks->ct_nw_dst     ||
-        !is_all_zeros(&masks->ipv6_src,    sizeof masks->ipv6_src)    ||
-        !is_all_zeros(&masks->ipv6_dst,    sizeof masks->ipv6_dst)    ||
+    if (masks->ct_nw_src || masks->ct_nw_dst ||
         !is_all_zeros(&masks->ct_ipv6_src, sizeof masks->ct_ipv6_src) ||
         !is_all_zeros(&masks->ct_ipv6_dst, sizeof masks->ct_ipv6_dst) ||
         !is_all_zeros(&masks->nd_target,   sizeof masks->nd_target)   ||
