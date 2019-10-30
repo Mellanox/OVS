@@ -136,6 +136,58 @@ dump_flow_pattern(struct rte_flow_item *item)
         }
     }
 
+    if (item->type == RTE_FLOW_ITEM_TYPE_IPV6) {
+        const struct rte_flow_item_ipv6 *ipv6_spec = item->spec;
+        const struct rte_flow_item_ipv6 *ipv6_mask = item->mask;
+
+        char src_addr_str[INET6_ADDRSTRLEN];
+        char dst_addr_str[INET6_ADDRSTRLEN];
+
+        ds_put_cstr(&s, "rte flow ipv6 pattern:\n");
+        if (ipv6_spec) {
+            ipv6_string_mapped(src_addr_str,
+                               (struct in6_addr *)&ipv6_spec->hdr.src_addr);
+            ipv6_string_mapped(dst_addr_str,
+                               (struct in6_addr *)&ipv6_spec->hdr.dst_addr);
+
+            ds_put_format(&s,
+                          "  Spec:"
+                          "  vtc_flow=%#"PRIx32","
+                          "  proto=%"PRIu8","
+                          "  hlim=%"PRIu8","
+                          "  src=%s,"
+                          "  dst=%s\n",
+                          ipv6_spec->hdr.vtc_flow,
+                          ipv6_spec->hdr.proto,
+                          ipv6_spec->hdr.hop_limits,
+                          src_addr_str,
+                          dst_addr_str);
+        } else {
+            ds_put_cstr(&s, "  Spec = null\n");
+        }
+        if (ipv6_mask) {
+            ipv6_string_mapped(src_addr_str,
+                               (struct in6_addr *)&ipv6_mask->hdr.src_addr);
+            ipv6_string_mapped(dst_addr_str,
+                               (struct in6_addr *)&ipv6_mask->hdr.dst_addr);
+
+            ds_put_format(&s,
+                          "  Mask:"
+                          "  vtc_flow=%#"PRIx32","
+                          "  proto=%#"PRIx8","
+                          "  hlim=%#"PRIx8","
+                          "  src=%s,"
+                          "  dst=%s\n",
+                          ipv6_mask->hdr.vtc_flow,
+                          ipv6_mask->hdr.proto,
+                          ipv6_mask->hdr.hop_limits,
+                          src_addr_str,
+                          dst_addr_str);
+        } else {
+            ds_put_cstr(&s, "  Mask = null\n");
+        }
+    }
+
     if (item->type == RTE_FLOW_ITEM_TYPE_UDP) {
         const struct rte_flow_item_udp *udp_spec = item->spec;
         const struct rte_flow_item_udp *udp_mask = item->mask;
@@ -384,6 +436,33 @@ netdev_dpdk_flow_add_patterns(struct flow_patterns *patterns,
         /* Save proto for L4 protocol setup. */
         proto = spec->ipv4.hdr.next_proto_id &
                 mask->ipv4.hdr.next_proto_id;
+    }
+
+    /* IP v6 */
+    if (match->flow.dl_type == htons(ETH_TYPE_IPV6)) {
+        memset(&spec->ipv6, 0, sizeof spec->ipv6);
+        memset(&mask->ipv6, 0, sizeof mask->ipv6);
+
+        spec->ipv6.hdr.proto = match->flow.nw_proto;
+        spec->ipv6.hdr.hop_limits = match->flow.nw_ttl;
+        rte_memcpy(spec->ipv6.hdr.src_addr, match->flow.ipv6_src.s6_addr,
+            sizeof spec->ipv6.hdr.src_addr);
+        rte_memcpy(spec->ipv6.hdr.dst_addr, match->flow.ipv6_dst.s6_addr,
+            sizeof spec->ipv6.hdr.dst_addr);
+
+        mask->ipv6.hdr.proto = match->wc.masks.nw_proto;
+        mask->ipv6.hdr.hop_limits = match->wc.masks.nw_ttl;
+        rte_memcpy(mask->ipv6.hdr.src_addr, match->wc.masks.ipv6_src.s6_addr,
+            sizeof mask->ipv6.hdr.src_addr);
+        rte_memcpy(mask->ipv6.hdr.dst_addr, match->wc.masks.ipv6_dst.s6_addr,
+            sizeof mask->ipv6.hdr.dst_addr);
+
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV6,
+                         &spec->ipv6, &mask->ipv6);
+
+        /* Save proto for L4 protocol setup */
+        proto = spec->ipv6.hdr.proto &
+                mask->ipv6.hdr.proto;
     }
 
     if (proto != IPPROTO_ICMP && proto != IPPROTO_UDP  &&
