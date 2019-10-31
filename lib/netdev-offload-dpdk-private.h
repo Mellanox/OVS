@@ -74,5 +74,10 @@ void
 netdev_dpdk_flow_actions_add_mark_rss(struct flow_actions *actions,
                                       struct flow_action_items *action_items,
                                       uint32_t mark_id);
+struct ds *
+netdev_dpdk_flow_ds_put_flow(struct ds *s,
+                             const struct rte_flow_attr *attr,
+                             const struct rte_flow_item *items,
+                             const struct rte_flow_action *actions);
 
 #endif /* NETDEV_OFFLOAD_DPDK_PRIVATE_H */

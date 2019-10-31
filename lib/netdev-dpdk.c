@@ -66,6 +66,7 @@
 #include "unixctl.h"
 #include "util.h"
 #include "uuid.h"
+#include "netdev-offload-dpdk-private.h"
 
 enum {VIRTIO_RXQ, VIRTIO_TXQ, VIRTIO_QNUM};
 
@@ -4374,10 +4375,31 @@ netdev_dpdk_rte_flow_destroy(struct netdev *netdev,
                              struct rte_flow_error *error)
 {
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
+    struct vlog_module *vlog_module;
+    enum vlog_level vlog_level;
     int ret;
 
     ovs_mutex_lock(&dev->mutex);
     ret = rte_flow_destroy(dev->port_id, rte_flow, error);
+    vlog_module = vlog_module_from_name("netdev_offload_dpdk");
+    vlog_level = !ret ? VLL_DBG : VLL_ERR;
+    if (vlog_module->min_level >= vlog_level) {
+        char log_msg[100];
+        struct ds s;
+
+        ds_init(&s);
+        if (!ret) {
+            log_msg[0] = '\0';
+        } else {
+            sprintf(log_msg, "FAILED. error %u : message : ", error->type);
+        }
+        vlog_rate_limit(vlog_module, vlog_level, &rl,
+                        "Destroy rte_flow %p: netdev=%s, port=%d\n"
+                        "%s%s\n",
+                        rte_flow, netdev_get_name(netdev), dev->port_id,
+                        log_msg, !ret ? "" : error->message);
+        ds_destroy(&s);
+    }
     ovs_mutex_unlock(&dev->mutex);
     return ret;
 }
@@ -4391,9 +4413,33 @@ netdev_dpdk_rte_flow_create(struct netdev *netdev,
 {
     struct rte_flow *flow;
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
+    struct vlog_module *vlog_module;
+    enum vlog_level vlog_level;
 
     ovs_mutex_lock(&dev->mutex);
     flow = rte_flow_create(dev->port_id, attr, items, actions, error);
+    vlog_module = vlog_module_from_name("netdev_offload_dpdk");
+    vlog_level = flow ? VLL_DBG : VLL_ERR;
+    if (vlog_module->min_level >= vlog_level) {
+        char log_msg[100];
+        struct ds s;
+
+        ds_init(&s);
+        if (flow) {
+            sprintf(log_msg, "Flow handle=%p", flow);
+        } else {
+            sprintf(log_msg, "FAILED. error %u : message : ", error->type);
+        }
+        vlog_rate_limit(vlog_module, vlog_level, &rl,
+                        "Create rte_flow: netdev=%s, port=%d\n"
+                        "%s"
+                        "%s%s\n",
+                        netdev_get_name(netdev), dev->port_id,
+                        ds_cstr(netdev_dpdk_flow_ds_put_flow(&s, attr, items,
+                                                             actions)),
+                        log_msg, flow ? "" : error->message);
+        ds_destroy(&s);
+    }
     ovs_mutex_unlock(&dev->mutex);
     return flow;
 }
