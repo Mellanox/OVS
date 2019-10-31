@@ -66,6 +66,7 @@
 #include "unixctl.h"
 #include "util.h"
 #include "uuid.h"
+#include "netdev-dpdk-flow.h"
 
 enum {VIRTIO_RXQ, VIRTIO_TXQ, VIRTIO_QNUM};
 
@@ -4364,6 +4365,7 @@ netdev_dpdk_rte_flow_destroy(struct netdev *netdev,
 
     ovs_mutex_lock(&dev->mutex);
     ret = rte_flow_destroy(dev->port_id, rte_flow, error);
+    netdev_dpdk_flow_dump("Destroy", netdev, NULL, NULL, NULL, rte_flow, &ret);
     ovs_mutex_unlock(&dev->mutex);
     return ret;
 }
@@ -4380,6 +4382,7 @@ netdev_dpdk_rte_flow_create(struct netdev *netdev,
 
     ovs_mutex_lock(&dev->mutex);
     flow = rte_flow_create(dev->port_id, attr, items, actions, error);
+    netdev_dpdk_flow_dump("Create", netdev, attr, items, actions, flow, NULL);
     ovs_mutex_unlock(&dev->mutex);
     return flow;
 }

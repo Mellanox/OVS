@@ -44,73 +44,70 @@ netdev_dpdk_flow_free_actions(struct flow_actions *actions)
 }
 
 static void
-dump_flow_pattern(struct rte_flow_item *item)
+dump_flow_attr(struct rte_flow_attr *attr, struct ds *s)
 {
-    struct ds s;
+    ds_put_format(s,
+                  "  Attributes: ingress=%d, egress=%d, prio=%d, group=%d, transfer=%d\n",
+                  attr->ingress, attr->egress, attr->priority, attr->group,
+                  attr->transfer);
+}
 
-    if (!VLOG_IS_DBG_ENABLED() || item->type == RTE_FLOW_ITEM_TYPE_END) {
-        return;
-    }
-
-    ds_init(&s);
-
+static void
+dump_flow_pattern(struct rte_flow_item *item, struct ds *s)
+{
     if (item->type == RTE_FLOW_ITEM_TYPE_ETH) {
         const struct rte_flow_item_eth *eth_spec = item->spec;
         const struct rte_flow_item_eth *eth_mask = item->mask;
 
-        ds_put_cstr(&s, "rte flow eth pattern:\n");
+        ds_put_cstr(s, "rte flow eth pattern:\n");
         if (eth_spec) {
-            ds_put_format(&s,
+            ds_put_format(s,
                           "  Spec: src="ETH_ADDR_FMT", dst="ETH_ADDR_FMT", "
                           "type=0x%04" PRIx16"\n",
                           ETH_ADDR_BYTES_ARGS(eth_spec->src.addr_bytes),
                           ETH_ADDR_BYTES_ARGS(eth_spec->dst.addr_bytes),
                           ntohs(eth_spec->type));
         } else {
-            ds_put_cstr(&s, "  Spec = null\n");
+            ds_put_cstr(s, "  Spec = null\n");
         }
         if (eth_mask) {
-            ds_put_format(&s,
+            ds_put_format(s,
                           "  Mask: src="ETH_ADDR_FMT", dst="ETH_ADDR_FMT", "
                           "type=0x%04"PRIx16"\n",
                           ETH_ADDR_BYTES_ARGS(eth_mask->src.addr_bytes),
                           ETH_ADDR_BYTES_ARGS(eth_mask->dst.addr_bytes),
                           ntohs(eth_mask->type));
         } else {
-            ds_put_cstr(&s, "  Mask = null\n");
+            ds_put_cstr(s, "  Mask = null\n");
         }
-    }
-
-    if (item->type == RTE_FLOW_ITEM_TYPE_VLAN) {
+    } else if (item->type == RTE_FLOW_ITEM_TYPE_VLAN) {
         const struct rte_flow_item_vlan *vlan_spec = item->spec;
         const struct rte_flow_item_vlan *vlan_mask = item->mask;
 
-        ds_put_cstr(&s, "rte flow vlan pattern:\n");
+        ds_put_cstr(s, "rte flow vlan pattern:\n");
         if (vlan_spec) {
-            ds_put_format(&s,
+            ds_put_format(s,
                           "  Spec: inner_type=0x%"PRIx16", tci=0x%"PRIx16"\n",
                           ntohs(vlan_spec->inner_type), ntohs(vlan_spec->tci));
         } else {
-            ds_put_cstr(&s, "  Spec = null\n");
+            ds_put_cstr(s, "  Spec = null\n");
         }
 
         if (vlan_mask) {
-            ds_put_format(&s,
+            ds_put_format(s,
                           "  Mask: inner_type=0x%"PRIx16", tci=0x%"PRIx16"\n",
                           ntohs(vlan_mask->inner_type), ntohs(vlan_mask->tci));
         } else {
-            ds_put_cstr(&s, "  Mask = null\n");
+            ds_put_cstr(s, "  Mask = null\n");
         }
-    }
-
-    if (item->type == RTE_FLOW_ITEM_TYPE_IPV4) {
+    } else if (item->type == RTE_FLOW_ITEM_TYPE_IPV4) {
         const struct rte_flow_item_ipv4 *ipv4_spec = item->spec;
         const struct rte_flow_item_ipv4 *ipv4_mask = item->mask;
 
-        ds_put_cstr(&s, "rte flow ipv4 pattern:\n");
+        ds_put_cstr(s, "rte flow ipv4 pattern:\n");
         if (ipv4_spec) {
-            ds_put_format(&s,
-                          "  Spec: tos=0x%"PRIx8", ttl=%"PRIx8
+            ds_put_format(s,
+                          "  Spec: tos=0x%"PRIx8", ttl=%"PRIu8
                           ", proto=0x%"PRIx8
                           ", src="IP_FMT", dst="IP_FMT"\n",
                           ipv4_spec->hdr.type_of_service,
@@ -119,11 +116,11 @@ dump_flow_pattern(struct rte_flow_item *item)
                           IP_ARGS(ipv4_spec->hdr.src_addr),
                           IP_ARGS(ipv4_spec->hdr.dst_addr));
         } else {
-            ds_put_cstr(&s, "  Spec = null\n");
+            ds_put_cstr(s, "  Spec = null\n");
         }
         if (ipv4_mask) {
-            ds_put_format(&s,
-                          "  Mask: tos=0x%"PRIx8", ttl=%"PRIx8
+            ds_put_format(s,
+                          "  Mask: tos=0x%"PRIx8", ttl=%"PRIu8
                           ", proto=0x%"PRIx8
                           ", src="IP_FMT", dst="IP_FMT"\n",
                           ipv4_mask->hdr.type_of_service,
@@ -132,25 +129,23 @@ dump_flow_pattern(struct rte_flow_item *item)
                           IP_ARGS(ipv4_mask->hdr.src_addr),
                           IP_ARGS(ipv4_mask->hdr.dst_addr));
         } else {
-            ds_put_cstr(&s, "  Mask = null\n");
+            ds_put_cstr(s, "  Mask = null\n");
         }
-    }
-
-    if (item->type == RTE_FLOW_ITEM_TYPE_IPV6) {
+    } else if (item->type == RTE_FLOW_ITEM_TYPE_IPV6) {
         const struct rte_flow_item_ipv6 *ipv6_spec = item->spec;
         const struct rte_flow_item_ipv6 *ipv6_mask = item->mask;
 
         char src_addr_str[INET6_ADDRSTRLEN];
         char dst_addr_str[INET6_ADDRSTRLEN];
 
-        ds_put_cstr(&s, "rte flow ipv6 pattern:\n");
+        ds_put_cstr(s, "rte flow ipv6 pattern:\n");
         if (ipv6_spec) {
             ipv6_string_mapped(src_addr_str,
                                (struct in6_addr *)&ipv6_spec->hdr.src_addr);
             ipv6_string_mapped(dst_addr_str,
                                (struct in6_addr *)&ipv6_spec->hdr.dst_addr);
 
-            ds_put_format(&s,
+            ds_put_format(s,
                           "  Spec:"
                           "  vtc_flow=%#"PRIx32","
                           "  proto=%"PRIu8","
@@ -163,7 +158,7 @@ dump_flow_pattern(struct rte_flow_item *item)
                           src_addr_str,
                           dst_addr_str);
         } else {
-            ds_put_cstr(&s, "  Spec = null\n");
+            ds_put_cstr(s, "  Spec = null\n");
         }
         if (ipv6_mask) {
             ipv6_string_mapped(src_addr_str,
@@ -171,7 +166,7 @@ dump_flow_pattern(struct rte_flow_item *item)
             ipv6_string_mapped(dst_addr_str,
                                (struct in6_addr *)&ipv6_mask->hdr.dst_addr);
 
-            ds_put_format(&s,
+            ds_put_format(s,
                           "  Mask:"
                           "  vtc_flow=%#"PRIx32","
                           "  proto=%#"PRIx8","
@@ -184,89 +179,81 @@ dump_flow_pattern(struct rte_flow_item *item)
                           src_addr_str,
                           dst_addr_str);
         } else {
-            ds_put_cstr(&s, "  Mask = null\n");
+            ds_put_cstr(s, "  Mask = null\n");
         }
-    }
-
-    if (item->type == RTE_FLOW_ITEM_TYPE_UDP) {
+    } else if (item->type == RTE_FLOW_ITEM_TYPE_UDP) {
         const struct rte_flow_item_udp *udp_spec = item->spec;
         const struct rte_flow_item_udp *udp_mask = item->mask;
 
-        ds_put_cstr(&s, "rte flow udp pattern:\n");
+        ds_put_cstr(s, "rte flow udp pattern:\n");
         if (udp_spec) {
-            ds_put_format(&s,
+            ds_put_format(s,
                           "  Spec: src_port=%"PRIu16", dst_port=%"PRIu16"\n",
                           ntohs(udp_spec->hdr.src_port),
                           ntohs(udp_spec->hdr.dst_port));
         } else {
-            ds_put_cstr(&s, "  Spec = null\n");
+            ds_put_cstr(s, "  Spec = null\n");
         }
         if (udp_mask) {
-            ds_put_format(&s,
+            ds_put_format(s,
                           "  Mask: src_port=0x%"PRIx16
                           ", dst_port=0x%"PRIx16"\n",
                           ntohs(udp_mask->hdr.src_port),
                           ntohs(udp_mask->hdr.dst_port));
         } else {
-            ds_put_cstr(&s, "  Mask = null\n");
+            ds_put_cstr(s, "  Mask = null\n");
         }
-    }
-
-    if (item->type == RTE_FLOW_ITEM_TYPE_SCTP) {
+    } else if (item->type == RTE_FLOW_ITEM_TYPE_SCTP) {
         const struct rte_flow_item_sctp *sctp_spec = item->spec;
         const struct rte_flow_item_sctp *sctp_mask = item->mask;
 
-        ds_put_cstr(&s, "rte flow sctp pattern:\n");
+        ds_put_cstr(s, "rte flow sctp pattern:\n");
         if (sctp_spec) {
-            ds_put_format(&s,
+            ds_put_format(s,
                           "  Spec: src_port=%"PRIu16", dst_port=%"PRIu16"\n",
                           ntohs(sctp_spec->hdr.src_port),
                           ntohs(sctp_spec->hdr.dst_port));
         } else {
-            ds_put_cstr(&s, "  Spec = null\n");
+            ds_put_cstr(s, "  Spec = null\n");
         }
         if (sctp_mask) {
-            ds_put_format(&s,
+            ds_put_format(s,
                           "  Mask: src_port=0x%"PRIx16
                           ", dst_port=0x%"PRIx16"\n",
                           ntohs(sctp_mask->hdr.src_port),
                           ntohs(sctp_mask->hdr.dst_port));
         } else {
-            ds_put_cstr(&s, "  Mask = null\n");
+            ds_put_cstr(s, "  Mask = null\n");
         }
-    }
-
-    if (item->type == RTE_FLOW_ITEM_TYPE_ICMP) {
+    } else if (item->type == RTE_FLOW_ITEM_TYPE_ICMP) {
         const struct rte_flow_item_icmp *icmp_spec = item->spec;
         const struct rte_flow_item_icmp *icmp_mask = item->mask;
 
-        ds_put_cstr(&s, "rte flow icmp pattern:\n");
+        ds_put_cstr(s, "rte flow icmp pattern:\n");
         if (icmp_spec) {
-            ds_put_format(&s,
+            ds_put_format(s,
                           "  Spec: icmp_type=%"PRIu8", icmp_code=%"PRIu8"\n",
                           icmp_spec->hdr.icmp_type,
                           icmp_spec->hdr.icmp_code);
         } else {
-            ds_put_cstr(&s, "  Spec = null\n");
+            ds_put_cstr(s, "  Spec = null\n");
         }
         if (icmp_mask) {
-            ds_put_format(&s,
+            ds_put_format(s,
                           "  Mask: icmp_type=0x%"PRIx8
                           ", icmp_code=0x%"PRIx8"\n",
                           icmp_spec->hdr.icmp_type,
                           icmp_spec->hdr.icmp_code);
         } else {
-            ds_put_cstr(&s, "  Mask = null\n");
+            ds_put_cstr(s, "  Mask = null\n");
         }
-    }
-
-    if (item->type == RTE_FLOW_ITEM_TYPE_TCP) {
+    } else if (item->type == RTE_FLOW_ITEM_TYPE_TCP) {
         const struct rte_flow_item_tcp *tcp_spec = item->spec;
         const struct rte_flow_item_tcp *tcp_mask = item->mask;
 
-        ds_put_cstr(&s, "rte flow tcp pattern:\n");
+        ds_put_cstr(s, "rte flow tcp pattern:\n");
         if (tcp_spec) {
-            ds_put_format(&s,
+            ds_put_format(s,
                           "  Spec: src_port=%"PRIu16", dst_port=%"PRIu16
                           ", data_off=0x%"PRIx8", tcp_flags=0x%"PRIx8"\n",
                           ntohs(tcp_spec->hdr.src_port),
@@ -274,10 +261,10 @@ dump_flow_pattern(struct rte_flow_item *item)
                           tcp_spec->hdr.data_off,
                           tcp_spec->hdr.tcp_flags);
         } else {
-            ds_put_cstr(&s, "  Spec = null\n");
+            ds_put_cstr(s, "  Spec = null\n");
         }
         if (tcp_mask) {
-            ds_put_format(&s,
+            ds_put_format(s,
                           "  Mask: src_port=%"PRIx16", dst_port=%"PRIx16
                           ", data_off=0x%"PRIx8", tcp_flags=0x%"PRIx8"\n",
                           ntohs(tcp_mask->hdr.src_port),
@@ -285,10 +272,76 @@ dump_flow_pattern(struct rte_flow_item *item)
                           tcp_mask->hdr.data_off,
                           tcp_mask->hdr.tcp_flags);
         } else {
-            ds_put_cstr(&s, "  Mask = null\n");
+            ds_put_cstr(s, "  Mask = null\n");
         }
+    } else {
+        ds_put_format(s, "rte flow UNKNOWN pattern (type=%d)\n", item->type);
+    }
+}
+
+static void
+dump_flow_action(struct rte_flow_action *actions, struct ds *s)
+{
+    if (actions->type == RTE_FLOW_ACTION_TYPE_MARK) {
+        const struct rte_flow_action_mark *mark = actions->conf;
+
+        ds_put_cstr(s, "rte flow mark action:\n");
+        if (mark) {
+            ds_put_format(s,
+                          "  Mark: id=%d\n",
+                          mark->id);
+        } else {
+            ds_put_cstr(s, "  Mark = null\n");
+        }
+    } else if (actions->type == RTE_FLOW_ACTION_TYPE_RSS) {
+        const struct rte_flow_action_rss *rss = actions->conf;
+
+        ds_put_cstr(s, "rte flow RSS action:\n");
+        if (rss) {
+            ds_put_format(s,
+                          "  RSS: queue_num=%d\n", rss->queue_num);
+        } else {
+            ds_put_cstr(s, "  RSS = null\n");
+        }
+    } else {
+        ds_put_format(s, "rte flow UNKNOWN action (type=%d)\n", actions->type);
+    }
+}
+
+void
+netdev_dpdk_flow_dump(const char *title,
+                      const struct netdev *netdev,
+                      const struct rte_flow_attr *_attr,
+                      const struct rte_flow_item *_items,
+                      const struct rte_flow_action *_actions,
+                      struct rte_flow *flow,
+                      int *result)
+{
+    struct rte_flow_attr *attr = (struct rte_flow_attr *)_attr;
+    struct rte_flow_item *items = (struct rte_flow_item *)_items;
+    struct rte_flow_action *actions = (struct rte_flow_action *)_actions;
+    struct ds s;
+
+    if (!VLOG_IS_DBG_ENABLED()) {
+        return;
     }
 
+    ds_init(&s);
+    ds_put_format(&s, "%s flow: netdev=%s, port=%d\n", title,
+                  netdev_get_name(netdev), netdev_dpdk_get_port_id(netdev));
+    if (attr) {
+        dump_flow_attr(attr, &s);
+    }
+    while (items && items->type != RTE_FLOW_ITEM_TYPE_END) {
+        dump_flow_pattern(items++, &s);
+    }
+    while (actions && actions->type != RTE_FLOW_ACTION_TYPE_END) {
+        dump_flow_action(actions++, &s);
+    }
+    ds_put_format(&s, "Flow handle=%p\n", flow);
+    if (result) {
+        ds_put_format(&s, "result=%d\n", *result);
+    }
     VLOG_DBG("%s", ds_cstr(&s));
     ds_destroy(&s);
 }
@@ -313,7 +366,6 @@ add_flow_pattern(struct flow_patterns *patterns, enum rte_flow_item_type type,
     patterns->items[cnt].spec = spec;
     patterns->items[cnt].mask = mask;
     patterns->items[cnt].last = NULL;
-    dump_flow_pattern(&patterns->items[cnt]);
     patterns->cnt++;
 }
 
