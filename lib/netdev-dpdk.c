@@ -67,6 +67,7 @@
 #include "unixctl.h"
 #include "util.h"
 #include "uuid.h"
+#include "netdev-offload-dpdk-private.h"
 
 enum {VIRTIO_RXQ, VIRTIO_TXQ, VIRTIO_QNUM};
 
@@ -4457,6 +4458,15 @@ netdev_dpdk_rte_flow_destroy(struct netdev *netdev,
 
     ovs_mutex_lock(&dev->mutex);
     ret = rte_flow_destroy(dev->port_id, rte_flow, error);
+    if (!ret) {
+        VLOG_DBG("Destroy rte_flow %p: netdev=%s, port=%d\n",
+                 rte_flow, netdev_get_name(netdev), dev->port_id);
+    } else {
+        VLOG_ERR("Destroy rte_flow %p: netdev=%s, port=%d\n"
+                 "FAILED. error %u : message : %s",
+                 rte_flow, netdev_get_name(netdev), dev->port_id,
+                 error->type, error->message);
+    }
     ovs_mutex_unlock(&dev->mutex);
     return ret;
 }
@@ -4470,9 +4480,28 @@ netdev_dpdk_rte_flow_create(struct netdev *netdev,
 {
     struct rte_flow *flow;
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
+    struct ds s;
 
     ovs_mutex_lock(&dev->mutex);
     flow = rte_flow_create(dev->port_id, attr, items, actions, error);
+    ds_init(&s);
+    if (flow) {
+        VLOG_DBG("Create rte_flow: netdev=%s, port=%d\n"
+                 "%s"
+                 "Flow handle=%p\n",
+                 netdev_get_name(netdev), dev->port_id,
+                 ds_cstr(netdev_dpdk_flow_ds_put_flow(&s, attr, items,
+                                                      actions)), flow);
+    } else {
+        VLOG_ERR("Create rte_flow: netdev=%s, port=%d\n"
+                 "%s"
+                 "FAILED. error %u : message : %s\n",
+                 netdev_get_name(netdev), dev->port_id,
+                 ds_cstr(netdev_dpdk_flow_ds_put_flow(&s, attr, items,
+                                                      actions)),
+                 error->type, error->message);
+    }
+    ds_destroy(&s);
     ovs_mutex_unlock(&dev->mutex);
     return flow;
 }
