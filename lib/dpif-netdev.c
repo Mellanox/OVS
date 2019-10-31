@@ -2413,6 +2413,7 @@ dp_netdev_flow_offload_put(struct dp_flow_offload_item *offload)
     }
     info.flow_mark = mark;
     info.actions_offloaded = &flow->actions_offloaded;
+    info.dpif_type_str = dpif_type_str;
 
     port = netdev_ports_get(in_port, dpif_type_str);
     if (!port) {

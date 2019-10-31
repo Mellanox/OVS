@@ -62,6 +62,7 @@ struct netdev_flow_dump {
 
 /* Flow offloading. */
 struct offload_info {
+    const char *dpif_type_str; /* dpif type string. */
     ovs_be16 tp_dst_port; /* Destination port for tunnel in SET action */
     uint8_t tunnel_csum_on; /* Tunnel header with checksum */
 
