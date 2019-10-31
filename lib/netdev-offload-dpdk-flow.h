@@ -76,5 +76,10 @@ netdev_dpdk_flow_add_mark_rss_actions(struct flow_actions *actions,
                                       struct action_rss_data *rss_data,
                                       struct netdev *netdev,
                                       uint32_t mark_id);
+void
+netdev_dpdk_flow_dump_to_str(const struct rte_flow_attr *attr,
+                             const struct rte_flow_item *items,
+                             const struct rte_flow_action *actions,
+                             struct ds *s);
 
 #endif /* netdev-dpdk-flow.h */

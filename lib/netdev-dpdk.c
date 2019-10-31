@@ -66,6 +66,7 @@
 #include "unixctl.h"
 #include "util.h"
 #include "uuid.h"
+#include "netdev-offload-dpdk-flow.h"
 
 enum {VIRTIO_RXQ, VIRTIO_TXQ, VIRTIO_QNUM};
 
@@ -4367,6 +4368,15 @@ netdev_dpdk_rte_flow_destroy(struct netdev *netdev,
 
     ovs_mutex_lock(&dev->mutex);
     ret = rte_flow_destroy(dev->port_id, rte_flow, error);
+    if (ret) {
+        VLOG_ERR("%s: rte flow %p destroy error: %u : message : %s\n",
+                 netdev_get_name(netdev), rte_flow, error->type,
+                 error->message);
+    } else {
+        VLOG_DBG("Destroy flow: netdev=%s, port=%d, rte_flow=%p\n",
+                 netdev_get_name(netdev), netdev_dpdk_get_port_id(netdev),
+                 rte_flow);
+    }
     ovs_mutex_unlock(&dev->mutex);
     return ret;
 }
@@ -4380,9 +4390,28 @@ netdev_dpdk_rte_flow_create(struct netdev *netdev,
 {
     struct rte_flow *flow;
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
+    struct ds s;
 
     ovs_mutex_lock(&dev->mutex);
     flow = rte_flow_create(dev->port_id, attr, items, actions, error);
+    if (!flow) {
+        ds_init(&s);
+        ds_put_format(&s, "Create flow: netdev=%s, port=%d\n",
+                      netdev_get_name(netdev), netdev_dpdk_get_port_id(netdev));
+        netdev_dpdk_flow_dump_to_str(attr, items, actions, &s);
+        ds_put_format(&s, "FAILED. error %u : message : %s\n",
+                      error->type, error->message);
+        VLOG_ERR_RL(&rl, "%s", ds_cstr(&s));
+        ds_destroy(&s);
+    } else if (VLOG_IS_DBG_ENABLED()) {
+        ds_init(&s);
+        ds_put_format(&s, "Create flow: netdev=%s, port=%d\n",
+                      netdev_get_name(netdev), netdev_dpdk_get_port_id(netdev));
+        netdev_dpdk_flow_dump_to_str(attr, items, actions, &s);
+        ds_put_format(&s, "Flow handle=%p\n", flow);
+        VLOG_DBG_RL(&rl, "%s", ds_cstr(&s));
+        ds_destroy(&s);
+    }
     ovs_mutex_unlock(&dev->mutex);
     return flow;
 }
