@@ -330,6 +330,21 @@ dump_flow_action(const struct rte_flow_action *actions, struct ds *s)
         }
     } else if (actions->type == RTE_FLOW_ACTION_TYPE_DROP) {
         ds_put_cstr(s, "rte flow drop action\n");
+    } else if (actions->type == RTE_FLOW_ACTION_TYPE_SET_MAC_SRC ||
+               actions->type == RTE_FLOW_ACTION_TYPE_SET_MAC_DST) {
+        const struct rte_flow_action_set_mac *set_mac = actions->conf;
+
+        char *dirstr = (actions->type == RTE_FLOW_ACTION_TYPE_SET_MAC_DST)
+                         ? "dst" : "src";
+
+        ds_put_format(s, "rte flow set-mac-%s action:\n", dirstr);
+        if (set_mac) {
+            ds_put_format(s,
+                          "  Set-mac-%s: "ETH_ADDR_FMT"\n",
+                          dirstr, ETH_ADDR_BYTES_ARGS(set_mac->mac_addr));
+        } else {
+            ds_put_format(s, "  Set-mac-%s = null\n", dirstr);
+        }
     } else {
         ds_put_format(s, "unknown rte flow action (%d)\n", actions->type);
     }
@@ -621,6 +636,7 @@ netdev_dpdk_flow_add_port_id_action(struct netdev *outdev,
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_PORT_ID, port_id);
 }
 
+#define get_mask(a, type) ((const type *)(const void *)(a + 1) + 1)
 static int
 netdev_dpdk_flow_add_output_action(const struct nlattr *nla,
                                    struct offload_info *info,
@@ -654,8 +670,8 @@ netdev_dpdk_flow_add_output_action(const struct nlattr *nla,
 static int
 netdev_dpdk_flow_add_set_actions(const struct nlattr *set_actions,
                                  const size_t set_actions_len,
-                                 struct flow_action_items *action_items OVS_UNUSED,
-                                 struct flow_actions *actions OVS_UNUSED)
+                                 struct flow_action_items *action_items,
+                                 struct flow_actions *actions)
 {
     const struct nlattr *sa;
     unsigned int sleft;
@@ -663,9 +679,28 @@ netdev_dpdk_flow_add_set_actions(const struct nlattr *set_actions,
     NL_ATTR_FOR_EACH_UNSAFE(sa, sleft, set_actions, set_actions_len) {
         int set_type = nl_attr_type(sa);
 
-        VLOG_DBG_RL(&error_rl,
-                    "Unsupported set action. set_type=%d", set_type);
-        return -1;
+        if (set_type == OVS_KEY_ATTR_ETHERNET) {
+            const struct ovs_key_ethernet *key = nl_attr_get(sa);
+            const struct ovs_key_ethernet *mask =
+                get_mask(sa, struct ovs_key_ethernet);
+
+            if (!mask || !eth_addr_is_zero(mask->eth_src)) {
+                memcpy(action_items->set.mac.src.mac_addr, key->eth_src.ea,
+                       ETH_ADDR_LEN);
+                add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_MAC_SRC,
+                                &action_items->set.mac.src);
+            }
+            if (!mask || !eth_addr_is_zero(mask->eth_dst)) {
+                memcpy(action_items->set.mac.dst.mac_addr, key->eth_dst.ea,
+                       ETH_ADDR_LEN);
+                add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_MAC_DST,
+                                &action_items->set.mac.dst);
+            }
+        } else {
+            VLOG_DBG_RL(&error_rl,
+                        "Unsupported set action. set_type=%d", set_type);
+            return -1;
+        }
     }
 
     return 0;
