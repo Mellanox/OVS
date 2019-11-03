@@ -14,6 +14,7 @@ Post-v2.12.0
      * Add hardware offload support for output actions
      * Add hardware offload support for matching IPv6 addresses
      * Add hardware offload support for drop action
+     * Add hardware offload support for set MAC actions
 
 v2.12.0 - 03 Sep 2019
 ---------------------
