@@ -651,6 +651,26 @@ netdev_dpdk_flow_add_output_action(const struct nlattr *nla,
     return 0;
 }
 
+static int
+netdev_dpdk_flow_add_set_actions(const struct nlattr *set_actions,
+                                 const size_t set_actions_len,
+                                 struct flow_action_items *action_items OVS_UNUSED,
+                                 struct flow_actions *actions OVS_UNUSED)
+{
+    const struct nlattr *sa;
+    unsigned int sleft;
+
+    NL_ATTR_FOR_EACH_UNSAFE(sa, sleft, set_actions, set_actions_len) {
+        int set_type = nl_attr_type(sa);
+
+        VLOG_DBG_RL(&error_rl,
+                    "Unsupported set action. set_type=%d", set_type);
+        return -1;
+    }
+
+    return 0;
+}
+
 int
 netdev_dpdk_flow_add_actions(struct nlattr *nl_actions,
                              size_t nl_actions_len,
@@ -672,6 +692,15 @@ netdev_dpdk_flow_add_actions(struct nlattr *nl_actions,
 
             if (netdev_dpdk_flow_add_output_action(nla, info, action_items,
                                                    actions)) {
+                return -1;
+            }
+        } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_SET ||
+                   nl_attr_type(nla) == OVS_ACTION_ATTR_SET_MASKED) {
+            const struct nlattr *set_actions = nl_attr_get(nla);
+            const size_t set_actions_len = nl_attr_get_size(nla);
+
+            if (netdev_dpdk_flow_add_set_actions(set_actions, set_actions_len,
+                                                 action_items, actions)) {
                 return -1;
             }
         } else {
