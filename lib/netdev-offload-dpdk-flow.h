@@ -70,6 +70,7 @@ struct flow_action_items {
             struct rte_flow_action_set_mac dst;
         } mac;
     } set;
+    struct rte_flow_action_raw_encap raw_encap;
 };
 
 void
