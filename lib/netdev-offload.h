@@ -78,6 +78,8 @@ struct offload_info {
                                   * to delete the original flow. */
 };
 
+#define INVALID_FLOW_MARK (UINT32_MAX)
+
 int netdev_flow_flush(struct netdev *);
 int netdev_flow_dump_create(struct netdev *, struct netdev_flow_dump **dump,
                             bool terse);
@@ -124,6 +126,8 @@ int netdev_ports_flow_get(const char *dpif_type, struct match *match,
                           struct dpif_flow_stats *stats,
                           struct dpif_flow_attrs *attrs,
                           struct ofpbuf *buf);
+uint32_t netdev_offload_flow_mark_alloc(void);
+void netdev_offload_flow_mark_free(uint32_t mark);
 
 #ifdef  __cplusplus
 }
