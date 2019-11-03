@@ -328,6 +328,8 @@ dump_flow_action(const struct rte_flow_action *actions, struct ds *s)
         } else {
             ds_put_cstr(s, "  Port-id = null\n");
         }
+    } else if (actions->type == RTE_FLOW_ACTION_TYPE_DROP) {
+        ds_put_cstr(s, "rte flow drop action\n");
     } else {
         ds_put_format(s, "unknown rte flow action (%d)\n", actions->type);
     }
@@ -679,6 +681,9 @@ netdev_dpdk_flow_add_actions(struct nlattr *nl_actions,
         }
     }
 
+    if (nl_actions_len == 0) {
+        add_flow_action(actions, RTE_FLOW_ACTION_TYPE_DROP, NULL);
+    }
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_END, NULL);
     return 0;
 }
