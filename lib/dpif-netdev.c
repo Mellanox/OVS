@@ -2127,9 +2127,6 @@ dp_netdev_pmd_find_dpcls(struct dp_netdev_pmd_thread *pmd,
     return cls;
 }
 
-#define MAX_FLOW_MARK       (UINT32_MAX - 1)
-#define INVALID_FLOW_MARK   (UINT32_MAX)
-
 struct megaflow_to_mark_data {
     const struct cmap_node node;
     ovs_u128 mega_ufid;
@@ -2139,36 +2136,12 @@ struct megaflow_to_mark_data {
 struct flow_mark {
     struct cmap megaflow_to_mark;
     struct cmap mark_to_flow;
-    struct id_pool *pool;
 };
 
 static struct flow_mark flow_mark = {
     .megaflow_to_mark = CMAP_INITIALIZER,
     .mark_to_flow = CMAP_INITIALIZER,
 };
-
-static uint32_t
-flow_mark_alloc(void)
-{
-    uint32_t mark;
-
-    if (!flow_mark.pool) {
-        /* Haven't initiated yet, do it here */
-        flow_mark.pool = id_pool_create(0, MAX_FLOW_MARK);
-    }
-
-    if (id_pool_alloc_id(flow_mark.pool, &mark)) {
-        return mark;
-    }
-
-    return INVALID_FLOW_MARK;
-}
-
-static void
-flow_mark_free(uint32_t mark)
-{
-    id_pool_free_id(flow_mark.pool, mark);
-}
 
 /* associate megaflow with a mark, which is a 1:1 mapping */
 static void
@@ -2277,7 +2250,7 @@ mark_to_flow_disassociate(struct dp_netdev_pmd_thread *pmd,
             netdev_close(port);
         }
 
-        flow_mark_free(mark);
+        netdev_offload_flow_mark_free(mark);
         VLOG_DBG("Freed flow mark %u\n", mark);
 
         megaflow_to_mark_disassociate(&flow->mega_ufid);
@@ -2406,7 +2379,7 @@ dp_netdev_flow_offload_put(struct dp_flow_offload_item *offload)
             return 0;
         }
 
-        mark = flow_mark_alloc();
+        mark = netdev_offload_flow_mark_alloc();
         if (mark == INVALID_FLOW_MARK) {
             VLOG_ERR("Failed to allocate flow mark!\n");
         }
@@ -2437,7 +2410,7 @@ dp_netdev_flow_offload_put(struct dp_flow_offload_item *offload)
 
 err_free:
     if (!modification) {
-        flow_mark_free(mark);
+        netdev_offload_flow_mark_free(mark);
     } else {
         mark_to_flow_disassociate(pmd, flow);
     }

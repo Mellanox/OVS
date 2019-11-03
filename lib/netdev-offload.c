@@ -33,6 +33,7 @@
 #include "openvswitch/dynamic-string.h"
 #include "fatal-signal.h"
 #include "hash.h"
+#include "id-pool.h"
 #include "openvswitch/list.h"
 #include "netdev-offload-provider.h"
 #include "netdev-provider.h"
@@ -59,6 +60,7 @@ VLOG_DEFINE_THIS_MODULE(netdev_offload);
 
 
 static bool netdev_flow_api_enabled = false;
+static struct id_pool *mark_pool = NULL;
 
 /* Protects 'netdev_flow_apis'.  */
 static struct ovs_mutex netdev_flow_api_provider_mutex = OVS_MUTEX_INITIALIZER;
@@ -265,6 +267,31 @@ netdev_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
     return (flow_api && flow_api->flow_del)
            ? flow_api->flow_del(netdev, ufid, stats)
            : EOPNOTSUPP;
+}
+
+#define MAX_FLOW_MARK (UINT32_MAX - 1)
+
+uint32_t
+netdev_offload_flow_mark_alloc(void)
+{
+    uint32_t mark;
+
+    if (!mark_pool) {
+        /* Haven't initiated yet, do it here */
+        mark_pool = id_pool_create(0, MAX_FLOW_MARK);
+    }
+
+    if (id_pool_alloc_id(mark_pool, &mark)) {
+        return mark;
+    }
+
+    return INVALID_FLOW_MARK;
+}
+
+void
+netdev_offload_flow_mark_free(uint32_t mark)
+{
+    id_pool_free_id(mark_pool, mark);
 }
 
 int
