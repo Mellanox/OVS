@@ -43,6 +43,7 @@
 #include "route-table.h"
 #include "simap.h"
 #include "smap.h"
+#include "sset.h"
 #include "socket-util.h"
 #include "unaligned.h"
 #include "unixctl.h"
@@ -1082,7 +1083,11 @@ netdev_vport_get_pt_mode(const struct netdev *netdev)
 static int
 netdev_vport_get_ifindex(const struct netdev *netdev_)
 {
-    return linux_get_ifindex(netdev_get_name(netdev_));
+    if (netdev_has_system_port(netdev_)) {
+        return linux_get_ifindex(netdev_get_name(netdev_));
+    } else {
+        return netdev_get_virtual_ifindex(netdev_);
+    }
 }
 
 #define NETDEV_VPORT_GET_IFINDEX netdev_vport_get_ifindex
