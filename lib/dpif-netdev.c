@@ -1880,13 +1880,11 @@ dpif_netdev_port_add(struct dpif *dpif, struct netdev *netdev,
                      odp_port_t *port_nop)
 {
     struct dp_netdev *dp = get_dp_netdev(dpif);
-    char namebuf[NETDEV_VPORT_NAME_BUFSIZE];
-    const char *dpif_port;
+    const char *dpif_port = netdev_get_name(netdev);
     odp_port_t port_no;
     int error;
 
     ovs_mutex_lock(&dp->port_mutex);
-    dpif_port = netdev_vport_get_dpif_port(netdev, namebuf, sizeof namebuf);
     if (*port_nop != ODPP_NONE) {
         port_no = *port_nop;
         error = dp_netdev_lookup_port(dp, *port_nop) ? EBUSY : 0;

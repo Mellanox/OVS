@@ -398,9 +398,8 @@ int
 dpif_netlink_rtnl_port_create(struct netdev *netdev)
 {
     const struct netdev_tunnel_config *tnl_cfg;
-    char namebuf[NETDEV_VPORT_NAME_BUFSIZE];
     enum ovs_vport_type type;
-    const char *name;
+    const char *name = netdev_get_name(netdev);
     const char *kind;
     uint32_t flags;
     int err;
@@ -416,7 +415,6 @@ dpif_netlink_rtnl_port_create(struct netdev *netdev)
         return EOPNOTSUPP;
     }
 
-    name = netdev_vport_get_dpif_port(netdev, namebuf, sizeof namebuf);
     flags = NLM_F_REQUEST | NLM_F_ACK | NLM_F_CREATE | NLM_F_EXCL;
 
     err = dpif_netlink_rtnl_create(tnl_cfg, name, type, kind, flags);
@@ -493,7 +491,6 @@ dpif_netlink_rtnl_port_destroy(const char *name, const char *type)
 bool
 dpif_netlink_rtnl_probe_oot_tunnels(void)
 {
-    char namebuf[NETDEV_VPORT_NAME_BUFSIZE];
     struct netdev *netdev = NULL;
     bool out_of_tree = false;
     const char *name;
@@ -509,7 +506,7 @@ dpif_netlink_rtnl_probe_oot_tunnels(void)
             return true;
         }
 
-        name = netdev_vport_get_dpif_port(netdev, namebuf, sizeof namebuf);
+        name = netdev_get_name(netdev);
 
         /* The geneve module exists when ovs-vswitchd crashes
          * and restarts, handle the case here.

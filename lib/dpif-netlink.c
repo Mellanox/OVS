@@ -824,9 +824,7 @@ dpif_netlink_port_add_compat(struct dpif_netlink *dpif, struct netdev *netdev,
     uint64_t options_stub[64 / 8];
     enum ovs_vport_type ovs_type;
     struct ofpbuf options;
-    const char *name;
-
-    name = netdev_vport_get_dpif_port(netdev, namebuf, sizeof namebuf);
+    const char *name = netdev_get_name(netdev);
 
     ovs_type = netdev_to_ovs_vport_type(netdev_get_type(netdev));
     if (ovs_type == OVS_VPORT_TYPE_UNSPEC) {
@@ -887,20 +885,18 @@ dpif_netlink_rtnl_port_create_and_add(struct dpif_netlink *dpif,
     OVS_REQ_WRLOCK(dpif->upcall_lock)
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 20);
-    char namebuf[NETDEV_VPORT_NAME_BUFSIZE];
-    const char *name;
+    const char *name = netdev_get_name(netdev);
     int error;
 
     error = dpif_netlink_rtnl_port_create(netdev);
     if (error) {
         if (error != EOPNOTSUPP) {
             VLOG_WARN_RL(&rl, "Failed to create %s with rtnetlink: %s",
-                         netdev_get_name(netdev), ovs_strerror(error));
+                         name, ovs_strerror(error));
         }
         return error;
     }
 
-    name = netdev_vport_get_dpif_port(netdev, namebuf, sizeof namebuf);
     error = dpif_netlink_port_add__(dpif, name, OVS_VPORT_TYPE_NETDEV, NULL,
                                     port_nop);
     if (error) {
