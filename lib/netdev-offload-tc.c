@@ -1643,6 +1643,12 @@ netdev_tc_init_flow_api(struct netdev *netdev)
     int ifindex;
     int error;
 
+    if (!netdev_has_system_port(netdev)) {
+        VLOG_DBG("%s: netdev has no backing system interface. Skipping.",
+                netdev_get_name(netdev));
+        return EOPNOTSUPP;
+   }
+
     ifindex = netdev_get_ifindex(netdev);
     if (ifindex < 0) {
         VLOG_INFO("init: failed to get ifindex for %s: %s",
