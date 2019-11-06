@@ -361,6 +361,30 @@ netdev_get_virtual_ifindex(const struct netdev *netdev) {
     return hash_string(netdev->name, 0) % 0xfffffe + 1;
 }
 
+bool
+netdev_has_system_port(const struct netdev *netdev) {
+    bool found = false;
+    const char *name;
+    const char *type = "system";
+    struct sset names = SSET_INITIALIZER(&names);
+
+    dp_enumerate_names(type, &names);
+    SSET_FOR_EACH (name, &names) {
+        struct dpif *dpifp = NULL;
+        if (dpif_open(name, type, &dpifp)) {
+            continue;
+        }
+        found = dpif_port_exists(dpifp, netdev_get_name(netdev));
+        dpif_close(dpifp);
+        if (found) {
+            break;
+        }
+    }
+    sset_destroy(&names);
+
+    return found;
+}
+
 /* Opens the network device named 'name' (e.g. "eth0") of the specified 'type'
  * (e.g. "system") and returns zero if successful, otherwise a positive errno
  * value.  On success, sets '*netdevp' to the new network device, otherwise to

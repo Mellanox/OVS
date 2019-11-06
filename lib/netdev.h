@@ -146,6 +146,7 @@ void netdev_wait(void);
 
 void netdev_enumerate_types(struct sset *types);
 bool netdev_is_reserved_name(const char *name);
+bool netdev_has_system_port(const struct netdev *);
 int netdev_get_virtual_ifindex(const struct netdev *netdev);
 
 int netdev_n_txq(const struct netdev *netdev);
