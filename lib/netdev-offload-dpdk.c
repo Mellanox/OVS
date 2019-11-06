@@ -1539,8 +1539,7 @@ parse_flow_actions(struct netdev *netdev,
     }
 
     if (nl_actions_len == 0) {
-        VLOG_DBG_RL(&rl, "No actions provided");
-        return -1;
+        add_flow_action(actions, RTE_FLOW_ACTION_TYPE_DROP, NULL);
     }
 
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_END, NULL);

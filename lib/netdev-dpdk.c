@@ -471,6 +471,7 @@ struct netdev_dpdk {
         };
         struct dpdk_tx_queue *tx_q;
         struct rte_eth_link link;
+        bool is_uplink_port; /* True=uplink port, false=representor port. */
     );
 
     PADDED_MEMBERS_CACHELINE_MARKER(CACHE_LINE_SIZE, cacheline1,
@@ -1159,6 +1160,9 @@ dpdk_eth_dev_init(struct netdev_dpdk *dev)
                       netdev_get_name(&dev->up));
         }
     }
+
+    dev->is_uplink_port = !(*info.dev_flags & RTE_ETH_DEV_REPRESENTOR) &&
+        info.switch_info.domain_id != RTE_ETH_DEV_SWITCH_DOMAIN_ID_INVALID;
 
     n_rxq = MIN(info.max_rx_queues, dev->up.n_rxq);
     n_txq = MIN(info.max_tx_queues, dev->up.n_txq);
@@ -5322,6 +5326,24 @@ netdev_dpdk_get_port_id(struct netdev *netdev)
     dev = netdev_dpdk_cast(netdev);
     ovs_mutex_lock(&dev->mutex);
     ret = dev->port_id;
+    ovs_mutex_unlock(&dev->mutex);
+out:
+    return ret;
+}
+
+bool
+netdev_dpdk_is_uplink_port(struct netdev *netdev)
+{
+    struct netdev_dpdk *dev;
+    bool ret = false;
+
+    if (!is_dpdk_class(netdev->netdev_class)) {
+        goto out;
+    }
+
+    dev = netdev_dpdk_cast(netdev);
+    ovs_mutex_lock(&dev->mutex);
+    ret = dev->is_uplink_port;
     ovs_mutex_unlock(&dev->mutex);
 out:
     return ret;
