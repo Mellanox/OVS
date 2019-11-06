@@ -353,6 +353,14 @@ netdev_is_reserved_name(const char *name)
     return false;
 }
 
+int
+netdev_get_virtual_ifindex(const struct netdev *netdev) {
+    /* Calculate hash from the netdev name. Ensure that ifindex is a 24-bit
+     * postive integer to meet RFC 2863 recommendations.
+     */
+    return hash_string(netdev->name, 0) % 0xfffffe + 1;
+}
+
 /* Opens the network device named 'name' (e.g. "eth0") of the specified 'type'
  * (e.g. "system") and returns zero if successful, otherwise a positive errno
  * value.  On success, sets '*netdevp' to the new network device, otherwise to
