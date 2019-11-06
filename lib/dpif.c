@@ -346,7 +346,13 @@ do_open(const char *name, const char *type, bool create, struct dpif **dpifp)
 
     error = registered_class->dpif_class->open(registered_class->dpif_class,
                                                name, create, &dpif);
-    if (!error) {
+
+    if (error) {
+        dp_class_unref(registered_class);
+        goto exit;
+    }
+
+    if (create) {
         struct dpif_port_dump port_dump;
         struct dpif_port dpif_port;
 
@@ -370,8 +376,6 @@ do_open(const char *name, const char *type, bool create, struct dpif **dpifp)
                           dpif_port.name, dpif_port.type, ovs_strerror(err));
             }
         }
-    } else {
-        dp_class_unref(registered_class);
     }
 
 exit:
