@@ -4343,6 +4343,12 @@ netdev_dpdk_flow_api_supported(struct netdev *netdev)
     struct netdev_dpdk *dev;
     bool ret = false;
 
+    if (netdev_has_system_port(netdev)) {
+        VLOG_DBG("%s: vport has backing system interface. Skipping DPDK flow API",
+                netdev_get_name(netdev));
+        goto out;
+    }
+
     if (!is_dpdk_class(netdev->netdev_class)) {
         goto out;
     }
