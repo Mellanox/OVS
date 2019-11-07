@@ -61,6 +61,11 @@ struct flow_action_items {
             struct rte_flow_action_set_mac src;
             struct rte_flow_action_set_mac dst;
         } mac;
+        struct {
+            struct rte_flow_action_set_ipv4 src;
+            struct rte_flow_action_set_ipv4 dst;
+            struct rte_flow_action_set_ttl ttl;
+        } ipv4;
     } set;
     struct rte_flow_action_mark mark;
     struct action_rss_data {
