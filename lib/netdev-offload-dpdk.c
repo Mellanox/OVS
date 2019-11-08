@@ -53,14 +53,55 @@ VLOG_DEFINE_THIS_MODULE(netdev_offload_dpdk);
  */
 static struct cmap ufid_to_rte_flow = CMAP_INITIALIZER;
 
+struct flow_item {
+    struct netdev *netdev;
+    struct rte_flow *rte_flow;
+};
+
+struct flows_handle {
+    struct flow_item *items;
+    int cnt;
+    int current_max;
+};
+
 struct ufid_to_rte_flow_data {
     struct cmap_node node;
     ovs_u128 ufid;
-    struct rte_flow *rte_flow;
+    struct flows_handle flows;
     struct flow_action_resources act_resources;
 };
 
-/* Find rte_flow with @ufid. */
+static void
+flow_handle_free(struct flows_handle *flows)
+{
+    /* When calling this function 'flows' must be valid */
+    free(flows->items);
+    flows->items = NULL;
+    flows->cnt = 0;
+}
+
+static void
+flow_handle_add(struct flows_handle *flows,
+                struct netdev *netdev,
+                struct rte_flow *rte_flow)
+{
+    int cnt = flows->cnt;
+
+    if (cnt == 0) {
+        flows->current_max = 1;
+        flows->items = xcalloc(flows->current_max, sizeof *flows->items);
+    } else if (cnt == flows->current_max) {
+        flows->current_max *= 2;
+        flows->items = xrealloc(flows->items, flows->current_max *
+                                sizeof *flows->items);
+    }
+
+    flows->items[cnt].netdev = netdev;
+    flows->items[cnt].rte_flow = rte_flow;
+    flows->cnt++;
+}
+
+/* Find rte_flow_data with @ufid. */
 static struct ufid_to_rte_flow_data *
 ufid_to_rte_flow_data_find(const ovs_u128 *ufid)
 {
@@ -78,7 +119,7 @@ ufid_to_rte_flow_data_find(const ovs_u128 *ufid)
 
 static inline void
 ufid_to_rte_flow_associate(const ovs_u128 *ufid,
-                           struct rte_flow *rte_flow,
+                           struct flows_handle *flows,
                            struct flow_action_resources *act_resources)
 {
     size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
@@ -93,11 +134,11 @@ ufid_to_rte_flow_associate(const ovs_u128 *ufid,
      */
     data_prev = ufid_to_rte_flow_data_find(ufid);
     if (data_prev) {
-        ovs_assert(data_prev->rte_flow == NULL);
+        ovs_assert(data_prev->flows.cnt == 0);
     }
 
     data->ufid = *ufid;
-    data->rte_flow = rte_flow;
+    memcpy(&data->flows, flows, sizeof data->flows);
     memcpy(&data->act_resources, act_resources, sizeof data->act_resources);
 
     cmap_insert(&ufid_to_rte_flow,
@@ -190,6 +231,7 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
                              struct offload_info *info)
 {
     struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
+    struct flows_handle flows = { .items = NULL, .cnt = 0 };
     struct flow_action_resources act_resources = {0};
     struct rte_flow *flow;
     int ret = 0;
@@ -213,7 +255,8 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
         ret = -1;
         goto out;
     }
-    ufid_to_rte_flow_associate(ufid, flow, &act_resources);
+    flow_handle_add(&flows, netdev, flow);
+    ufid_to_rte_flow_associate(ufid, &flows, &act_resources);
     VLOG_DBG("%s: installed flow %p by ufid "UUID_FMT"\n",
              netdev_get_name(netdev), flow, UUID_ARGS((struct uuid *)ufid));
 
@@ -298,34 +341,43 @@ err:
 }
 
 static int
-netdev_offload_dpdk_destroy_flow(struct netdev *netdev,
+netdev_offload_dpdk_destroy_flow(struct netdev *netdev OVS_UNUSED,
                                  const ovs_u128 *ufid,
-                                 struct rte_flow *rte_flow)
+                                 struct flows_handle *flows)
 {
     struct ufid_to_rte_flow_data *data;
     struct rte_flow_error error;
     int ret;
+    int i;
 
-    ret = netdev_dpdk_rte_flow_destroy(netdev, rte_flow, &error);
-
-    if (ret == 0) {
-        data = ufid_to_rte_flow_data_find(ufid);
-        if (!data) {
-            VLOG_WARN("ufid "UUID_FMT" is not associated with an rte flow\n",
-                      UUID_ARGS((struct uuid *) ufid));
-            return -1;
+    for (i = 0; i < flows->cnt; i++) {
+        ret = netdev_dpdk_rte_flow_destroy(flows->items[i].netdev,
+                                           flows->items[i].rte_flow,
+                                           &error);
+        if (!ret) {
+            VLOG_DBG("%s: removed rte flow %p associated with ufid " UUID_FMT "\n",
+                     netdev_get_name(flows->items[i].netdev),
+                     flows->items[i].rte_flow,
+                     UUID_ARGS((struct uuid *)ufid));
+        } else {
+            VLOG_ERR("%s: rte flow destroy error: %u : message : %s\n",
+                     netdev_get_name(flows->items[i].netdev), error.type,
+                     error.message);
+            return ret;
         }
-        put_action_resources(&data->act_resources);
-        ufid_to_rte_flow_disassociate(data);
-        VLOG_DBG("%s: removed rte flow %p associated with ufid " UUID_FMT "\n",
-                 netdev_get_name(netdev), rte_flow,
-                 UUID_ARGS((struct uuid *)ufid));
-    } else {
-        VLOG_ERR("%s: rte flow destroy error: %u : message : %s\n",
-                 netdev_get_name(netdev), error.type, error.message);
     }
 
-    return ret;
+    data = ufid_to_rte_flow_data_find(ufid);
+    if (!data) {
+        VLOG_WARN("ufid "UUID_FMT" is not associated with rte flow(s)\n",
+                  UUID_ARGS((struct uuid *) ufid));
+        return -1;
+    }
+    put_action_resources(&data->act_resources);
+    ufid_to_rte_flow_disassociate(data);
+    flow_handle_free(flows);
+
+    return 0;
 }
 
 static int
@@ -342,9 +394,9 @@ netdev_offload_dpdk_flow_put(struct netdev *netdev, struct match *match,
      * Here destroy the old rte flow first before adding a new one.
      */
     rte_flow_data = ufid_to_rte_flow_data_find(ufid);
-    if (rte_flow_data && rte_flow_data->rte_flow) {
+    if (rte_flow_data) {
         ret = netdev_offload_dpdk_destroy_flow(netdev, ufid,
-                                               rte_flow_data->rte_flow);
+                                               &rte_flow_data->flows);
         if (ret < 0) {
             return ret;
         }
@@ -369,7 +421,7 @@ netdev_offload_dpdk_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
     struct ufid_to_rte_flow_data *rte_flow_data;
 
     rte_flow_data = ufid_to_rte_flow_data_find(ufid);
-    if (!rte_flow_data || !rte_flow_data->rte_flow) {
+    if (!rte_flow_data) {
         return -1;
     }
 
@@ -377,7 +429,7 @@ netdev_offload_dpdk_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
         memset(stats, 0, sizeof *stats);
     }
     return netdev_offload_dpdk_destroy_flow(netdev, ufid,
-                                            rte_flow_data->rte_flow);
+                                            &rte_flow_data->flows);
 }
 
 static int
@@ -409,7 +461,7 @@ netdev_offload_dpdk_init_flow_api(struct netdev *netdev)
 }
 
 static bool
-netdev_offload_dpdk_flow_dump_next(struct netdev_flow_dump *dump,
+netdev_offload_dpdk_flow_dump_next(struct netdev_flow_dump *dump OVS_UNUSED,
                                    struct match *match OVS_UNUSED,
                                    struct nlattr **actions OVS_UNUSED,
                                    struct dpif_flow_stats *stats,
@@ -418,28 +470,37 @@ netdev_offload_dpdk_flow_dump_next(struct netdev_flow_dump *dump,
                                    struct ofpbuf *rbuffer OVS_UNUSED,
                                    struct ofpbuf *wbuffer OVS_UNUSED)
 {
-    struct rte_flow_query_count query = { .reset = 1 };
     struct ufid_to_rte_flow_data *rte_flow_data;
+    struct rte_flow_query_count query;
     struct rte_flow_error error;
     int ret;
+    int i;
 
     rte_flow_data = ufid_to_rte_flow_data_find(ufid);
-    if (!rte_flow_data || !rte_flow_data->rte_flow) {
-        return false;
+    if (!rte_flow_data || rte_flow_data->flows.cnt == 0) {
+        return -1;
     }
 
     memset(stats, 0, sizeof *stats);
-    ret = netdev_dpdk_rte_flow_query(dump->netdev, rte_flow_data->rte_flow,
-                                     &query, &error);
-    if (ret) {
-        VLOG_DBG("ufid "UUID_FMT
-                 " flow %p query for '%s' failed\n",
-                 UUID_ARGS((struct uuid *)ufid), rte_flow_data->rte_flow,
-                 netdev_get_name(dump->netdev));
-        return false;
+
+    for (i = 0; i < rte_flow_data->flows.cnt; i++) {
+        memset(&query, 0, sizeof query);
+        /* reset counters after query */
+        query.reset = 1;
+        ret = netdev_dpdk_rte_flow_query(rte_flow_data->flows.items[i].netdev,
+                                         rte_flow_data->flows.items[i].rte_flow,
+                                         &query, &error);
+        if (ret) {
+            VLOG_DBG("ufid "UUID_FMT
+                     " flow %p query for '%s' failed\n",
+                     UUID_ARGS((struct uuid *)ufid),
+                     rte_flow_data->flows.items[i].rte_flow,
+                     netdev_get_name(rte_flow_data->flows.items[i].netdev));
+            return false;
+        }
+        stats->n_packets += (query.hits_set) ? query.hits : 0;
+        stats->n_bytes += (query.bytes_set) ? query.bytes : 0;
     }
-    stats->n_packets += (query.hits_set) ? query.hits : 0;
-    stats->n_bytes += (query.bytes_set) ? query.bytes : 0;
 
     return true;
 }
