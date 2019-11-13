@@ -41,6 +41,7 @@ struct flow_actions {
 };
 
 struct flow_action_resources {
+    uint32_t self_table_id;
     uint32_t table_id;
     uint32_t flow_miss_ctx_id;
 };
@@ -57,6 +58,8 @@ void
 netdev_dpdk_flow_actions_add_mark_rss(struct flow_actions *actions,
                                       struct netdev *netdev,
                                       uint32_t mark_id);
+void
+netdev_dpdk_flow_add_vxlan_decap_actions(struct flow_actions *actions);
 int
 netdev_dpdk_flow_actions_add(struct flow_actions *actions,
                              struct nlattr *nl_actions,

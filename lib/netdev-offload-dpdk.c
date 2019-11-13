@@ -20,6 +20,7 @@
 
 #include "cmap.h"
 #include "dpif-netdev.h"
+#include "netdev-vport.h"
 #include "netdev-offload-provider.h"
 #include "netdev-provider.h"
 #include "netdev-vport.h"
@@ -159,6 +160,7 @@ ufid_to_rte_flow_disassociate(struct ufid_to_rte_flow_data *data)
 static void
 put_action_resources(struct flow_action_resources *act_resources)
 {
+    put_table_id(act_resources->self_table_id);
     put_table_id(act_resources->table_id);
     put_flow_miss_ctx_id(act_resources->flow_miss_ctx_id);
 }
@@ -189,13 +191,59 @@ netdev_offload_dpdk_mark_rss(struct flow_patterns *patterns,
     return flow;
 }
 
-static struct rte_flow *
+static int
+netdev_offload_dpdk_create_tnl_flows(struct flow_patterns *patterns,
+                                     struct flow_actions *actions,
+                                     struct offload_info *info,
+                                     struct flow_action_resources *action_resources,
+                                     struct flows_handle *flows)
+{
+    struct rte_flow_attr flow_attr = { .ingress = 1, .transfer = 1 };
+    struct netdev_flow_dump **netdev_dumps;
+    struct rte_flow *flow = NULL;
+    struct rte_flow_error error;
+    int num_ports = 0;
+    int ret;
+    int i;
+
+    netdev_dumps = netdev_ports_flow_dump_create(info->dpif_type_str, &num_ports);
+    flow_attr.group = action_resources->self_table_id;
+    for (i = 0; i < num_ports; i++) {
+        if (!netdev_dpdk_is_uplink_port(netdev_dumps[i]->netdev)) {
+            continue;
+        }
+        flow = netdev_dpdk_rte_flow_create(netdev_dumps[i]->netdev,
+                                           &flow_attr,
+                                           patterns->items,
+                                           actions->actions, &error);
+        if (!flow) {
+            VLOG_DBG("%s: rte flow create error: %u : message : %s\n",
+                     netdev_get_name(netdev_dumps[i]->netdev), error.type,
+                     error.message);
+            continue;
+        }
+        flow_handle_add(flows, netdev_dumps[i]->netdev, flow);
+    }
+    for (i = 0; i < num_ports; i++) {
+        int err = netdev_flow_dump_destroy(netdev_dumps[i]);
+
+        if (err != 0 && err != EOPNOTSUPP) {
+            VLOG_ERR("failed dumping netdev: %s", ovs_strerror(err));
+        }
+    }
+
+    ret = flows->cnt > 0 ? 0 : -1;
+    return ret;
+}
+
+static int
 netdev_offload_dpdk_actions(struct netdev *netdev,
                             struct flow_patterns *patterns,
                             struct nlattr *nl_actions,
                             size_t actions_len,
                             struct offload_info *info,
-                            struct flow_action_resources *act_resources)
+                            struct flow_action_resources *act_resources,
+                            struct flows_handle *flows)
 {
     const struct rte_flow_attr flow_attr = { .ingress = 1, .transfer = 1 };
     struct flow_actions actions = { .actions = NULL, .cnt = 0 };
@@ -203,23 +251,33 @@ netdev_offload_dpdk_actions(struct netdev *netdev,
     struct rte_flow_error error;
     int ret;
 
+    if (!strcmp(netdev_get_type(netdev), "vxlan")) {
+        netdev_dpdk_flow_add_vxlan_decap_actions(&actions);
+    }
     ret = netdev_dpdk_flow_actions_add(&actions, nl_actions, actions_len, info,
                                        act_resources);
     if (ret) {
         goto out;
     }
-    flow = netdev_dpdk_rte_flow_create(netdev, &flow_attr, patterns->items,
-                                       actions.actions, &error);
-    if (!flow) {
-        VLOG_ERR("%s: rte flow create error: %u : message : %s\n",
-                 netdev_get_name(netdev), error.type, error.message);
+    if (!strcmp(netdev_get_type(netdev), "vxlan")) {
+        ret = netdev_offload_dpdk_create_tnl_flows(patterns, &actions, info,
+                                                   act_resources, flows);
+    } else {
+        flow = netdev_dpdk_rte_flow_create(netdev, &flow_attr, patterns->items,
+                                           actions.actions, &error);
+        if (!flow) {
+            VLOG_ERR("%s: rte flow create error: %u : message : %s\n",
+                     netdev_get_name(netdev), error.type, error.message);
+            ret = -1;
+        }
+        flow_handle_add(flows, netdev, flow);
     }
-    if (flow && info->actions_offloaded) {
+    if (!ret && info->actions_offloaded) {
         *info->actions_offloaded = true;
     }
 out:
     netdev_dpdk_flow_actions_free(&actions);
-    return flow;
+    return ret;
 }
 
 static int
@@ -234,8 +292,8 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
     struct flows_handle flows = { .items = NULL, .cnt = 0 };
     struct flow_action_resources act_resources = {0};
     struct match consumed_match;
-    struct rte_flow *flow;
-    int ret = 0;
+    struct rte_flow *flow = NULL;
+    int ret;
 
     memcpy(&consumed_match, match, sizeof consumed_match);
 
@@ -245,20 +303,30 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
                   UUID_ARGS((struct uuid *)ufid));
         goto out;
     }
+    if (netdev_vport_is_vport_class(netdev->netdev_class)) {
+        ret = get_table_id(match->flow.in_port.odp_port,
+                           &act_resources.self_table_id);
+        if (ret) {
+            goto out;
+        }
+    }
 
-    flow = netdev_offload_dpdk_actions(netdev, &patterns, nl_actions,
-                                       actions_len, info, &act_resources);
-    if (!flow) {
+    ret = netdev_offload_dpdk_actions(netdev, &patterns, nl_actions,
+                                      actions_len, info, &act_resources,
+                                      &flows);
+    if (ret) {
         /* if we failed to offload the rule actions fallback to mark rss
          * actions.
          */
-        flow = netdev_offload_dpdk_mark_rss(&patterns, netdev, info->flow_mark);
+        flow = act_resources.self_table_id == 0 ?
+            netdev_offload_dpdk_mark_rss(&patterns, netdev, info->flow_mark) :
+            NULL;
+        if (!flow) {
+            ret = -1;
+            goto out;
+        }
+        flow_handle_add(&flows, netdev, flow);
     }
-    if (!flow) {
-        ret = -1;
-        goto out;
-    }
-    flow_handle_add(&flows, netdev, flow);
     ufid_to_rte_flow_associate(ufid, &flows, &act_resources);
     VLOG_DBG("%s: installed flow %p by ufid "UUID_FMT"\n",
              netdev_get_name(netdev), flow, UUID_ARGS((struct uuid *)ufid));

@@ -399,6 +399,8 @@ ds_put_flow_action(struct ds *s, const struct rte_flow_action *actions)
                           "  Jump: group=%"PRIu32"\n",
                           jump->group);
         }
+    } else if (actions->type == RTE_FLOW_ACTION_TYPE_VXLAN_DECAP) {
+        ds_put_cstr(s, "rte flow vxlan-decap action\n");
     } else {
         ds_put_format(s, "unknown rte flow action (%d)\n", actions->type);
     }
@@ -1149,6 +1151,12 @@ netdev_dpdk_flow_add_tnl_pop_actions(struct flow_actions *actions,
     }
     netdev_dpdk_flow_add_jump_action(actions, act_resources->table_id);
     return 0;
+}
+
+void
+netdev_dpdk_flow_add_vxlan_decap_actions(struct flow_actions *actions)
+{
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_VXLAN_DECAP, NULL);
 }
 
 int
