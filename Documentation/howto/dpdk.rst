@@ -399,6 +399,7 @@ Supported actions for hardware offload are:
 - Modification of IPv6 (set_field:<ADDR>->ipv6_src/ipv6_dst/mod_nw_ttl).
 - Clone/output (tnl_push and output) for encapsulating over a tunnel.
 - Tunnel pop, for changing from PF port to vport.
+- Offloading VXLAN vport.
 
 Further Reading
 ---------------
