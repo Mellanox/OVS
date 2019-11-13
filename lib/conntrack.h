@@ -70,6 +70,33 @@ union ct_addr {
     struct in6_addr ipv6;
 };
 
+struct ct_endpoint {
+    union ct_addr addr;
+    union {
+        ovs_be16 port;
+        struct {
+            ovs_be16 icmp_id;
+            uint8_t icmp_type;
+            uint8_t icmp_code;
+        };
+    };
+};
+
+/* Verify that there is no padding in struct ct_endpoint, to facilitate
+ * hashing in ct_endpoint_hash_add(). */
+BUILD_ASSERT_DECL(sizeof(struct ct_endpoint) == sizeof(union ct_addr) + 4);
+
+/* Changes to this structure need to be reflected in conn_key_hash()
+ * and conn_key_cmp(). */
+struct conn_key {
+    struct ct_endpoint src;
+    struct ct_endpoint dst;
+
+    ovs_be16 dl_type;
+    uint16_t zone;
+    uint8_t nw_proto;
+};
+
 enum nat_action_e {
     NAT_ACTION_SRC = 1 << 0,
     NAT_ACTION_SRC_PORT = 1 << 1,
