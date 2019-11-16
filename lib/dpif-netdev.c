@@ -6961,6 +6961,10 @@ smc_lookup_batch(struct dp_netdev_pmd_thread *pmd,
     pmd_perf_update_counter(&pmd->perf_stats, PMD_STAT_SMC_HIT, n_smc_hit);
 }
 
+static struct tx_port *
+pmd_send_port_cache_lookup(const struct dp_netdev_pmd_thread *pmd,
+                           odp_port_t port_no);
+
 /* Try to process all ('cnt') the 'packets' using only the datapath flow cache
  * 'pmd->flow_cache'. If a flow is not found for a packet 'packets[i]', the
  * miniflow is copied into 'keys' and the packet pointer is moved at the
@@ -7026,9 +7030,18 @@ dfc_processing(struct dp_netdev_pmd_thread *pmd,
 
         if ((*recirc_depth_get() == 0) &&
             dp_packet_has_flow_mark(packet, &mark)) {
-            flow = mark_to_flow_find(pmd, mark);
+            /* Restore the packet if it was interrupted in the middle
+             * of HW offload processing.
+             */
+            struct tx_port *p;
+            int hw_ret;
+
+            tcp_flags = parse_tcp_flags(packet);
+            p = pmd_send_port_cache_lookup(pmd, port_no);
+            hw_ret = p ? netdev_hw_miss_packet_recover(p->port->netdev, mark,
+                                                       packet) : -1;
+            flow = hw_ret == -1 ? mark_to_flow_find(pmd, mark) : NULL;
             if (OVS_LIKELY(flow)) {
-                tcp_flags = parse_tcp_flags(packet);
                 if (OVS_LIKELY(batch_enable)) {
                     dp_netdev_queue_batches(packet, flow, tcp_flags, batches,
                                             n_batches);
