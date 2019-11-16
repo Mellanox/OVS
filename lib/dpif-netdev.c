@@ -6506,6 +6506,7 @@ dfc_processing(struct dp_netdev_pmd_thread *pmd,
     bool smc_enable_db;
     size_t map_cnt = 0;
     bool batch_enable = true;
+    bool has_mark;
 
     atomic_read_relaxed(&pmd->dp->smc_enable_db, &smc_enable_db);
     pmd_perf_update_counter(&pmd->perf_stats,
@@ -6532,8 +6533,24 @@ dfc_processing(struct dp_netdev_pmd_thread *pmd,
             pkt_metadata_init(&packet->md, port_no);
         }
 
-        if ((*recirc_depth_get() == 0) &&
-            dp_packet_has_flow_mark(packet, &mark)) {
+        has_mark = dp_packet_has_flow_mark(packet, &mark);
+        if (has_mark) {
+            /* Restore the packet if it was interrupted in the middle
+             * of HW offload processing
+             */
+            struct netdev *netdev;
+
+            const char *dpif_type_str =
+                dpif_normalize_type(pmd->dp->class->type);
+            netdev = netdev_ports_get(port_no, dpif_type_str);
+            if (netdev) {
+                netdev_hw_miss_packet_recover(netdev, mark, packet,
+                                              dpif_type_str);
+                netdev_close(netdev);
+            }
+        }
+
+        if ((*recirc_depth_get() == 0) && has_mark) {
             flow = mark_to_flow_find(pmd, mark);
             if (OVS_LIKELY(flow)) {
                 tcp_flags = parse_tcp_flags(packet);
