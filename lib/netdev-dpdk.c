@@ -4434,6 +4434,12 @@ netdev_dpdk_flow_api_supported(struct netdev *netdev)
                      netdev_get_name(netdev));
 	    goto out;
 	}
+
+        if (strcmp(netdev_get_type(netdev), "vxlan")) {
+            VLOG_DBG("%s: vport not of type VXLAN. Skipping.",
+                netdev_get_name(netdev));
+            goto out;
+	}
         ret = true;
     }
 
