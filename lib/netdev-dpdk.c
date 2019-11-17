@@ -4428,17 +4428,24 @@ netdev_dpdk_flow_api_supported(struct netdev *netdev)
     struct netdev_dpdk *dev;
     bool ret = false;
 
-    if (!is_dpdk_class(netdev->netdev_class)) {
-        goto out;
-    }
-
-    dev = netdev_dpdk_cast(netdev);
-    ovs_mutex_lock(&dev->mutex);
-    if (dev->type == DPDK_DEV_ETH) {
-        /* TODO: Check if we able to offload some minimal flow. */
+    if (netdev_vport_is_vport_class(netdev->netdev_class)) {
+        if (strcmp(netdev_get_dpif_type(netdev), "netdev")) {
+            VLOG_DBG("%s: vport does not belong to the netdev datapath. Skipping.",
+                     netdev_get_name(netdev));
+	    goto out;
+	}
         ret = true;
     }
-    ovs_mutex_unlock(&dev->mutex);
+
+    if (is_dpdk_class(netdev->netdev_class)) {
+        dev = netdev_dpdk_cast(netdev);
+        ovs_mutex_lock(&dev->mutex);
+        if (dev->type == DPDK_DEV_ETH) {
+            /* TODO: Check if we able to offload some minimal flow. */
+            ret = true;
+         }
+         ovs_mutex_unlock(&dev->mutex);
+    }
 out:
     return ret;
 }
