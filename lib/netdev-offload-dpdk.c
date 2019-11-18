@@ -22,6 +22,7 @@
 #include "dpif-netdev.h"
 #include "netdev-offload-provider.h"
 #include "netdev-provider.h"
+#include "netdev-vport.h"
 #include "openvswitch/match.h"
 #include "openvswitch/vlog.h"
 #include "packets.h"
