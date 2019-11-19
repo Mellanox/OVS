@@ -428,7 +428,8 @@ lib_libopenvswitch_la_SOURCES += \
 	lib/dpdk.c \
 	lib/netdev-dpdk.c \
 	lib/netdev-offload-dpdk.c \
-	lib/netdev-offload-dpdk-flow.c
+	lib/netdev-offload-dpdk-flow.c \
+	lib/netdev-offload-dpdk-map.c
 else
 lib_libopenvswitch_la_SOURCES += \
 	lib/dpdk-stub.c

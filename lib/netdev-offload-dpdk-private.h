@@ -62,4 +62,15 @@ netdev_dpdk_flow_ds_put_flow(struct ds *s,
                              const struct rte_flow_item *items,
                              const struct rte_flow_action *actions);
 
+struct flow_miss_ctx {
+    odp_port_t vport;
+};
+
+int get_table_id(odp_port_t vport, uint32_t *table_id);
+void put_table_id(uint32_t table_id);
+int get_flow_miss_ctx_id(struct flow_miss_ctx *flow_ctx_data,
+                         uint32_t *miss_ctx_id);
+void put_flow_miss_ctx_id(uint32_t flow_miss_ctx_id);
+struct flow_miss_ctx *find_flow_miss_ctx(int flow_ctx_id);
+
 #endif /* NETDEV_OFFLOAD_DPDK_PRIVATE_H */
