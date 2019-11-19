@@ -294,6 +294,12 @@ netdev_offload_flow_mark_free(uint32_t mark)
     id_pool_free_id(mark_pool, mark);
 }
 
+struct id_pool *
+netdev_offload_get_mark_pool(void)
+{
+    return mark_pool;
+}
+
 int
 netdev_init_flow_api(struct netdev *netdev)
 {
