@@ -29,6 +29,8 @@
 #include "openvswitch/vlog.h"
 #include "packets.h"
 #include "uuid.h"
+#include "id-pool.h"
+#include "odp-util.h"
 
 VLOG_DEFINE_THIS_MODULE(netdev_offload_dpdk);
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(600, 600);
@@ -123,6 +125,271 @@ ufid_to_rte_flow_disassociate(const ovs_u128 *ufid)
 
     VLOG_WARN("ufid "UUID_FMT" is not associated with an rte flow",
               UUID_ARGS((struct uuid *) ufid));
+}
+
+/* A generic data structure used for mapping data to id and id to data. The
+ * elements are reference coutned. As changes are done only from the single
+ * offload thread, no locks are required.
+ * "name" and "dump_context_data" are used for log messages.
+ * "d2i_hmap" is the data-to-id map.
+ * "i2d_hmap" is the id-to-data map.
+ * "id_alloc" is used to allocate an id for a new data.
+ * "id_free" is used to free an id for the last data release.
+ * "data_size" is the size of the data in the elements.
+ */
+struct context_metadata {
+    const char *name;
+    struct ds *(*dump_context_data)(struct ds *s, void *data);
+    struct hmap d2i_hmap;
+    struct hmap i2d_hmap;
+    uint32_t (*id_alloc)(void);
+    void (*id_free)(uint32_t id);
+    size_t data_size;
+};
+
+struct context_data {
+    struct hmap_node d2i_node;
+    struct hmap_node i2d_node;
+    void *data;
+    uint32_t id;
+    uint32_t refcnt;
+};
+
+static int
+get_context_data_id_by_data(struct context_metadata *md,
+                            struct context_data *data_req,
+                            uint32_t *id)
+{
+    struct context_data *data_cur;
+    size_t dhash, ihash;
+    struct ds s;
+
+    ds_init(&s);
+    dhash = hash_bytes(data_req->data, md->data_size, 0);
+    HMAP_FOR_EACH_WITH_HASH (data_cur, d2i_node, dhash, &md->d2i_hmap) {
+        if (!memcmp(data_req->data, data_cur->data, md->data_size)) {
+            data_cur->refcnt++;
+            VLOG_DBG_RL(&rl,
+                        "%s: %s: '%s', refcnt=%d, id=%d", __func__, md->name,
+                        ds_cstr(md->dump_context_data(&s, data_cur->data)),
+                        data_cur->refcnt, data_cur->id);
+            ds_destroy(&s);
+            *id = data_cur->id;
+            return 0;
+        }
+    }
+
+    data_cur = xzalloc(sizeof *data_cur);
+    if (!data_cur) {
+        goto err;
+    }
+    data_cur->data = xmalloc(md->data_size);
+    if (!data_cur->data) {
+        goto err_data_alloc;
+    }
+    memcpy(data_cur->data, data_req->data, md->data_size);
+    data_cur->refcnt = 1;
+    data_cur->id = md->id_alloc();
+    if (data_cur->id == 0) {
+        goto err_id_alloc;
+    }
+    hmap_insert(&md->d2i_hmap, &data_cur->d2i_node, dhash);
+    ihash = hash_add(0, data_cur->id);
+    hmap_insert(&md->i2d_hmap, &data_cur->i2d_node, ihash);
+    VLOG_DBG_RL(&rl, "%s: %s: '%s', refcnt=%d, id=%d", __func__, md->name,
+                ds_cstr(md->dump_context_data(&s, data_cur->data)),
+                data_cur->refcnt, data_cur->id);
+    *id = data_cur->id;
+    ds_destroy(&s);
+    return 0;
+
+err_id_alloc:
+    free(data_cur->data);
+err_data_alloc:
+    free(data_cur);
+err:
+    VLOG_ERR_RL(&rl, "%s: %s: error. '%s'", __func__, md->name,
+                ds_cstr(md->dump_context_data(&s, data_cur->data)));
+    ds_destroy(&s);
+    return -1;
+}
+
+static int
+get_context_data_by_id(struct context_metadata *md, uint32_t id, void *data)
+{
+    size_t ihash = hash_add(0, id);
+    struct context_data *data_cur;
+    struct ds s;
+
+    ds_init(&s);
+    HMAP_FOR_EACH_WITH_HASH (data_cur, i2d_node, ihash, &md->i2d_hmap) {
+        if (data_cur->id == id) {
+            memcpy(data, data_cur->data, md->data_size);
+            ds_destroy(&s);
+            return 0;
+        }
+    }
+
+    ds_destroy(&s);
+    return -1;
+}
+
+static void
+put_context_data_by_id(struct context_metadata *md, uint32_t id)
+{
+    struct context_data *data_cur;
+    size_t ihash;
+    struct ds s;
+
+    if (id == 0) {
+        return;
+    }
+    ihash = hash_add(0, id);
+    HMAP_FOR_EACH_WITH_HASH (data_cur, i2d_node, ihash, &md->i2d_hmap) {
+        if (data_cur->id == id) {
+            data_cur->refcnt--;
+            ds_init(&s);
+            VLOG_DBG_RL(&rl,
+                        "%s: %s: '%s', refcnt=%d, id=%d", __func__, md->name,
+                        ds_cstr(md->dump_context_data(&s, data_cur->data)),
+                        data_cur->refcnt, data_cur->id);
+            ds_destroy(&s);
+            if (data_cur->refcnt == 0) {
+                hmap_remove(&md->i2d_hmap, &data_cur->i2d_node);
+                hmap_remove(&md->d2i_hmap, &data_cur->d2i_node);
+                free(data_cur);
+                md->id_free(id);
+            }
+            return;
+        }
+    }
+    VLOG_ERR_RL(&rl,
+                "%s: %s: error. id=%d not found", __func__, md->name, id);
+}
+
+struct table_id_data {
+    odp_port_t vport;
+};
+
+static struct ds *
+dump_table_id(struct ds *s, void *data)
+{
+    struct table_id_data *table_id_data = data;
+
+    ds_put_format(s, "vport=%"PRIu32, table_id_data->vport);
+    return s;
+}
+
+#define MIN_TABLE_ID     1
+#define MAX_TABLE_ID     (UINT32_MAX - 1)
+
+static struct id_pool *table_id_pool = NULL;
+static uint32_t
+table_id_alloc(void)
+{
+    uint32_t id;
+
+    if (!table_id_pool) {
+        /* Haven't initiated yet, do it here */
+        table_id_pool = id_pool_create(MIN_TABLE_ID, MAX_TABLE_ID);
+    }
+
+    if (id_pool_alloc_id(table_id_pool, &id)) {
+        return id;
+    }
+
+    return 0;
+}
+
+static void
+table_id_free(uint32_t id)
+{
+    id_pool_free_id(table_id_pool, id);
+}
+
+static struct context_metadata table_id_md = {
+    .name = "table_id",
+    .dump_context_data = dump_table_id,
+    .d2i_hmap = HMAP_INITIALIZER(&table_id_md.d2i_hmap),
+    .i2d_hmap = HMAP_INITIALIZER(&table_id_md.i2d_hmap),
+    .id_alloc = table_id_alloc,
+    .id_free = table_id_free,
+    .data_size = sizeof(struct table_id_data),
+};
+
+OVS_UNUSED
+static int
+get_table_id(odp_port_t vport, uint32_t *table_id)
+{
+    struct table_id_data table_id_data = { .vport = vport };
+    struct context_data table_id_context = {
+        .data = &table_id_data,
+    };
+
+    if (vport == ODPP_NONE) {
+        *table_id = 0;
+        return 0;
+    }
+
+    return get_context_data_id_by_data(&table_id_md, &table_id_context,
+                                       table_id);
+}
+
+OVS_UNUSED
+static void
+put_table_id(uint32_t table_id)
+{
+    put_context_data_by_id(&table_id_md, table_id);
+}
+
+struct flow_miss_ctx {
+    odp_port_t vport;
+};
+
+static struct ds *
+dump_flow_ctx_id(struct ds *s, void *data)
+{
+    struct flow_miss_ctx *flow_ctx_data = data;
+
+    ds_put_format(s, "vport=%"PRIu32, flow_ctx_data->vport);
+    return s;
+}
+
+static struct context_metadata flow_miss_ctx_md = {
+    .name = "flow_miss_ctx",
+    .dump_context_data = dump_flow_ctx_id,
+    .d2i_hmap = HMAP_INITIALIZER(&flow_miss_ctx_md.d2i_hmap),
+    .i2d_hmap = HMAP_INITIALIZER(&flow_miss_ctx_md.i2d_hmap),
+    .id_alloc = netdev_offload_flow_mark_alloc,
+    .id_free = netdev_offload_flow_mark_free,
+    .data_size = sizeof(struct flow_miss_ctx),
+};
+
+OVS_UNUSED
+static int
+get_flow_miss_ctx_id(struct flow_miss_ctx *flow_ctx_data,
+                     uint32_t *miss_ctx_id)
+{
+    struct context_data flow_ctx = {
+        .data = flow_ctx_data,
+    };
+
+    return get_context_data_id_by_data(&flow_miss_ctx_md, &flow_ctx,
+                                       miss_ctx_id);
+}
+
+OVS_UNUSED
+static void
+put_flow_miss_ctx_id(uint32_t flow_ctx_id)
+{
+    put_context_data_by_id(&flow_miss_ctx_md, flow_ctx_id);
+}
+
+OVS_UNUSED
+static int
+find_flow_miss_ctx(int flow_ctx_id, struct flow_miss_ctx *ctx)
+{
+    return get_context_data_by_id(&flow_miss_ctx_md, flow_ctx_id, ctx);
 }
 
 /*
