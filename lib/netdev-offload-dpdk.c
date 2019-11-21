@@ -472,6 +472,27 @@ netdev_offload_dpdk_hw_miss_packet_recover(uint32_t flow_miss_ctx_id,
     return 0;
 }
 
+static int
+netdev_offload_dpdk_flow_dump_create(struct netdev *netdev,
+                                     struct netdev_flow_dump **dump_out)
+{
+    struct netdev_flow_dump *dump;
+
+    dump = xzalloc(sizeof *dump);
+    dump->netdev = netdev_ref(netdev);
+
+    *dump_out = dump;
+    return 0;
+}
+
+static int
+netdev_offload_dpdk_flow_dump_destroy(struct netdev_flow_dump *dump)
+{
+    netdev_close(dump->netdev);
+    free(dump);
+    return 0;
+}
+
 const struct netdev_flow_api netdev_offload_dpdk = {
     .type = "dpdk_flow_api",
     .flow_flush = netdev_offload_dpdk_flow_flush,
@@ -480,4 +501,6 @@ const struct netdev_flow_api netdev_offload_dpdk = {
     .init_flow_api = netdev_offload_dpdk_init_flow_api,
     .flow_dump_next = netdev_offload_dpdk_flow_dump_next,
     .hw_miss_packet_recover = netdev_offload_dpdk_hw_miss_packet_recover,
+    .flow_dump_create = netdev_offload_dpdk_flow_dump_create,
+    .flow_dump_destroy = netdev_offload_dpdk_flow_dump_destroy,
 };
