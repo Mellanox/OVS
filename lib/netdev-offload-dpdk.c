@@ -233,10 +233,13 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
     struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
     struct flows_handle flows = { .items = NULL, .cnt = 0 };
     struct flow_action_resources act_resources = {0};
+    struct match consumed_match;
     struct rte_flow *flow;
     int ret = 0;
 
-    ret = netdev_dpdk_flow_patterns_add(&patterns, match);
+    memcpy(&consumed_match, match, sizeof consumed_match);
+
+    ret = netdev_dpdk_flow_patterns_add(&patterns, &consumed_match);
     if (ret) {
         VLOG_WARN("Adding rte match patterns for flow ufid"UUID_FMT" failed",
                   UUID_ARGS((struct uuid *)ufid));
@@ -266,78 +269,6 @@ out:
         put_action_resources(&act_resources);
     }
     return ret;
-}
-
-/*
- * Check if any unsupported flow patterns are specified.
- */
-static int
-netdev_offload_dpdk_validate_flow(const struct match *match)
-{
-    struct match match_zero_wc;
-    const struct flow *masks = &match->wc.masks;
-
-    /* Create a wc-zeroed version of flow. */
-    match_init(&match_zero_wc, &match->flow, &match->wc);
-
-    if (!is_all_zeros(&match_zero_wc.flow.tunnel,
-                      sizeof match_zero_wc.flow.tunnel)) {
-        goto err;
-    }
-
-    if (masks->metadata || masks->skb_priority ||
-        masks->pkt_mark || masks->dp_hash) {
-        goto err;
-    }
-
-    /* recirc id must be zero. */
-    if (match_zero_wc.flow.recirc_id) {
-        goto err;
-    }
-
-    if (masks->ct_state || masks->ct_nw_proto ||
-        masks->ct_zone  || masks->ct_mark     ||
-        !ovs_u128_is_zero(masks->ct_label)) {
-        goto err;
-    }
-
-    if (masks->conj_id || masks->actset_output) {
-        goto err;
-    }
-
-    /* Unsupported L2. */
-    if (!is_all_zeros(masks->mpls_lse, sizeof masks->mpls_lse)) {
-        goto err;
-    }
-
-    /* Unsupported L3. */
-    if (masks->ipv6_label || masks->ct_nw_src || masks->ct_nw_dst     ||
-        !is_all_zeros(&masks->ipv6_src,    sizeof masks->ipv6_src)    ||
-        !is_all_zeros(&masks->ipv6_dst,    sizeof masks->ipv6_dst)    ||
-        !is_all_zeros(&masks->ct_ipv6_src, sizeof masks->ct_ipv6_src) ||
-        !is_all_zeros(&masks->ct_ipv6_dst, sizeof masks->ct_ipv6_dst) ||
-        !is_all_zeros(&masks->nd_target,   sizeof masks->nd_target)   ||
-        !is_all_zeros(&masks->nsh,         sizeof masks->nsh)         ||
-        !is_all_zeros(&masks->arp_sha,     sizeof masks->arp_sha)     ||
-        !is_all_zeros(&masks->arp_tha,     sizeof masks->arp_tha)) {
-        goto err;
-    }
-
-    /* If fragmented, then don't HW accelerate - for now. */
-    if (match_zero_wc.flow.nw_frag) {
-        goto err;
-    }
-
-    /* Unsupported L4. */
-    if (masks->igmp_group_ip4 || masks->ct_tp_src || masks->ct_tp_dst) {
-        goto err;
-    }
-
-    return 0;
-
-err:
-    VLOG_ERR("cannot HW accelerate this flow due to unsupported protocols");
-    return -1;
 }
 
 static int
@@ -400,11 +331,6 @@ netdev_offload_dpdk_flow_put(struct netdev *netdev, struct match *match,
         if (ret < 0) {
             return ret;
         }
-    }
-
-    ret = netdev_offload_dpdk_validate_flow(match);
-    if (ret < 0) {
-        return ret;
     }
 
     if (stats) {

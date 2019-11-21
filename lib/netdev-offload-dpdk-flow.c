@@ -482,9 +482,22 @@ netdev_dpdk_flow_actions_add_mark_rss(struct flow_actions *actions,
 
 int
 netdev_dpdk_flow_patterns_add(struct flow_patterns *patterns,
-                              const struct match *match)
+                              struct match *match)
 {
+    struct flow *consumed_masks;
+    struct flow zero_masks = {};
     uint8_t proto = 0;
+    int ret = 0;
+
+    consumed_masks = &match->wc.masks;
+
+    memset(&consumed_masks->in_port, 0, sizeof consumed_masks->in_port);
+    if (match->flow.recirc_id != 0) {
+        ret = -1;
+        goto out;
+    }
+    consumed_masks->recirc_id = 0;
+    consumed_masks->packet_type = 0;
 
     /* Eth */
     if (!eth_addr_is_zero(match->wc.masks.dl_src) ||
@@ -501,6 +514,10 @@ netdev_dpdk_flow_patterns_add(struct flow_patterns *patterns,
         memcpy(&mask->dst, &match->wc.masks.dl_dst, sizeof mask->dst);
         memcpy(&mask->src, &match->wc.masks.dl_src, sizeof mask->src);
         mask->type = match->wc.masks.dl_type;
+
+        memset(&consumed_masks->dl_dst, 0, sizeof consumed_masks->dl_dst);
+        memset(&consumed_masks->dl_src, 0, sizeof consumed_masks->dl_src);
+        consumed_masks->dl_type = 0;
 
         add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_ETH, spec, mask);
     } else {
@@ -529,6 +546,7 @@ netdev_dpdk_flow_patterns_add(struct flow_patterns *patterns,
 
         add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_VLAN, spec, mask);
     }
+    consumed_masks->vlans[0].tci = 0;
 
     /* IP v4 */
     if (match->flow.dl_type == htons(ETH_TYPE_IP)) {
@@ -549,11 +567,19 @@ netdev_dpdk_flow_patterns_add(struct flow_patterns *patterns,
         mask->hdr.src_addr        = match->wc.masks.nw_src;
         mask->hdr.dst_addr        = match->wc.masks.nw_dst;
 
+        consumed_masks->nw_tos = 0;
+        consumed_masks->nw_ttl = 0;
+        consumed_masks->nw_proto = 0;
+        consumed_masks->nw_src = 0;
+        consumed_masks->nw_dst = 0;
+
         add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV4, spec, mask);
 
         /* Save proto for L4 protocol setup. */
         proto = spec->hdr.next_proto_id & mask->hdr.next_proto_id;
     }
+    /* ignore mask match for now */
+    consumed_masks->nw_frag = 0;
 
     if (proto != IPPROTO_ICMP && proto != IPPROTO_UDP  &&
         proto != IPPROTO_SCTP && proto != IPPROTO_TCP  &&
@@ -561,12 +587,14 @@ netdev_dpdk_flow_patterns_add(struct flow_patterns *patterns,
          match->wc.masks.tp_dst ||
          match->wc.masks.tcp_flags)) {
         VLOG_DBG("L4 Protocol (%u) not supported", proto);
-        return -1;
+        ret = -1;
+        goto out;
     }
 
     if ((match->wc.masks.tp_src && match->wc.masks.tp_src != OVS_BE16_MAX) ||
         (match->wc.masks.tp_dst && match->wc.masks.tp_dst != OVS_BE16_MAX)) {
-        return -1;
+        ret = -1;
+        goto out;
     }
 
     if (proto == IPPROTO_TCP) {
@@ -585,6 +613,10 @@ netdev_dpdk_flow_patterns_add(struct flow_patterns *patterns,
         mask->hdr.data_off  = ntohs(match->wc.masks.tcp_flags) >> 8;
         mask->hdr.tcp_flags = ntohs(match->wc.masks.tcp_flags) & 0xff;
 
+        consumed_masks->tp_src = 0;
+        consumed_masks->tp_dst = 0;
+        consumed_masks->tcp_flags = 0;
+
         add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_TCP, spec, mask);
     } else if (proto == IPPROTO_UDP) {
         struct rte_flow_item_udp *spec, *mask;
@@ -597,6 +629,9 @@ netdev_dpdk_flow_patterns_add(struct flow_patterns *patterns,
 
         mask->hdr.src_port = match->wc.masks.tp_src;
         mask->hdr.dst_port = match->wc.masks.tp_dst;
+
+        consumed_masks->tp_src = 0;
+        consumed_masks->tp_dst = 0;
 
         add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_UDP, spec, mask);
     } else if (proto == IPPROTO_SCTP) {
@@ -611,6 +646,9 @@ netdev_dpdk_flow_patterns_add(struct flow_patterns *patterns,
         mask->hdr.src_port = match->wc.masks.tp_src;
         mask->hdr.dst_port = match->wc.masks.tp_dst;
 
+        consumed_masks->tp_src = 0;
+        consumed_masks->tp_dst = 0;
+
         add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_SCTP, spec, mask);
     } else if (proto == IPPROTO_ICMP) {
         struct rte_flow_item_icmp *spec, *mask;
@@ -624,11 +662,22 @@ netdev_dpdk_flow_patterns_add(struct flow_patterns *patterns,
         mask->hdr.icmp_type = (uint8_t) ntohs(match->wc.masks.tp_src);
         mask->hdr.icmp_code = (uint8_t) ntohs(match->wc.masks.tp_dst);
 
+        consumed_masks->tp_src = 0;
+        consumed_masks->tp_dst = 0;
+
         add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_ICMP, spec, mask);
     }
 
     add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_END, NULL, NULL);
-    return 0;
+
+    if (memcmp(consumed_masks, &zero_masks, sizeof *consumed_masks)) {
+        VLOG_DBG_RL(&error_rl,
+                    "Cannot match all matches. dl_type=0x%04x",
+                    ntohs(match->flow.dl_type));
+        ret = -1;
+    }
+out:
+    return ret;
 }
 
 static void

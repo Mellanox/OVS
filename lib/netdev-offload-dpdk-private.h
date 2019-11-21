@@ -49,7 +49,7 @@ void
 netdev_dpdk_flow_patterns_free(struct flow_patterns *patterns);
 int
 netdev_dpdk_flow_patterns_add(struct flow_patterns *patterns,
-                              const struct match *match);
+                              struct match *match);
 void
 netdev_dpdk_flow_actions_free(struct flow_actions *actions);
 void
