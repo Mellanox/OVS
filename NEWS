@@ -32,6 +32,7 @@ v2.15.0 - 15 Feb 2021
    - DPDK:
      * Removed support for vhost-user dequeue zero-copy.
      * Add support for DPDK 20.11.
+     * Add hardware offload support tunnel pop action (experimental).
    - Userspace datapath:
      * Add the 'pmd' option to "ovs-appctl dpctl/dump-flows", which
        restricts a flow dump to a single PMD thread if set.
@@ -71,7 +72,6 @@ v2.15.0 - 15 Feb 2021
      * Only bug fixes for the Linux OOT kernel module will be accepted.
      * The Linux kernel module will be fully removed from the OVS source tree
        in OVS branch 2.18
-
 
 v2.14.0 - 17 Aug 2020
 ---------------------
