@@ -32,7 +32,7 @@ v2.13.0 - 14 Feb 2020
        releases.
      * Add support for DPDK 19.11.
      * Add hardware offload support for output, drop, set of MAC, IPv4,
-       TCP/UDP ports and tunnel push-output actions (experimental).
+       TCP/UDP ports and tunnel push-output/pop actions (experimental).
      * Add experimental support for TSO.
    - RSTP:
      * The rstp_statistics column in Port table will only be updated every

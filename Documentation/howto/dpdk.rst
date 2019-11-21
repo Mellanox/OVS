@@ -396,6 +396,7 @@ Supported actions for hardware offload are:
 - Modification of IPv4 (mod_nw_src/mod_nw_dst/mod_nw_ttl).
 - Modification of TCP/UDP (mod_tp_src/mod_tp_dst).
 - Clone/output (tnl_push and output) for encapsulating over a tunnel.
+- Tunnel pop, for changing from PF port to vport.
 
 Further Reading
 ---------------

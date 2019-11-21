@@ -57,12 +57,18 @@ static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(600, 600);
  */
 static struct cmap ufid_to_rte_flow = CMAP_INITIALIZER;
 
+struct act_resources {
+    uint32_t next_table_id;
+    uint32_t flow_miss_ctx_id;
+};
+
 struct ufid_to_rte_flow_data {
     struct cmap_node node;
     ovs_u128 ufid;
     struct rte_flow *rte_flow;
     bool actions_offloaded;
     struct dpif_flow_stats stats;
+    struct act_resources act_resources;
 };
 
 /* Find rte_flow with @ufid. */
@@ -83,7 +89,8 @@ ufid_to_rte_flow_data_find(const ovs_u128 *ufid)
 
 static inline void
 ufid_to_rte_flow_associate(const ovs_u128 *ufid,
-                           struct rte_flow *rte_flow, bool actions_offloaded)
+                           struct rte_flow *rte_flow, bool actions_offloaded,
+                           struct act_resources *act_resources)
 {
     size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
     struct ufid_to_rte_flow_data *data = xzalloc(sizeof *data);
@@ -103,6 +110,7 @@ ufid_to_rte_flow_associate(const ovs_u128 *ufid,
     data->ufid = *ufid;
     data->rte_flow = rte_flow;
     data->actions_offloaded = actions_offloaded;
+    memcpy(&data->act_resources, act_resources, sizeof data->act_resources);
 
     cmap_insert(&ufid_to_rte_flow,
                 CONST_CAST(struct cmap_node *, &data->node), hash);
@@ -309,7 +317,6 @@ static struct context_metadata table_id_md = {
     .data_size = sizeof(struct table_id_data),
 };
 
-OVS_UNUSED
 static int
 get_table_id(odp_port_t vport, uint32_t *table_id)
 {
@@ -327,7 +334,6 @@ get_table_id(odp_port_t vport, uint32_t *table_id)
                                        table_id);
 }
 
-OVS_UNUSED
 static void
 put_table_id(uint32_t table_id)
 {
@@ -357,7 +363,6 @@ static struct context_metadata flow_miss_ctx_md = {
     .data_size = sizeof(struct flow_miss_ctx),
 };
 
-OVS_UNUSED
 static int
 get_flow_miss_ctx_id(struct flow_miss_ctx *flow_ctx_data,
                      uint32_t *miss_ctx_id)
@@ -370,7 +375,6 @@ get_flow_miss_ctx_id(struct flow_miss_ctx *flow_ctx_data,
                                        miss_ctx_id);
 }
 
-OVS_UNUSED
 static void
 put_flow_miss_ctx_id(uint32_t flow_ctx_id)
 {
@@ -381,6 +385,13 @@ static int
 find_flow_miss_ctx(int flow_ctx_id, struct flow_miss_ctx *ctx)
 {
     return get_context_data_by_id(&flow_miss_ctx_md, flow_ctx_id, ctx);
+}
+
+static void
+put_action_resources(struct act_resources *act_resources)
+{
+    put_table_id(act_resources->next_table_id);
+    put_flow_miss_ctx_id(act_resources->flow_miss_ctx_id);
 }
 
 /*
@@ -754,6 +765,13 @@ dump_flow_action(struct ds *s, const struct rte_flow_action *actions)
         ds_put_cstr(s, "rte flow vxlan-encap action:\n");
         while (items && items->type != RTE_FLOW_ITEM_TYPE_END) {
             dump_flow_pattern(s, items++);
+        }
+    } else if (actions->type == RTE_FLOW_ACTION_TYPE_JUMP) {
+        const struct rte_flow_action_jump *jump = actions->conf;
+
+        ds_put_cstr(s, "rte flow jump action\n");
+        if (jump) {
+            ds_put_format(s, "  Jump: group=%"PRIu32"\n", jump->group);
         }
     } else {
         ds_put_format(s, "unknown rte flow action (%d)\n", actions->type);
@@ -1434,11 +1452,52 @@ parse_clone_actions(struct netdev *netdev,
     return 0;
 }
 
+static void
+add_mark_action(struct flow_actions *actions,
+                uint32_t mark_id)
+{
+    struct rte_flow_action_mark *mark = xzalloc(sizeof *mark);
+
+    mark->id = mark_id;
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_MARK, mark);
+}
+
+static void
+add_jump_action(struct flow_actions *actions, uint32_t group)
+{
+    struct rte_flow_action_jump *jump = xzalloc (sizeof *jump);
+
+    jump->group = group;
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_JUMP, jump);
+}
+
+static int
+add_tnl_pop_action(struct flow_actions *actions,
+                   const struct nlattr *nla,
+                   struct act_resources *act_resources)
+{
+    struct flow_miss_ctx miss_ctx;
+    odp_port_t port;
+
+    port = nl_attr_get_odp_port(nla);
+    miss_ctx.vport = port;
+    if (get_flow_miss_ctx_id(&miss_ctx, &act_resources->flow_miss_ctx_id)) {
+        return -1;
+    }
+    add_mark_action(actions, act_resources->flow_miss_ctx_id);
+    if (get_table_id(port, &act_resources->next_table_id)) {
+        return -1;
+    }
+    add_jump_action(actions, act_resources->next_table_id);
+    return 0;
+}
+
 static int
 parse_flow_actions(struct netdev *netdev,
                    struct flow_actions *actions,
                    struct nlattr *nl_actions,
-                   size_t nl_actions_len)
+                   size_t nl_actions_len,
+                   struct act_resources *act_resources)
 {
     struct nlattr *nla;
     size_t left;
@@ -1469,6 +1528,10 @@ parse_flow_actions(struct netdev *netdev,
                                     clone_actions_len)) {
                 return -1;
             }
+        } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_TUNNEL_POP) {
+            if (add_tnl_pop_action(actions, nla, act_resources)) {
+                return -1;
+            }
         } else {
             VLOG_DBG_RL(&rl, "Unsupported action type %d", nl_attr_type(nla));
             return -1;
@@ -1488,7 +1551,8 @@ static struct rte_flow *
 netdev_offload_dpdk_actions(struct netdev *netdev,
                             struct flow_patterns *patterns,
                             struct nlattr *nl_actions,
-                            size_t actions_len)
+                            size_t actions_len,
+                            struct act_resources *act_resources)
 {
     const struct rte_flow_attr flow_attr = { .ingress = 1, .transfer = 1 };
     struct flow_actions actions = { .actions = NULL, .cnt = 0 };
@@ -1496,7 +1560,8 @@ netdev_offload_dpdk_actions(struct netdev *netdev,
     struct rte_flow_error error;
     int ret;
 
-    ret = parse_flow_actions(netdev, &actions, nl_actions, actions_len);
+    ret = parse_flow_actions(netdev, &actions, nl_actions, actions_len,
+                             act_resources);
     if (ret) {
         goto out;
     }
@@ -1516,9 +1581,12 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
                              struct offload_info *info)
 {
     struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
+    struct act_resources act_resources;
     bool actions_offloaded = true;
     struct rte_flow *flow;
     int ret = 0;
+
+    memset(&act_resources, 0, sizeof act_resources);
 
     ret = parse_flow_match(&patterns, match);
     if (ret) {
@@ -1526,7 +1594,7 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
     }
 
     flow = netdev_offload_dpdk_actions(netdev, &patterns, nl_actions,
-                                       actions_len);
+                                       actions_len, &act_resources);
     if (!flow) {
         /* If we failed to offload the rule actions fallback to MARK+RSS
          * actions.
@@ -1540,11 +1608,14 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
         ret = -1;
         goto out;
     }
-    ufid_to_rte_flow_associate(ufid, flow, actions_offloaded);
+    ufid_to_rte_flow_associate(ufid, flow, actions_offloaded, &act_resources);
     VLOG_DBG("%s: installed flow %p by ufid "UUID_FMT"\n",
              netdev_get_name(netdev), flow, UUID_ARGS((struct uuid *)ufid));
 
 out:
+    if (ret) {
+        put_action_resources(&act_resources);
+    }
     free_flow_patterns(&patterns);
     return ret;
 }
@@ -1637,6 +1708,7 @@ netdev_offload_dpdk_destroy_flow(struct netdev *netdev,
                       UUID_ARGS((struct uuid *) ufid));
             return -1;
         }
+        put_action_resources(&data->act_resources);
         ufid_to_rte_flow_disassociate(data);
         VLOG_DBG("%s: removed rte flow %p associated with ufid " UUID_FMT "\n",
                  netdev_get_name(netdev), rte_flow,
