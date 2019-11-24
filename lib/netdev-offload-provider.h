@@ -87,7 +87,7 @@ struct netdev_flow_api {
      * Return 0 if successful, otherwise returns a positive errno value. */
     int (*hw_miss_packet_recover)(uint32_t flow_miss_ctx_id,
                                   struct dp_packet *,
-                                  const struct dpif_class *dpif_class);
+                                  const char *dpif_type_str);
 
     /* Initializies the netdev flow api.
      * Return 0 if successful, otherwise returns a positive errno value. */

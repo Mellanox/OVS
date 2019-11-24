@@ -418,6 +418,34 @@ netdev_offload_dpdk_flow_dump_next(struct netdev_flow_dump *dump,
     return true;
 }
 
+static int
+netdev_offload_dpdk_hw_miss_packet_recover(uint32_t flow_miss_ctx_id,
+                                           struct dp_packet *packet,
+                                           const char *dpif_type_str)
+{
+    struct flow_miss_ctx *flow_miss_ctx;
+    struct netdev *netdev;
+
+    flow_miss_ctx = find_flow_miss_ctx(flow_miss_ctx_id);
+    if (!flow_miss_ctx) {
+        return -1;
+    }
+    parse_tcp_flags(packet);
+    pkt_metadata_init(&packet->md, flow_miss_ctx->vport);
+
+    netdev = netdev_ports_get(flow_miss_ctx->vport, dpif_type_str);
+    if (netdev) {
+        if (netdev->netdev_class->pop_header) {
+            netdev->netdev_class->pop_header(packet);
+            dp_packet_reset_offload(packet);
+            packet->md.in_port.odp_port = flow_miss_ctx->vport;
+        }
+        netdev_close(netdev);
+    }
+
+    return 0;
+}
+
 const struct netdev_flow_api netdev_offload_dpdk = {
     .type = "dpdk_flow_api",
     .flow_flush = netdev_offload_dpdk_flow_flush,
@@ -425,4 +453,5 @@ const struct netdev_flow_api netdev_offload_dpdk = {
     .flow_del = netdev_offload_dpdk_flow_del,
     .init_flow_api = netdev_offload_dpdk_init_flow_api,
     .flow_dump_next = netdev_offload_dpdk_flow_dump_next,
+    .hw_miss_packet_recover = netdev_offload_dpdk_hw_miss_packet_recover,
 };
