@@ -109,22 +109,14 @@ ufid_to_rte_flow_associate(const ovs_u128 *ufid,
 }
 
 static inline void
-ufid_to_rte_flow_disassociate(const ovs_u128 *ufid)
+ufid_to_rte_flow_disassociate(struct ufid_to_rte_flow_data *data)
 {
-    size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
-    struct ufid_to_rte_flow_data *data;
+    size_t hash;
 
-    CMAP_FOR_EACH_WITH_HASH (data, node, hash, &ufid_to_rte_flow) {
-        if (ovs_u128_equals(*ufid, data->ufid)) {
-            cmap_remove(&ufid_to_rte_flow,
-                        CONST_CAST(struct cmap_node *, &data->node), hash);
-            ovsrcu_postpone(free, data);
-            return;
-        }
-    }
-
-    VLOG_WARN("ufid "UUID_FMT" is not associated with an rte flow\n",
-              UUID_ARGS((struct uuid *) ufid));
+    hash = hash_bytes(&data->ufid, sizeof data->ufid, 0);
+    cmap_remove(&ufid_to_rte_flow,
+                CONST_CAST(struct cmap_node *, &data->node), hash);
+    ovsrcu_postpone(free, data);
 }
 
 /* A generic data structure used for mapping data to id and id to data. The
@@ -1634,11 +1626,18 @@ netdev_offload_dpdk_destroy_flow(struct netdev *netdev,
                                  const ovs_u128 *ufid,
                                  struct rte_flow *rte_flow)
 {
+    struct ufid_to_rte_flow_data *data;
     struct rte_flow_error error;
     int ret = netdev_dpdk_rte_flow_destroy(netdev, rte_flow, &error);
 
     if (ret == 0) {
-        ufid_to_rte_flow_disassociate(ufid);
+        data = ufid_to_rte_flow_data_find(ufid);
+        if (!data) {
+            VLOG_WARN("ufid "UUID_FMT" is not associated with an rte flow\n",
+                      UUID_ARGS((struct uuid *) ufid));
+            return -1;
+        }
+        ufid_to_rte_flow_disassociate(data);
         VLOG_DBG("%s: removed rte flow %p associated with ufid " UUID_FMT "\n",
                  netdev_get_name(netdev), rte_flow,
                  UUID_ARGS((struct uuid *)ufid));
