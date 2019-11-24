@@ -48,7 +48,8 @@ struct flow_action_resources {
 void
 netdev_dpdk_flow_patterns_free(struct flow_patterns *patterns);
 int
-netdev_dpdk_flow_patterns_add(struct flow_patterns *patterns,
+netdev_dpdk_flow_patterns_add(struct netdev *netdev,
+                              struct flow_patterns *patterns,
                               struct match *match);
 void
 netdev_dpdk_flow_actions_free(struct flow_actions *actions);

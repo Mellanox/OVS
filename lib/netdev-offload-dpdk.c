@@ -239,7 +239,7 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
 
     memcpy(&consumed_match, match, sizeof consumed_match);
 
-    ret = netdev_dpdk_flow_patterns_add(&patterns, &consumed_match);
+    ret = netdev_dpdk_flow_patterns_add(netdev, &patterns, &consumed_match);
     if (ret) {
         VLOG_WARN("Adding rte match patterns for flow ufid"UUID_FMT" failed",
                   UUID_ARGS((struct uuid *)ufid));

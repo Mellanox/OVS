@@ -174,6 +174,31 @@ ds_put_flow_pattern(struct ds *s, const struct rte_flow_item *item)
         } else {
             ds_put_cstr(s, "  Mask = null\n");
         }
+    } else if (item->type == RTE_FLOW_ITEM_TYPE_VXLAN) {
+        const struct rte_flow_item_vxlan *vxlan_spec = item->spec;
+        const struct rte_flow_item_vxlan *vxlan_mask = item->mask;
+
+        ds_put_cstr(s, "rte flow vxlan pattern:\n");
+        if (vxlan_spec) {
+            ds_put_format(s,
+                    "  Spec: flags=0x%x, vni=%d\n",
+                    vxlan_spec->flags,
+                    (vxlan_spec->vni[0] << 16) |
+                    (vxlan_spec->vni[1] << 8) |
+                    (vxlan_spec->vni[2] << 0));
+        } else {
+            ds_put_cstr(s, "  Spec = null\n");
+        }
+        if (vxlan_mask) {
+            ds_put_format(s,
+                    "  Mask: flags=0x%x, vni=0x%03x\n",
+                    vxlan_mask->flags,
+                    (vxlan_mask->vni[0] << 16) |
+                    (vxlan_mask->vni[1] << 8) |
+                    (vxlan_mask->vni[2] << 0));
+        } else {
+            ds_put_cstr(s, "  Mask = null\n");
+        }
     } else if (item->type == RTE_FLOW_ITEM_TYPE_SCTP) {
         const struct rte_flow_item_sctp *sctp_spec = item->spec;
         const struct rte_flow_item_sctp *sctp_mask = item->mask;
@@ -480,8 +505,159 @@ netdev_dpdk_flow_actions_add_mark_rss(struct flow_actions *actions,
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_END, NULL);
 }
 
+static uint8_t
+netdev_dpdk_flow_patterns_tnl_ip_add(struct flow_patterns *patterns,
+                                     struct match *match)
+{
+    struct flow *consumed_masks;
+    uint8_t proto = 0xFF;
+
+    consumed_masks = &match->wc.masks;
+    /* IP v4 */
+    if (match->wc.masks.tunnel.ip_src || match->wc.masks.tunnel.ip_dst) {
+        struct rte_flow_item_ipv4 *spec, *mask;
+
+        spec = xzalloc(sizeof *spec);
+        mask = xzalloc(sizeof *mask);
+
+        spec->hdr.type_of_service = match->flow.tunnel.ip_tos;
+        spec->hdr.time_to_live    = match->flow.tunnel.ip_ttl;
+        spec->hdr.next_proto_id   = IPPROTO_UDP;
+        spec->hdr.src_addr        = match->flow.tunnel.ip_src;
+        spec->hdr.dst_addr        = match->flow.tunnel.ip_dst;
+
+        mask->hdr.type_of_service = match->wc.masks.tunnel.ip_tos;
+        mask->hdr.time_to_live    = match->wc.masks.tunnel.ip_ttl;
+        mask->hdr.next_proto_id   = 0xffu;
+        mask->hdr.src_addr        = match->wc.masks.tunnel.ip_src;
+        mask->hdr.dst_addr        = match->wc.masks.tunnel.ip_dst;
+
+        consumed_masks->tunnel.ip_tos = 0;
+        consumed_masks->tunnel.ip_ttl = 0;
+        consumed_masks->tunnel.ip_src = 0;
+        consumed_masks->tunnel.ip_dst = 0;
+
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV4, spec, mask);
+
+        /* Save proto for L4 protocol setup. */
+        proto = spec->hdr.next_proto_id & mask->hdr.next_proto_id;
+    }
+
+    /* IP v6 */
+    if (!is_all_zeros(&match->wc.masks.tunnel.ipv6_src,
+                      sizeof(struct in6_addr)) ||
+        !is_all_zeros(&match->wc.masks.tunnel.ipv6_dst,
+                      sizeof(struct in6_addr))) {
+        struct rte_flow_item_ipv6 *spec, *mask;
+
+        spec = xzalloc(sizeof *spec);
+        mask = xzalloc(sizeof *mask);
+
+        spec->hdr.proto = IPPROTO_UDP;
+        spec->hdr.hop_limits = match->flow.tunnel.ip_ttl;
+        memcpy(spec->hdr.src_addr, &match->flow.tunnel.ipv6_src,
+               sizeof spec->hdr.src_addr);
+        memcpy(spec->hdr.dst_addr, &match->flow.tunnel.ipv6_dst,
+               sizeof spec->hdr.dst_addr);
+
+        mask->hdr.proto = 0xffu;
+        mask->hdr.hop_limits = match->wc.masks.tunnel.ip_ttl;
+        memcpy(mask->hdr.src_addr, &match->wc.masks.tunnel.ipv6_src,
+               sizeof mask->hdr.src_addr);
+        memcpy(mask->hdr.dst_addr, &match->wc.masks.tunnel.ipv6_dst,
+               sizeof mask->hdr.dst_addr);
+
+        consumed_masks->tunnel.ip_ttl = 0;
+        memset(&consumed_masks->tunnel.ipv6_src, 0,
+               sizeof consumed_masks->tunnel.ipv6_src);
+        memset(&consumed_masks->tunnel.ipv6_dst, 0,
+               sizeof consumed_masks->tunnel.ipv6_dst);
+
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV6, spec, mask);
+
+        /* Save proto for L4 protocol setup */
+        proto = spec->hdr.proto & mask->hdr.proto;
+    }
+
+    if (proto == 0xFF) {
+        VLOG_ERR_RL(&error_rl, "Tunnel L3 protocol is neither IPv4 nor IPv6");
+    }
+
+    return proto;
+}
+
+static void
+netdev_dpdk_flow_patterns_tnl_udp_add(struct flow_patterns *patterns,
+                                      struct match *match)
+{
+    struct flow *consumed_masks;
+    struct rte_flow_item_udp *spec, *mask;
+
+    consumed_masks = &match->wc.masks;
+
+    spec = xzalloc(sizeof *spec);
+    mask = xzalloc(sizeof *mask);
+
+    spec->hdr.src_port = match->flow.tunnel.tp_src;
+    spec->hdr.dst_port = match->flow.tunnel.tp_dst;
+
+    mask->hdr.src_port = match->wc.masks.tunnel.tp_src;
+    mask->hdr.dst_port = match->wc.masks.tunnel.tp_dst;
+
+    consumed_masks->tunnel.tp_src = 0;
+    consumed_masks->tunnel.tp_dst = 0;
+
+    add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_UDP, spec, mask);
+}
+
+static int
+netdev_dpdk_flow_patterns_vxlan_add(struct flow_patterns *patterns,
+                                    struct match *match)
+{
+    struct rte_flow_item_vxlan *vx_spec, *vx_mask;
+    uint8_t *vni_spec8, *vni_mask8;
+    uint32_t vni_spec, vni_mask;
+    struct flow *consumed_masks;
+    uint8_t proto;
+
+    proto = netdev_dpdk_flow_patterns_tnl_ip_add(patterns, match);
+    if (proto == IPPROTO_UDP) {
+        netdev_dpdk_flow_patterns_tnl_udp_add(patterns, match);
+    } else {
+        VLOG_ERR("flow on vxlan port, but protocol is %d "
+                 "where UDP is expected", proto);
+        return -1;
+    }
+
+    consumed_masks = &match->wc.masks;
+    /* VXLAN */
+    vni_spec = (uint32_t)(match->flow.tunnel.tun_id >> 32);
+    vni_mask = (uint32_t)(match->wc.masks.tunnel.tun_id >> 32);
+    vni_spec8 = (uint8_t *)&vni_spec;
+    vni_mask8 = (uint8_t *)&vni_mask;
+
+    vx_spec = xzalloc(sizeof *vx_spec);
+    vx_mask = xzalloc(sizeof *vx_mask);
+
+    vx_spec->flags  = match->flow.tunnel.flags;
+    vx_spec->vni[0] = vni_spec8[1];
+    vx_spec->vni[1] = vni_spec8[2];
+    vx_spec->vni[2] = vni_spec8[3];
+
+    vx_mask->vni[0] = vni_mask8[1];
+    vx_mask->vni[1] = vni_mask8[2];
+    vx_mask->vni[2] = vni_mask8[3];
+
+    consumed_masks->tunnel.tun_id = 0;
+    consumed_masks->tunnel.flags = 0;
+
+    add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_VXLAN, vx_spec, vx_mask);
+    return 0;
+}
+
 int
-netdev_dpdk_flow_patterns_add(struct flow_patterns *patterns,
+netdev_dpdk_flow_patterns_add(struct netdev *netdev,
+                              struct flow_patterns *patterns,
                               struct match *match)
 {
     struct flow *consumed_masks;
@@ -490,6 +666,12 @@ netdev_dpdk_flow_patterns_add(struct flow_patterns *patterns,
     int ret = 0;
 
     consumed_masks = &match->wc.masks;
+
+    if (!strcmp(netdev_get_type(netdev), "vxlan") &&
+        netdev_dpdk_flow_patterns_vxlan_add(patterns, match)) {
+        ret = -1;
+        goto out;
+    }
 
     memset(&zero_masks, 0, sizeof zero_masks);
     memset(&consumed_masks->in_port, 0, sizeof consumed_masks->in_port);
