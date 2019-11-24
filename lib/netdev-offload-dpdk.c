@@ -385,7 +385,6 @@ put_flow_miss_ctx_id(uint32_t flow_ctx_id)
     put_context_data_by_id(&flow_miss_ctx_md, flow_ctx_id);
 }
 
-OVS_UNUSED
 static int
 find_flow_miss_ctx(int flow_ctx_id, struct flow_miss_ctx *ctx)
 {
@@ -1762,10 +1761,43 @@ out:
     return ret;
 }
 
+static int
+netdev_offload_dpdk_hw_miss_packet_recover(struct netdev *netdev,
+                                           uint32_t flow_miss_ctx_id,
+                                           struct dp_packet *packet)
+{
+    struct flow_miss_ctx flow_miss_ctx;
+    struct netdev *vport_netdev;
+
+    if (find_flow_miss_ctx(flow_miss_ctx_id, &flow_miss_ctx)) {
+        return -1;
+    }
+
+    if (flow_miss_ctx.vport != ODPP_NONE) {
+        vport_netdev = netdev_ports_get(flow_miss_ctx.vport,
+                                        netdev->dpif_type);
+        if (vport_netdev) {
+            pkt_metadata_init(&packet->md, flow_miss_ctx.vport);
+            if (vport_netdev->netdev_class->pop_header) {
+                vport_netdev->netdev_class->pop_header(packet);
+                dp_packet_reset_offload(packet);
+                packet->md.in_port.odp_port = flow_miss_ctx.vport;
+            } else {
+                VLOG_ERR("vport nedtdev=%s with no pop_header method",
+                         netdev_get_name(vport_netdev));
+            }
+            netdev_close(vport_netdev);
+        }
+    }
+
+    return 0;
+}
+
 const struct netdev_flow_api netdev_offload_dpdk = {
     .type = "dpdk_flow_api",
     .flow_put = netdev_offload_dpdk_flow_put,
     .flow_del = netdev_offload_dpdk_flow_del,
     .init_flow_api = netdev_offload_dpdk_init_flow_api,
     .flow_get = netdev_offload_dpdk_flow_get,
+    .hw_miss_packet_recover = netdev_offload_dpdk_hw_miss_packet_recover,
 };
