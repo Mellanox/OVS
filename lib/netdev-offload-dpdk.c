@@ -444,13 +444,6 @@ netdev_offload_dpdk_flow_flush(struct netdev *netdev)
 static int
 netdev_offload_dpdk_init_flow_api(struct netdev *netdev)
 {
-    if (netdev_vport_is_vport_class(netdev->netdev_class)
-        && !strcmp(netdev_get_dpif_type(netdev), "system")) {
-        VLOG_DBG("%s: vport belongs to the system datapath. Skipping.",
-                 netdev_get_name(netdev));
-        return EOPNOTSUPP;
-    }
-
     return netdev_dpdk_flow_api_supported(netdev) ? 0 : EOPNOTSUPP;
 }
 
