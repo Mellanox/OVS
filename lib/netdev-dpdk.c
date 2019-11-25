@@ -4432,6 +4432,12 @@ netdev_dpdk_flow_api_supported(struct netdev *netdev)
     struct netdev_dpdk *dev;
     bool ret = false;
 
+    if (netdev_vport_is_vport_class(netdev->netdev_class) &&
+        !strcmp(netdev_get_dpif_type(netdev), "netdev")) {
+            ret = true;
+            goto out;
+    }
+
     if (!is_dpdk_class(netdev->netdev_class)) {
         goto out;
     }
