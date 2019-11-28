@@ -292,7 +292,7 @@ netdev_offload_flow_mark_alloc(void)
     ovs_mutex_lock(&mark_pool_mutex);
     if (!mark_pool) {
         /* Haven't initiated yet, do it here */
-        mark_pool = id_pool_create(0, MAX_FLOW_MARK);
+        mark_pool = id_pool_create(1, MAX_FLOW_MARK);
     }
 
     if (id_pool_alloc_id(mark_pool, &mark)) {
