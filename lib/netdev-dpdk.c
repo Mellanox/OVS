@@ -48,6 +48,7 @@
 #include "dpif-netdev.h"
 #include "fatal-signal.h"
 #include "netdev-provider.h"
+#include "netdev-dpdk-vdpa.h"
 #include "netdev-vport.h"
 #include "odp-util.h"
 #include "openvswitch/dynamic-string.h"
@@ -139,6 +140,9 @@ typedef uint16_t dpdk_port_t;
 #define VHOST_ENQ_RETRY_MAX 32
 /* Legacy default value for vhost tx retries. */
 #define VHOST_ENQ_RETRY_DEF 8
+
+/* Size of VDPA custom stats. */
+#define VDPA_CUSTOM_STATS_SIZE          4
 
 #define IF_NAME_SZ (PATH_MAX > IFNAMSIZ ? PATH_MAX : IFNAMSIZ)
 
@@ -480,6 +484,8 @@ struct netdev_dpdk {
         int rte_xstats_ids_size;
         uint64_t *rte_xstats_ids;
     );
+
+    struct netdev_dpdk_vdpa_relay *relay;
 };
 
 struct netdev_rxq_dpdk {
@@ -1368,6 +1374,30 @@ netdev_dpdk_construct(struct netdev *netdev)
     return err;
 }
 
+static int
+netdev_dpdk_vdpa_construct(struct netdev *netdev)
+{
+    struct netdev_dpdk *dev;
+    int err;
+
+    err = netdev_dpdk_construct(netdev);
+    if (err) {
+        VLOG_ERR("netdev_dpdk_construct failed. Port: %s\n", netdev->name);
+        goto out;
+    }
+
+    ovs_mutex_lock(&dpdk_mutex);
+    dev = netdev_dpdk_cast(netdev);
+    dev->relay = netdev_dpdk_vdpa_alloc_relay();
+    if (!dev->relay) {
+        err = ENOMEM;
+    }
+
+    ovs_mutex_unlock(&dpdk_mutex);
+out:
+    return err;
+}
+
 static void
 common_destruct(struct netdev_dpdk *dev)
     OVS_REQUIRES(dpdk_mutex)
@@ -1448,6 +1478,19 @@ dpdk_vhost_driver_unregister(struct netdev_dpdk *dev OVS_UNUSED,
     OVS_EXCLUDED(dev->mutex)
 {
     return rte_vhost_driver_unregister(vhost_id);
+}
+
+static void
+netdev_dpdk_vdpa_destruct(struct netdev *netdev)
+{
+    struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
+
+    ovs_mutex_lock(&dpdk_mutex);
+    netdev_dpdk_vdpa_destruct_impl(dev->relay);
+    rte_free(dev->relay);
+    ovs_mutex_unlock(&dpdk_mutex);
+
+    netdev_dpdk_destruct(netdev);
 }
 
 static void
@@ -1921,6 +1964,47 @@ out:
 }
 
 static int
+netdev_dpdk_vdpa_set_config(struct netdev *netdev, const struct smap *args,
+                            char **errp)
+{
+    struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
+    const char *vdpa_accelerator_devargs =
+                smap_get(args, "vdpa-accelerator-devargs");
+    const char *vdpa_socket_path =
+                smap_get(args, "vdpa-socket-path");
+    int err = 0;
+
+    if ((vdpa_accelerator_devargs == NULL) || (vdpa_socket_path == NULL)) {
+        VLOG_ERR("netdev_dpdk_vdpa_set_config failed."
+                 "Required arguments are missing for VDPA port %s",
+                 netdev->name);
+        goto free_relay;
+    }
+
+    err = netdev_dpdk_set_config(netdev, args, errp);
+    if (err) {
+        VLOG_ERR("netdev_dpdk_set_config failed. Port: %s", netdev->name);
+        goto free_relay;
+    }
+
+    err = netdev_dpdk_vdpa_config_impl(dev->relay, dev->port_id,
+                                       vdpa_socket_path,
+                                       vdpa_accelerator_devargs);
+    if (err) {
+        VLOG_ERR("netdev_dpdk_vdpa_config_impl failed. Port %s",
+                 netdev->name);
+        goto free_relay;
+    }
+
+    goto out;
+
+free_relay:
+    rte_free(dev->relay);
+out:
+    return err;
+}
+
+static int
 netdev_dpdk_ring_set_config(struct netdev *netdev, const struct smap *args,
                             char **errp OVS_UNUSED)
 {
@@ -2319,6 +2403,23 @@ netdev_dpdk_rxq_recv(struct netdev_rxq *rxq, struct dp_packet_batch *batch,
     }
 
     return 0;
+}
+
+static int
+netdev_dpdk_vdpa_rxq_recv(struct netdev_rxq *rxq,
+                          struct dp_packet_batch *batch,
+                          int *qfill)
+{
+    struct netdev_dpdk *dev = netdev_dpdk_cast(rxq->netdev);
+    int fwd_rx;
+    int ret;
+
+    fwd_rx = netdev_dpdk_vdpa_rxq_recv_impl(dev->relay, rxq->queue_id);
+    ret = netdev_dpdk_rxq_recv(rxq, batch, qfill);
+    if ((ret == EAGAIN) && fwd_rx) {
+        return 0;
+    }
+    return ret;
 }
 
 static inline int
@@ -2950,6 +3051,29 @@ netdev_dpdk_get_sw_custom_stats(const struct netdev *netdev,
 
     custom_stats->size = n;
     return 0;
+}
+
+static int
+netdev_dpdk_vdpa_get_custom_stats(const struct netdev *netdev,
+                                  struct netdev_custom_stats *custom_stats)
+{
+    struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
+    int err = 0;
+
+    ovs_mutex_lock(&dev->mutex);
+
+    custom_stats->size = VDPA_CUSTOM_STATS_SIZE;
+    custom_stats->counters = xcalloc(custom_stats->size,
+                                     sizeof *custom_stats->counters);
+    err = netdev_dpdk_vdpa_get_custom_stats_impl(dev->relay,
+                                                 custom_stats);
+    if (err) {
+        VLOG_ERR("netdev_dpdk_vdpa_get_custom_stats_impl failed."
+                 "Port %s\n", netdev->name);
+    }
+
+    ovs_mutex_unlock(&dev->mutex);
+    return err;
 }
 
 static int
@@ -4336,6 +4460,31 @@ netdev_dpdk_vhost_reconfigure(struct netdev *netdev)
 }
 
 static int
+netdev_dpdk_vdpa_reconfigure(struct netdev *netdev)
+{
+    struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
+    int err;
+
+    err = netdev_dpdk_reconfigure(netdev);
+    if (err) {
+        VLOG_ERR("netdev_dpdk_reconfigure failed. Port %s", netdev->name);
+        goto out;
+    }
+
+    ovs_mutex_lock(&dev->mutex);
+    err = netdev_dpdk_vdpa_update_relay(dev->relay, dev->dpdk_mp->mp,
+                                        dev->up.n_rxq);
+    if (err) {
+        VLOG_ERR("netdev_dpdk_vdpa_update_relay failed. Port %s",
+                 netdev->name);
+    }
+
+    ovs_mutex_unlock(&dev->mutex);
+out:
+    return err;
+}
+
+static int
 netdev_dpdk_vhost_client_reconfigure(struct netdev *netdev)
 {
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
@@ -4555,6 +4704,18 @@ static const struct netdev_class dpdk_vhost_client_class = {
     .rxq_enabled = netdev_dpdk_vhost_rxq_enabled,
 };
 
+static const struct netdev_class dpdk_vdpa_class = {
+    .type = "dpdkvdpa",
+    NETDEV_DPDK_CLASS_COMMON,
+    .construct = netdev_dpdk_vdpa_construct,
+    .destruct = netdev_dpdk_vdpa_destruct,
+    .rxq_recv = netdev_dpdk_vdpa_rxq_recv,
+    .set_config = netdev_dpdk_vdpa_set_config,
+    .reconfigure = netdev_dpdk_vdpa_reconfigure,
+    .get_custom_stats = netdev_dpdk_vdpa_get_custom_stats,
+    .send = netdev_dpdk_eth_send
+};
+
 void
 netdev_dpdk_register(void)
 {
@@ -4562,4 +4723,5 @@ netdev_dpdk_register(void)
     netdev_register_provider(&dpdk_ring_class);
     netdev_register_provider(&dpdk_vhost_class);
     netdev_register_provider(&dpdk_vhost_client_class);
+    netdev_register_provider(&dpdk_vdpa_class);
 }
