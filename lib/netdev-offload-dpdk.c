@@ -2472,6 +2472,63 @@ add_vxlan_decap_action(struct flow_actions *actions)
 }
 
 static int
+parse_ct_actions(struct flow_actions *actions,
+                 const struct nlattr *ct_actions,
+                 const size_t ct_actions_len,
+                 struct act_vars *act_vars)
+{
+    const struct nlattr *cta;
+    unsigned int ctleft;
+
+    act_vars->ct_mode = CT_MODE_CT;
+    NL_ATTR_FOR_EACH_UNSAFE (cta, ctleft, ct_actions, ct_actions_len) {
+        if (nl_attr_type(cta) == OVS_CT_ATTR_COMMIT ||
+            nl_attr_type(cta) == OVS_CT_ATTR_FORCE_COMMIT) {
+            VLOG_DBG_RL(&rl,
+                        "Don't support ct-commit action, action type: %d",
+                        nl_attr_type(cta));
+            return -1;
+        } else if (nl_attr_type(cta) == OVS_CT_ATTR_ZONE) {
+            add_action_set_reg_field(actions, REG_FIELD_CT_ZONE,
+                                     nl_attr_get_u16(cta), 0xFFFF);
+        } else if (nl_attr_type(cta) == OVS_CT_ATTR_MARK) {
+            const uint32_t *key = nl_attr_get(cta);
+            const uint32_t *mask = key + 1;
+
+            add_action_set_reg_field(actions, REG_FIELD_CT_MARK, *key, *mask);
+        } else if (nl_attr_type(cta) == OVS_CT_ATTR_LABELS) {
+            const ovs_32aligned_u128 *key = nl_attr_get(cta);
+            const ovs_32aligned_u128 *mask = key + 1;
+
+            if (mask->u32[0]) {
+                add_action_set_reg_field(actions, REG_FIELD_CT_LABEL0,
+                                         key->u32[0], mask->u32[0]);
+            }
+            if (mask->u32[1]) {
+                add_action_set_reg_field(actions, REG_FIELD_CT_LABEL1,
+                                         key->u32[1], mask->u32[1]);
+            }
+            if (mask->u32[2]) {
+                add_action_set_reg_field(actions, REG_FIELD_CT_LABEL2,
+                                         key->u32[2], mask->u32[2]);
+            }
+            if (mask->u32[3]) {
+                add_action_set_reg_field(actions, REG_FIELD_CT_LABEL3,
+                                         key->u32[3], mask->u32[3]);
+            }
+        } else if (nl_attr_type(cta) == OVS_CT_ATTR_NAT) {
+            act_vars->ct_mode = CT_MODE_CT_NAT;
+        } else {
+            VLOG_DBG_RL(&rl,
+                        "Ignored nested action inside ct(), action type: %d",
+                        nl_attr_type(cta));
+            continue;
+        }
+    }
+    return 0;
+}
+
+static int
 create_pre_post_ct(struct netdev *netdev OVS_UNUSED,
                    const struct rte_flow_attr *attr OVS_UNUSED,
                    const struct rte_flow_item *items OVS_UNUSED,
@@ -2555,6 +2612,14 @@ parse_flow_actions(struct netdev *netdev,
             }
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_RECIRC) {
             if (add_recirc_action(actions, nla, act_resources, act_vars)) {
+                return -1;
+            }
+        } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_CT) {
+            const struct nlattr *ct_actions = nl_attr_get(nla);
+            size_t ct_actions_len = nl_attr_get_size(nla);
+
+            if (parse_ct_actions(actions, ct_actions, ct_actions_len,
+                                 act_vars)) {
                 return -1;
             }
         } else {
