@@ -31,6 +31,7 @@
 #include "netdev-linux.h"
 #include "netdev-offload-provider.h"
 #include "netdev-provider.h"
+#include "netdev-vport.h"
 #include "netlink.h"
 #include "netlink-socket.h"
 #include "odp-netlink.h"
@@ -1642,6 +1643,13 @@ netdev_tc_init_flow_api(struct netdev *netdev)
     uint32_t block_id = 0;
     int ifindex;
     int error;
+
+    if (netdev_vport_is_vport_class(netdev->netdev_class)
+        && strcmp(netdev_get_dpif_type(netdev), "system")) {
+        VLOG_DBG("%s: vport doesn't belong to the system datapath. Skipping.",
+                 netdev_get_name(netdev));
+        return EOPNOTSUPP;
+    }
 
     ifindex = netdev_get_ifindex(netdev);
     if (ifindex < 0) {
