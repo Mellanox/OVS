@@ -2253,10 +2253,11 @@ static int
 mark_to_flow_disassociate(struct dp_netdev_pmd_thread *pmd,
                           struct dp_netdev_flow *flow)
 {
-    int ret = 0;
-    uint32_t mark = flow->mark;
+    const char *dpif_type_str = dpif_normalize_type(pmd->dp->class->type);
     struct cmap_node *mark_node = CONST_CAST(struct cmap_node *,
                                              &flow->mark_node);
+    uint32_t mark = flow->mark;
+    int ret = 0;
 
     cmap_remove(&flow_mark.mark_to_flow, mark_node, hash_int(mark, 0));
     flow->mark = INVALID_FLOW_MARK;
@@ -2269,7 +2270,7 @@ mark_to_flow_disassociate(struct dp_netdev_pmd_thread *pmd,
         struct netdev *port;
         odp_port_t in_port = flow->flow.in_port.odp_port;
 
-        port = netdev_ports_get(in_port, pmd->dp->class);
+        port = netdev_ports_get(in_port, dpif_type_str);
         if (port) {
             ret = netdev_flow_del(port, &flow->mega_ufid, NULL);
             netdev_close(port);
@@ -2374,6 +2375,7 @@ dp_netdev_flow_offload_put(struct dp_flow_offload_item *offload)
     struct dp_netdev_pmd_thread *pmd = offload->pmd;
     struct dp_netdev_flow *flow = offload->flow;
     odp_port_t in_port = flow->flow.in_port.odp_port;
+    const char *dpif_type_str = dpif_normalize_type(pmd->dp->class->type);
     bool modification = offload->op == DP_NETDEV_FLOW_OFFLOAD_OP_MOD;
     struct offload_info info;
     struct netdev *port;
@@ -2410,7 +2412,7 @@ dp_netdev_flow_offload_put(struct dp_flow_offload_item *offload)
     }
     info.flow_mark = mark;
 
-    port = netdev_ports_get(in_port, pmd->dp->class);
+    port = netdev_ports_get(in_port, dpif_type_str);
     if (!port || netdev_vport_is_vport_class(port->netdev_class)) {
         netdev_close(port);
         goto err_free;
