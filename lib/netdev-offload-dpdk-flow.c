@@ -485,12 +485,13 @@ netdev_dpdk_flow_patterns_add(struct flow_patterns *patterns,
                               struct match *match)
 {
     struct flow *consumed_masks;
-    struct flow zero_masks = {};
+    struct flow zero_masks;
     uint8_t proto = 0;
     int ret = 0;
 
     consumed_masks = &match->wc.masks;
 
+    memset(&zero_masks, 0, sizeof zero_masks);
     memset(&consumed_masks->in_port, 0, sizeof consumed_masks->in_port);
     if (match->flow.recirc_id != 0) {
         ret = -1;
