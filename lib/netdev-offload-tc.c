@@ -1368,8 +1368,8 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
         action = &flower.actions[flower.action_count];
         if (nl_attr_type(nla) == OVS_ACTION_ATTR_OUTPUT) {
             odp_port_t port = nl_attr_get_odp_port(nla);
-            struct netdev *outdev = netdev_ports_get(port, info->dpif_class);
-
+            struct netdev *outdev = netdev_ports_get(
+                                        port, netdev_get_dpif_type(netdev));
             action->out.ifindex_out = netdev_get_ifindex(outdev);
             action->out.ingress = is_internal_port(netdev_get_type(outdev));
             action->type = TC_ACT_OUTPUT;
