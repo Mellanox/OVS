@@ -40,6 +40,11 @@ struct flow_actions {
     int current_max;
 };
 
+struct flow_action_resources {
+    uint32_t table_id;
+    uint32_t flow_miss_ctx_id;
+};
+
 void
 netdev_dpdk_flow_patterns_free(struct flow_patterns *patterns);
 int
@@ -55,7 +60,8 @@ int
 netdev_dpdk_flow_actions_add(struct flow_actions *actions,
                              struct nlattr *nl_actions,
                              size_t nl_actions_len,
-                             struct offload_info *info);
+                             struct offload_info *info,
+                             struct flow_action_resources *act_resources);
 struct ds *
 netdev_dpdk_flow_ds_put_flow(struct ds *s,
                              const struct rte_flow_attr *attr,

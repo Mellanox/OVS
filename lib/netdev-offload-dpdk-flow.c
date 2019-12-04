@@ -365,6 +365,15 @@ ds_put_flow_action(struct ds *s, const struct rte_flow_action *actions)
         } else {
             ds_put_format(s, "  Set-%s-tcp/udp-port = null\n", dirstr);
         }
+    } else if (actions->type == RTE_FLOW_ACTION_TYPE_JUMP) {
+        const struct rte_flow_action_jump *jump = actions->conf;
+
+        ds_put_cstr(s, "rte flow jump action\n");
+        if (jump) {
+            ds_put_format(s,
+                          "  Jump: group=%"PRIu32"\n",
+                          jump->group);
+        }
     } else {
         ds_put_format(s, "unknown rte flow action (%d)\n", actions->type);
     }
@@ -870,11 +879,52 @@ netdev_dpdk_flow_add_clone_actions(struct flow_actions *actions,
     return 0;
 }
 
+static void
+netdev_dpdk_flow_add_mark_action(struct flow_actions *actions,
+                                 uint32_t mark_id)
+{
+    struct rte_flow_action_mark *mark = xzalloc(sizeof *mark);
+
+    mark->id = mark_id;
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_MARK, mark);
+}
+
+static void
+netdev_dpdk_flow_add_jump_action(struct flow_actions *actions, uint32_t group)
+{
+    struct rte_flow_action_jump *jump = xzalloc (sizeof *jump);
+
+    jump->group = group;
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_JUMP, jump);
+}
+
+static int
+netdev_dpdk_flow_add_tnl_pop_actions(struct flow_actions *actions,
+                                     const struct nlattr *nla,
+                                     struct flow_action_resources *act_resources)
+{
+    struct flow_miss_ctx miss_ctx;
+    odp_port_t port;
+
+    port = nl_attr_get_odp_port(nla);
+    miss_ctx.vport = port;
+    if (get_flow_miss_ctx_id(&miss_ctx, &act_resources->flow_miss_ctx_id)) {
+        return -1;
+    }
+    netdev_dpdk_flow_add_mark_action(actions, act_resources->flow_miss_ctx_id);
+    if (get_table_id(port, &act_resources->table_id)) {
+        return -1;
+    }
+    netdev_dpdk_flow_add_jump_action(actions, act_resources->table_id);
+    return 0;
+}
+
 int
 netdev_dpdk_flow_actions_add(struct flow_actions *actions,
                              struct nlattr *nl_actions,
                              size_t nl_actions_len,
-                             struct offload_info *info)
+                             struct offload_info *info,
+                             struct flow_action_resources *act_resources)
 {
     struct nlattr *nla;
     size_t left;
@@ -903,6 +953,11 @@ netdev_dpdk_flow_actions_add(struct flow_actions *actions,
             if (!(left <= NLA_ALIGN(nla->nla_len)) ||
                 netdev_dpdk_flow_add_clone_actions(actions, clone_actions,
                                                    clone_actions_len, info)) {
+                return -1;
+            }
+        } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_TUNNEL_POP) {
+            if (netdev_dpdk_flow_add_tnl_pop_actions(actions, nla,
+                                                     act_resources)) {
                 return -1;
             }
         } else {
