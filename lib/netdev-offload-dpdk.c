@@ -475,6 +475,17 @@ dump_flow_action(struct ds *s, const struct rte_flow_action *actions)
         } else {
             ds_put_format(s, "  Set-ipv6-%s = null\n", dirstr);
         }
+    } else if (actions->type == RTE_FLOW_ACTION_TYPE_RAW_ENCAP) {
+        const struct rte_flow_action_raw_encap *raw_encap = actions->conf;
+
+        ds_put_cstr(s, "rte flow raw-encap action:\n");
+        if (raw_encap) {
+            ds_put_format(s, "  Raw-encap: size=%ld\n", raw_encap->size);
+            ds_put_format(s, "  Raw-encap: encap=\n");
+            ds_put_hex_dump(s, raw_encap->data, raw_encap->size, 0, false);
+        } else {
+            ds_put_cstr(s, "  Raw-encap = null\n");
+        }
     } else {
         ds_put_format(s, "unknown rte flow action (%d)\n", actions->type);
     }
@@ -1119,6 +1130,44 @@ parse_set_actions(struct flow_actions *actions,
 }
 
 static int
+parse_clone_actions(struct netdev *netdev,
+                    struct flow_actions *actions,
+                    const struct nlattr *clone_actions,
+                    const size_t clone_actions_len)
+{
+    const struct nlattr *ca;
+    unsigned int cleft;
+
+    NL_ATTR_FOR_EACH_UNSAFE (ca, cleft, clone_actions, clone_actions_len) {
+        int clone_type = nl_attr_type(ca);
+
+        if (clone_type == OVS_ACTION_ATTR_TUNNEL_PUSH) {
+            const struct ovs_action_push_tnl *tnl_push = nl_attr_get(ca);
+            struct rte_flow_action_raw_encap *raw_encap =
+                xzalloc(sizeof *raw_encap);
+
+            raw_encap->data = (uint8_t *)tnl_push->header;
+            raw_encap->preserve = NULL;
+            raw_encap->size = tnl_push->header_len;
+
+            add_flow_action(actions, RTE_FLOW_ACTION_TYPE_RAW_ENCAP,
+                            raw_encap);
+        } else if (clone_type == OVS_ACTION_ATTR_OUTPUT) {
+            if (add_output_action(netdev, actions, ca)) {
+                return -1;
+            }
+        } else {
+            VLOG_DBG_RL(&rl,
+                        "Unsupported nested action inside clone(), "
+                        "action type: %d", clone_type);
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+static int
 parse_flow_actions(struct netdev *netdev,
                    struct flow_actions *actions,
                    struct nlattr *nl_actions,
@@ -1143,6 +1192,14 @@ parse_flow_actions(struct netdev *netdev,
 
             if (parse_set_actions(actions, set_actions, set_actions_len,
                                   masked)) {
+                return -1;
+            }
+        } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_CLONE) {
+            const struct nlattr *clone_actions = nl_attr_get(nla);
+            size_t clone_actions_len = nl_attr_get_size(nla);
+
+            if (parse_clone_actions(netdev, actions, clone_actions,
+                                    clone_actions_len)) {
                 return -1;
             }
         } else {
