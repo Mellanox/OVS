@@ -4513,7 +4513,7 @@ netdev_dpdk_rte_flow_query(struct netdev *netdev,
                            struct rte_flow_error *error)
 {
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
-    struct rte_flow_action_count count = {};
+    struct rte_flow_action_count count = {0, 0, 0};
     const struct rte_flow_action actions[] = {
         {
             .type = RTE_FLOW_ACTION_TYPE_COUNT,
