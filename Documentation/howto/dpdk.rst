@@ -395,6 +395,7 @@ Supported actions for hardware offload are:
 - Modification of Ethernet (mod_dl_src/mod_dl_dst).
 - Modification of IPv4 (mod_nw_src/mod_nw_dst/mod_nw_ttl).
 - Modification of TCP/UDP (mod_tp_src/mod_tp_dst).
+- Clone/output (tnl_push and output) for encapsulating over a tunnel.
 
 Further Reading
 ---------------
