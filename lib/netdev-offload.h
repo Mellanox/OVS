@@ -62,7 +62,7 @@ struct netdev_flow_dump {
 
 /* Flow offloading. */
 struct offload_info {
-    const struct dpif_class *dpif_class;
+    const char *dpif_type_str; /* dpif type string. */
     ovs_be16 tp_dst_port; /* Destination port for tunnel in SET action */
     uint8_t tunnel_csum_on; /* Tunnel header with checksum */
 
@@ -71,7 +71,10 @@ struct offload_info {
      * it will be in the pkt meta data.
      */
     uint32_t flow_mark;
+    bool *actions_offloaded; /* true if flow is fully actions_offloaded */
 };
+
+#define INVALID_FLOW_MARK (UINT32_MAX)
 
 int netdev_flow_flush(struct netdev *);
 int netdev_flow_dump_create(struct netdev *, struct netdev_flow_dump **dump);
@@ -83,6 +86,10 @@ bool netdev_flow_dump_next(struct netdev_flow_dump *, struct match *,
 int netdev_flow_put(struct netdev *, struct match *, struct nlattr *actions,
                     size_t actions_len, const ovs_u128 *,
                     struct offload_info *, struct dpif_flow_stats *);
+int netdev_hw_miss_packet_recover(struct netdev *netdev,
+                                  uint32_t flow_miss_ctx_id,
+                                  struct dp_packet *packet,
+                                  const char *dpif_type_str);
 int netdev_flow_get(struct netdev *, struct match *, struct nlattr **actions,
                     const ovs_u128 *, struct dpif_flow_stats *,
                     struct dpif_flow_attrs *, struct ofpbuf *wbuffer);
@@ -98,26 +105,28 @@ bool netdev_is_flow_api_enabled(void);
 void netdev_set_flow_api_enabled(const struct smap *ovs_other_config);
 bool netdev_is_offload_rebalance_policy_enabled(void);
 
-struct dpif_class;
 struct dpif_port;
-int netdev_ports_insert(struct netdev *, const struct dpif_class *,
+int netdev_ports_insert(struct netdev *, const char *dpif_type,
                         struct dpif_port *);
-struct netdev *netdev_ports_get(odp_port_t port, const struct dpif_class *);
-int netdev_ports_remove(odp_port_t port, const struct dpif_class *);
+struct netdev *netdev_ports_get(odp_port_t port, const char *dpif_type);
+int netdev_ports_remove(odp_port_t port, const char *dpif_type);
 odp_port_t netdev_ifindex_to_odp_port(int ifindex);
 
 struct netdev_flow_dump **netdev_ports_flow_dump_create(
-                                        const struct dpif_class *,
+                                        const char *dpif_type,
                                         int *ports);
-void netdev_ports_flow_flush(const struct dpif_class *);
-int netdev_ports_flow_del(const struct dpif_class *, const ovs_u128 *ufid,
+void netdev_ports_flow_flush(const char *dpif_type);
+int netdev_ports_flow_del(const char *dpif_type, const ovs_u128 *ufid,
                           struct dpif_flow_stats *stats);
-int netdev_ports_flow_get(const struct dpif_class *, struct match *match,
+int netdev_ports_flow_get(const char *dpif_type, struct match *match,
                           struct nlattr **actions,
                           const ovs_u128 *ufid,
                           struct dpif_flow_stats *stats,
                           struct dpif_flow_attrs *attrs,
                           struct ofpbuf *buf);
+uint32_t netdev_offload_flow_mark_alloc(void);
+void netdev_offload_flow_mark_free(uint32_t mark);
+struct id_pool *netdev_offload_get_mark_pool(void);
 
 #ifdef  __cplusplus
 }

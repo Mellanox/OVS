@@ -954,6 +954,18 @@ ofproto_get_flow_restore_wait(void)
     return flow_restore_wait;
 }
 
+/* Retrieve datapath capabilities. */
+void
+ofproto_get_datapath_cap(const char *datapath_type, struct smap *dp_cap)
+{
+    datapath_type = ofproto_normalize_type(datapath_type);
+    const struct ofproto_class *class = ofproto_class_find__(datapath_type);
+
+    if (class->get_datapath_cap) {
+        class->get_datapath_cap(datapath_type, dp_cap);
+    }
+}
+
 /* Connection tracking configuration. */
 void
 ofproto_ct_set_zone_timeout_policy(const char *datapath_type, uint16_t zone_id,
@@ -3635,9 +3647,20 @@ ofproto_packet_out_revert(struct ofproto *ofproto,
 }
 
 static void
+ofproto_packet_out_prepare(struct ofproto *ofproto,
+                           struct ofproto_packet_out *opo)
+    OVS_REQUIRES(ofproto_mutex)
+{
+    ofproto->ofproto_class->packet_execute_prepare(ofproto, opo);
+}
+
+/* Execution of packet_out action in datapath could end up in upcall with
+ * subsequent flow translations and possible rule modifications.
+ * So, the caller should not hold 'ofproto_mutex'. */
+static void
 ofproto_packet_out_finish(struct ofproto *ofproto,
                           struct ofproto_packet_out *opo)
-    OVS_REQUIRES(ofproto_mutex)
+    OVS_EXCLUDED(ofproto_mutex)
 {
     ofproto->ofproto_class->packet_execute(ofproto, opo);
 }
@@ -3680,10 +3703,13 @@ handle_packet_out(struct ofconn *ofconn, const struct ofp_header *oh)
     opo.version = p->tables_version;
     error = ofproto_packet_out_start(p, &opo);
     if (!error) {
-        ofproto_packet_out_finish(p, &opo);
+        ofproto_packet_out_prepare(p, &opo);
     }
     ovs_mutex_unlock(&ofproto_mutex);
 
+    if (!error) {
+        ofproto_packet_out_finish(p, &opo);
+    }
     ofproto_packet_out_uninit(&opo);
     return error;
 }
@@ -8202,7 +8228,7 @@ do_bundle_commit(struct ofconn *ofconn, uint32_t id, uint16_t flags)
                     } else if (be->type == OFPTYPE_GROUP_MOD) {
                         ofproto_group_mod_finish(ofproto, &be->ogm, &req);
                     } else if (be->type == OFPTYPE_PACKET_OUT) {
-                        ofproto_packet_out_finish(ofproto, &be->opo);
+                        ofproto_packet_out_prepare(ofproto, &be->opo);
                     }
                 }
                 if (error) {
@@ -8213,7 +8239,7 @@ do_bundle_commit(struct ofconn *ofconn, uint32_t id, uint16_t flags)
                 /* Send error referring to the original message. */
                 ofconn_send_error(ofconn, be->msg, error);
                 error = OFPERR_OFPBFC_MSG_FAILED;
-                
+
                 /* Revert.  Undo all the changes made above. */
                 LIST_FOR_EACH_REVERSE_CONTINUE (be, node, &bundle->msg_list) {
                     if (be->type == OFPTYPE_FLOW_MOD) {
@@ -8230,6 +8256,13 @@ do_bundle_commit(struct ofconn *ofconn, uint32_t id, uint16_t flags)
 
         ofmonitor_flush(ofproto->connmgr);
         ovs_mutex_unlock(&ofproto_mutex);
+    }
+
+    /* Executing remaining datapath actions. */
+    LIST_FOR_EACH (be, node, &bundle->msg_list) {
+        if (be->type == OFPTYPE_PACKET_OUT) {
+            ofproto_packet_out_finish(ofproto, &be->opo);
+        }
     }
 
     /* The bundle is discarded regardless the outcome. */

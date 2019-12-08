@@ -25,6 +25,15 @@
 /* These functions are Linux AF_XDP specific, so they should be used directly
  * only by Linux-specific code. */
 
+enum afxdp_mode {
+    OVS_AF_XDP_MODE_UNSPEC,
+    OVS_AF_XDP_MODE_BEST_EFFORT,
+    OVS_AF_XDP_MODE_NATIVE_ZC,
+    OVS_AF_XDP_MODE_NATIVE,
+    OVS_AF_XDP_MODE_GENERIC,
+    OVS_AF_XDP_MODE_MAX,
+};
+
 struct netdev;
 struct xsk_socket_info;
 struct xdp_umem;
@@ -37,8 +46,10 @@ struct netdev_custom_stats;
 
 int netdev_afxdp_rxq_construct(struct netdev_rxq *rxq_);
 void netdev_afxdp_rxq_destruct(struct netdev_rxq *rxq_);
+int netdev_afxdp_init(void);
 int netdev_afxdp_construct(struct netdev *netdev_);
 void netdev_afxdp_destruct(struct netdev *netdev_);
+int netdev_afxdp_verify_mtu_size(const struct netdev *netdev, int mtu);
 
 int netdev_afxdp_rxq_recv(struct netdev_rxq *rxq_,
                           struct dp_packet_batch *batch,

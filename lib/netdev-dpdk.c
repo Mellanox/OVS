@@ -67,6 +67,7 @@
 #include "unixctl.h"
 #include "util.h"
 #include "uuid.h"
+#include "netdev-offload-dpdk-private.h"
 
 enum {VIRTIO_RXQ, VIRTIO_TXQ, VIRTIO_QNUM};
 
@@ -86,12 +87,13 @@ COVERAGE_DEFINE(vhost_tx_contention);
  * The minimum mbuf size is limited to avoid scatter behaviour and drop in
  * performance for standard Ethernet MTU.
  */
-#define ETHER_HDR_MAX_LEN           (ETHER_HDR_LEN + ETHER_CRC_LEN \
+#define ETHER_HDR_MAX_LEN           (RTE_ETHER_HDR_LEN + RTE_ETHER_CRC_LEN \
                                      + (2 * VLAN_HEADER_LEN))
-#define MTU_TO_FRAME_LEN(mtu)       ((mtu) + ETHER_HDR_LEN + ETHER_CRC_LEN)
+#define MTU_TO_FRAME_LEN(mtu)       ((mtu) + RTE_ETHER_HDR_LEN + \
+                                     RTE_ETHER_CRC_LEN)
 #define MTU_TO_MAX_FRAME_LEN(mtu)   ((mtu) + ETHER_HDR_MAX_LEN)
 #define FRAME_LEN_TO_MTU(frame_len) ((frame_len)                    \
-                                     - ETHER_HDR_LEN - ETHER_CRC_LEN)
+                                     - RTE_ETHER_HDR_LEN - RTE_ETHER_CRC_LEN)
 #define NETDEV_DPDK_MBUF_ALIGN      1024
 #define NETDEV_DPDK_MAX_PKT_LEN     9728
 
@@ -398,6 +400,7 @@ struct netdev_dpdk {
         };
         struct dpdk_tx_queue *tx_q;
         struct rte_eth_link link;
+        bool is_uplink_port; /* True=uplink port, false=representor port. */
     );
 
     PADDED_MEMBERS_CACHELINE_MARKER(CACHE_LINE_SIZE, cacheline1,
@@ -602,7 +605,7 @@ dpdk_calculate_mbufs(struct netdev_dpdk *dev, int mtu, bool per_port_mp)
          * can change dynamically at runtime. For now, use this rough
          * heurisitic.
          */
-        if (mtu >= ETHER_MTU) {
+        if (mtu >= RTE_ETHER_MTU) {
             n_mbufs = MAX_NB_MBUF;
         } else {
             n_mbufs = MIN_NB_MBUF;
@@ -917,7 +920,7 @@ dpdk_eth_dev_port_config(struct netdev_dpdk *dev, int n_rxq, int n_txq)
      * scatter to support jumbo RX.
      * Setting scatter for the device is done after checking for
      * scatter support in the device capabilites. */
-    if (dev->mtu > ETHER_MTU) {
+    if (dev->mtu > RTE_ETHER_MTU) {
         if (dev->hw_ol_features & NETDEV_RX_HW_SCATTER) {
             conf.rxmode.offloads |= DEV_RX_OFFLOAD_SCATTER;
         }
@@ -1029,7 +1032,7 @@ dpdk_eth_dev_init(struct netdev_dpdk *dev)
 {
     struct rte_pktmbuf_pool_private *mbp_priv;
     struct rte_eth_dev_info info;
-    struct ether_addr eth_addr;
+    struct rte_ether_addr eth_addr;
     int diag;
     int n_rxq, n_txq;
     uint32_t rx_chksm_offload_capa = DEV_RX_OFFLOAD_UDP_CKSUM |
@@ -1060,6 +1063,9 @@ dpdk_eth_dev_init(struct netdev_dpdk *dev)
         /* Do not warn on lack of scatter support */
         dev->hw_ol_features &= ~NETDEV_RX_HW_SCATTER;
     }
+
+    dev->is_uplink_port = !(*info.dev_flags & RTE_ETH_DEV_REPRESENTOR) &&
+        info.switch_info.domain_id != RTE_ETH_DEV_SWITCH_DOMAIN_ID_INVALID;
 
     n_rxq = MIN(info.max_rx_queues, dev->up.n_rxq);
     n_txq = MIN(info.max_tx_queues, dev->up.n_txq);
@@ -1154,7 +1160,7 @@ common_construct(struct netdev *netdev, dpdk_port_t port_no,
     dev->port_id = port_no;
     dev->type = type;
     dev->flags = 0;
-    dev->requested_mtu = ETHER_MTU;
+    dev->requested_mtu = RTE_ETHER_MTU;
     dev->max_packet_len = MTU_TO_FRAME_LEN(dev->mtu);
     dev->requested_lsc_interrupt_mode = 0;
     ovsrcu_index_init(&dev->vid, -1);
@@ -1683,7 +1689,7 @@ netdev_dpdk_get_port_by_mac(const char *mac_str)
     }
 
     RTE_ETH_FOREACH_DEV (port_id) {
-        struct ether_addr ea;
+        struct rte_ether_addr ea;
 
         rte_eth_macaddr_get(port_id, &ea);
         memcpy(port_mac.ea, ea.addr_bytes, ETH_ADDR_LEN);
@@ -2086,10 +2092,10 @@ netdev_dpdk_policer_pkt_handle(struct rte_meter_srtcm *meter,
                                struct rte_meter_srtcm_profile *profile,
                                struct rte_mbuf *pkt, uint64_t time)
 {
-    uint32_t pkt_len = rte_pktmbuf_pkt_len(pkt) - sizeof(struct ether_hdr);
+    uint32_t pkt_len = rte_pktmbuf_pkt_len(pkt) - sizeof(struct rte_ether_hdr);
 
     return rte_meter_srtcm_color_blind_check(meter, profile, time, pkt_len) ==
-                                             e_RTE_METER_GREEN;
+                                             RTE_COLOR_GREEN;
 }
 
 static int
@@ -2675,7 +2681,7 @@ netdev_dpdk_set_mtu(struct netdev *netdev, int mtu)
      * a method to retrieve the upper bound MTU for a given device.
      */
     if (MTU_TO_MAX_FRAME_LEN(mtu) > NETDEV_DPDK_MAX_PKT_LEN
-        || mtu < ETHER_MIN_MTU) {
+        || mtu < RTE_ETHER_MIN_MTU) {
         VLOG_WARN("%s: unsupported MTU %d\n", dev->up.name, mtu);
         return EINVAL;
     }
@@ -4002,6 +4008,10 @@ netdev_dpdk_ring_construct(struct netdev *netdev)
     dpdk_port_t port_no = 0;
     int err = 0;
 
+    VLOG_WARN_ONCE("dpdkr a.k.a. ring ports are considered deprecated.  "
+                   "Please migrate to virtio-based interfaces, e.g. "
+                   "dpdkvhostuserclient ports, net_virtio_user DPDK vdev.");
+
     ovs_mutex_lock(&dpdk_mutex);
 
     err = dpdk_ring_open(netdev->name, &port_no);
@@ -4421,11 +4431,35 @@ unlock:
     return err;
 }
 
+int
+netdev_dpdk_get_port_id(const struct netdev *netdev)
+{
+    if (!is_dpdk_class(netdev->netdev_class)) {
+        return -1;
+    }
+    return CONTAINER_OF(netdev, struct netdev_dpdk, up)->port_id;
+}
+
+bool
+netdev_dpdk_is_uplink_port(const struct netdev *netdev)
+{
+    if (!is_dpdk_class(netdev->netdev_class)) {
+        return false;
+    }
+    return CONTAINER_OF(netdev, struct netdev_dpdk, up)->is_uplink_port;
+}
+
 bool
 netdev_dpdk_flow_api_supported(struct netdev *netdev)
 {
     struct netdev_dpdk *dev;
     bool ret = false;
+
+    if (netdev_vport_is_vport_class(netdev->netdev_class) &&
+        !strcmp(netdev_get_dpif_type(netdev), "netdev")) {
+            ret = true;
+            goto out;
+    }
 
     if (!is_dpdk_class(netdev->netdev_class)) {
         goto out;
@@ -4452,6 +4486,15 @@ netdev_dpdk_rte_flow_destroy(struct netdev *netdev,
 
     ovs_mutex_lock(&dev->mutex);
     ret = rte_flow_destroy(dev->port_id, rte_flow, error);
+    if (!ret) {
+        VLOG_DBG("Destroy rte_flow %p: netdev=%s, port=%d\n",
+                 rte_flow, netdev_get_name(netdev), dev->port_id);
+    } else {
+        VLOG_ERR("Destroy rte_flow %p: netdev=%s, port=%d\n"
+                 "FAILED. error %u : message : %s",
+                 rte_flow, netdev_get_name(netdev), dev->port_id,
+                 error->type, error->message);
+    }
     ovs_mutex_unlock(&dev->mutex);
     return ret;
 }
@@ -4465,11 +4508,68 @@ netdev_dpdk_rte_flow_create(struct netdev *netdev,
 {
     struct rte_flow *flow;
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
+    struct ds s;
 
     ovs_mutex_lock(&dev->mutex);
     flow = rte_flow_create(dev->port_id, attr, items, actions, error);
+    ds_init(&s);
+    if (flow) {
+        VLOG_DBG("Create rte_flow: netdev=%s, port=%d\n"
+                 "%s"
+                 "Flow handle=%p\n",
+                 netdev_get_name(netdev), dev->port_id,
+                 ds_cstr(netdev_dpdk_flow_ds_put_flow(&s, attr, items,
+                                                      actions)), flow);
+    } else {
+        VLOG_ERR("Create rte_flow: netdev=%s, port=%d\n"
+                 "%s"
+                 "FAILED. error %u : message : %s\n",
+                 netdev_get_name(netdev), dev->port_id,
+                 ds_cstr(netdev_dpdk_flow_ds_put_flow(&s, attr, items,
+                                                      actions)),
+                 error->type, error->message);
+    }
+    ds_destroy(&s);
     ovs_mutex_unlock(&dev->mutex);
     return flow;
+}
+
+int
+netdev_dpdk_rte_flow_query(struct netdev *netdev,
+                           struct rte_flow *rte_flow,
+                           struct rte_flow_query_count *query,
+                           struct rte_flow_error *error)
+{
+    struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
+    struct rte_flow_action_count count = {0, 0, 0};
+    const struct rte_flow_action actions[] = {
+        {
+            .type = RTE_FLOW_ACTION_TYPE_COUNT,
+            .conf = &count,
+        },
+        {
+            .type = RTE_FLOW_ACTION_TYPE_END,
+        },
+    };
+    int ret;
+
+    ovs_mutex_lock(&dev->mutex);
+    ret = rte_flow_query(dev->port_id, rte_flow, actions, query, error);
+    ovs_mutex_unlock(&dev->mutex);
+    return ret;
+}
+
+int
+netdev_dpdk_rte_flow_flush(struct netdev *netdev,
+                           struct rte_flow_error *error)
+{
+    struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
+    int ret;
+
+    ovs_mutex_lock(&dev->mutex);
+    ret = rte_flow_flush(dev->port_id, error);
+    ovs_mutex_unlock(&dev->mutex);
+    return ret;
 }
 
 #define NETDEV_DPDK_CLASS_COMMON                            \

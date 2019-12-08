@@ -527,6 +527,7 @@ struct dp_netdev_flow {
 
     bool dead;
     uint32_t mark;               /* Unique flow mark assigned to a flow */
+    bool actions_offloaded;      /* true if flow is fully offloaded */
 
     /* Statistics. */
     struct dp_netdev_flow_stats stats;
@@ -2126,9 +2127,6 @@ dp_netdev_pmd_find_dpcls(struct dp_netdev_pmd_thread *pmd,
     return cls;
 }
 
-#define MAX_FLOW_MARK       (UINT32_MAX - 1)
-#define INVALID_FLOW_MARK   (UINT32_MAX)
-
 struct megaflow_to_mark_data {
     const struct cmap_node node;
     ovs_u128 mega_ufid;
@@ -2138,36 +2136,12 @@ struct megaflow_to_mark_data {
 struct flow_mark {
     struct cmap megaflow_to_mark;
     struct cmap mark_to_flow;
-    struct id_pool *pool;
 };
 
 static struct flow_mark flow_mark = {
     .megaflow_to_mark = CMAP_INITIALIZER,
     .mark_to_flow = CMAP_INITIALIZER,
 };
-
-static uint32_t
-flow_mark_alloc(void)
-{
-    uint32_t mark;
-
-    if (!flow_mark.pool) {
-        /* Haven't initiated yet, do it here */
-        flow_mark.pool = id_pool_create(0, MAX_FLOW_MARK);
-    }
-
-    if (id_pool_alloc_id(flow_mark.pool, &mark)) {
-        return mark;
-    }
-
-    return INVALID_FLOW_MARK;
-}
-
-static void
-flow_mark_free(uint32_t mark)
-{
-    id_pool_free_id(flow_mark.pool, mark);
-}
 
 /* associate megaflow with a mark, which is a 1:1 mapping */
 static void
@@ -2253,10 +2227,11 @@ static int
 mark_to_flow_disassociate(struct dp_netdev_pmd_thread *pmd,
                           struct dp_netdev_flow *flow)
 {
-    int ret = 0;
-    uint32_t mark = flow->mark;
+    const char *dpif_type_str = dpif_normalize_type(pmd->dp->class->type);
     struct cmap_node *mark_node = CONST_CAST(struct cmap_node *,
                                              &flow->mark_node);
+    uint32_t mark = flow->mark;
+    int ret = 0;
 
     cmap_remove(&flow_mark.mark_to_flow, mark_node, hash_int(mark, 0));
     flow->mark = INVALID_FLOW_MARK;
@@ -2266,17 +2241,16 @@ mark_to_flow_disassociate(struct dp_netdev_pmd_thread *pmd,
      * remove the flow from hardware and free the mark.
      */
     if (flow_mark_has_no_ref(mark)) {
-        struct dp_netdev_port *port;
+        struct netdev *port;
         odp_port_t in_port = flow->flow.in_port.odp_port;
 
-        ovs_mutex_lock(&pmd->dp->port_mutex);
-        port = dp_netdev_lookup_port(pmd->dp, in_port);
+        port = netdev_ports_get(in_port, dpif_type_str);
         if (port) {
-            ret = netdev_flow_del(port->netdev, &flow->mega_ufid, NULL);
+            ret = netdev_flow_del(port, &flow->mega_ufid, NULL);
+            netdev_close(port);
         }
-        ovs_mutex_unlock(&pmd->dp->port_mutex);
 
-        flow_mark_free(mark);
+        netdev_offload_flow_mark_free(mark);
         VLOG_DBG("Freed flow mark %u\n", mark);
 
         megaflow_to_mark_disassociate(&flow->mega_ufid);
@@ -2372,12 +2346,13 @@ dp_netdev_flow_offload_del(struct dp_flow_offload_item *offload)
 static int
 dp_netdev_flow_offload_put(struct dp_flow_offload_item *offload)
 {
-    struct dp_netdev_port *port;
     struct dp_netdev_pmd_thread *pmd = offload->pmd;
     struct dp_netdev_flow *flow = offload->flow;
     odp_port_t in_port = flow->flow.in_port.odp_port;
+    const char *dpif_type_str = dpif_normalize_type(pmd->dp->class->type);
     bool modification = offload->op == DP_NETDEV_FLOW_OFFLOAD_OP_MOD;
     struct offload_info info;
+    struct netdev *port;
     uint32_t mark;
     int ret;
 
@@ -2404,24 +2379,24 @@ dp_netdev_flow_offload_put(struct dp_flow_offload_item *offload)
             return 0;
         }
 
-        mark = flow_mark_alloc();
+        mark = netdev_offload_flow_mark_alloc();
         if (mark == INVALID_FLOW_MARK) {
             VLOG_ERR("Failed to allocate flow mark!\n");
         }
     }
     info.flow_mark = mark;
+    info.actions_offloaded = &flow->actions_offloaded;
+    info.dpif_type_str = dpif_type_str;
 
-    ovs_mutex_lock(&pmd->dp->port_mutex);
-    port = dp_netdev_lookup_port(pmd->dp, in_port);
-    if (!port || netdev_vport_is_vport_class(port->netdev->netdev_class)) {
-        ovs_mutex_unlock(&pmd->dp->port_mutex);
+    port = netdev_ports_get(in_port, dpif_type_str);
+    if (!port) {
         goto err_free;
     }
-    ret = netdev_flow_put(port->netdev, &offload->match,
+    ret = netdev_flow_put(port, &offload->match,
                           CONST_CAST(struct nlattr *, offload->actions),
                           offload->actions_len, &flow->mega_ufid, &info,
                           NULL);
-    ovs_mutex_unlock(&pmd->dp->port_mutex);
+    netdev_close(port);
 
     if (ret) {
         goto err_free;
@@ -2435,7 +2410,7 @@ dp_netdev_flow_offload_put(struct dp_flow_offload_item *offload)
 
 err_free:
     if (!modification) {
-        flow_mark_free(mark);
+        netdev_offload_flow_mark_free(mark);
     } else {
         mark_to_flow_disassociate(pmd, flow);
     }
@@ -3073,8 +3048,8 @@ dp_netdev_flow_to_dpif_flow(const struct dp_netdev_flow *netdev_flow,
     flow->pmd_id = netdev_flow->pmd_id;
     get_dpif_flow_stats(netdev_flow, &flow->stats);
 
-    flow->attrs.offloaded = false;
-    flow->attrs.dp_layer = "ovs";
+    flow->attrs.offloaded = netdev_flow->actions_offloaded;
+    flow->attrs.dp_layer = flow->attrs.offloaded ? "in_hw" : "ovs";
 }
 
 static int
@@ -3244,6 +3219,7 @@ dp_netdev_flow_add(struct dp_netdev_pmd_thread *pmd,
     flow->dead = false;
     flow->batch = NULL;
     flow->mark = INVALID_FLOW_MARK;
+    flow->actions_offloaded = false;
     *CONST_CAST(unsigned *, &flow->pmd_id) = pmd->core_id;
     *CONST_CAST(struct flow *, &flow->flow) = match->flow;
     *CONST_CAST(ovs_u128 *, &flow->ufid) = *ufid;
@@ -3599,6 +3575,38 @@ dpif_netdev_flow_dump_thread_destroy(struct dpif_flow_dump_thread *thread_)
 }
 
 static int
+dpif_netdev_offload_used(struct dp_netdev_flow *netdev_flow,
+                         struct dp_netdev_pmd_thread *pmd,
+                         const char *dpif_type_str)
+{
+    struct netdev_flow_dump netdev_dump;
+    struct dpif_flow_stats stats;
+    ovs_u128 ufid;
+    bool has_next;
+
+    netdev_dump.port = netdev_flow->flow.in_port.odp_port;
+    netdev_dump.netdev = netdev_ports_get(netdev_dump.port, dpif_type_str);
+    if (!netdev_dump.netdev) {
+        return -1;
+    }
+    /* get offloaded stats */
+    ufid = netdev_flow->mega_ufid;
+    has_next = netdev_flow_dump_next(&netdev_dump, NULL, NULL, &stats, NULL,
+                                     &ufid, NULL, NULL);
+    netdev_close(netdev_dump.netdev);
+    if (!has_next) {
+        return -1;
+    }
+    if (stats.n_packets) {
+        atomic_store_relaxed(&netdev_flow->stats.used, pmd->ctx.now / 1000);
+        non_atomic_ullong_add(&netdev_flow->stats.packet_count, stats.n_packets);
+        non_atomic_ullong_add(&netdev_flow->stats.byte_count, stats.n_bytes);
+    }
+
+    return 0;
+}
+
+static int
 dpif_netdev_flow_dump_next(struct dpif_flow_dump_thread *thread_,
                            struct dpif_flow *flows, int max_flows)
 {
@@ -3615,6 +3623,8 @@ dpif_netdev_flow_dump_next(struct dpif_flow_dump_thread *thread_,
         struct dp_netdev *dp = get_dp_netdev(&dpif->dpif);
         struct dp_netdev_pmd_thread *pmd = dump->cur_pmd;
         int flow_limit = MIN(max_flows, FLOW_DUMP_MAX_BATCH);
+        const char *dpif_type_str =
+            dpif_normalize_type(dpif_type(&dpif->dpif));
 
         /* First call to dump_next(), extracts the first pmd thread.
          * If there is no pmd thread, returns immediately. */
@@ -3638,6 +3648,11 @@ dpif_netdev_flow_dump_next(struct dpif_flow_dump_thread *thread_,
                 netdev_flows[n_flows] = CONTAINER_OF(node,
                                                      struct dp_netdev_flow,
                                                      node);
+                /* Read hardware stats in case of hardware offload */
+                if (netdev_flows[n_flows]->actions_offloaded) {
+                    dpif_netdev_offload_used(netdev_flows[n_flows], pmd,
+                                             dpif_type_str);
+                }
             }
             /* When finishing dumping the current pmd thread, moves to
              * the next. */
@@ -4572,6 +4587,10 @@ rxq_scheduling(struct dp_netdev *dp, bool pinned) OVS_REQUIRES(dp->port_mutex)
                 } else {
                     q->pmd = pmd;
                     pmd->isolated = true;
+                    VLOG_INFO("Core %d on numa node %d assigned port \'%s\' "
+                              "rx queue %d.", pmd->core_id, pmd->numa_id,
+                              netdev_rxq_get_name(q->rx),
+                              netdev_rxq_get_queue_id(q->rx));
                     dp_netdev_pmd_unref(pmd);
                 }
             } else if (!pinned && q->core_id == OVS_CORE_UNSPEC) {
@@ -6487,6 +6506,7 @@ dfc_processing(struct dp_netdev_pmd_thread *pmd,
     bool smc_enable_db;
     size_t map_cnt = 0;
     bool batch_enable = true;
+    bool has_mark;
 
     atomic_read_relaxed(&pmd->dp->smc_enable_db, &smc_enable_db);
     pmd_perf_update_counter(&pmd->perf_stats,
@@ -6513,8 +6533,24 @@ dfc_processing(struct dp_netdev_pmd_thread *pmd,
             pkt_metadata_init(&packet->md, port_no);
         }
 
-        if ((*recirc_depth_get() == 0) &&
-            dp_packet_has_flow_mark(packet, &mark)) {
+        has_mark = dp_packet_has_flow_mark(packet, &mark);
+        if (has_mark) {
+            /* Restore the packet if it was interrupted in the middle
+             * of HW offload processing
+             */
+            struct netdev *netdev;
+
+            const char *dpif_type_str =
+                dpif_normalize_type(pmd->dp->class->type);
+            netdev = netdev_ports_get(port_no, dpif_type_str);
+            if (netdev) {
+                netdev_hw_miss_packet_recover(netdev, mark, packet,
+                                              dpif_type_str);
+                netdev_close(netdev);
+            }
+        }
+
+        if ((*recirc_depth_get() == 0) && has_mark) {
             flow = mark_to_flow_find(pmd, mark);
             if (OVS_LIKELY(flow)) {
                 tcp_flags = parse_tcp_flags(packet);

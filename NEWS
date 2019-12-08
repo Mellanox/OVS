@@ -5,11 +5,30 @@ Post-v2.12.0
        separate project. You can find it at
        https://github.com/ovn-org/ovn.git
    - Userspace datapath:
+     * Add option to enable, disable and query TCP sequence checking in
+       conntrack.
+   - AF_XDP:
      * New option 'use-need-wakeup' for netdev-afxdp to control enabling
        of corresponding 'need_wakeup' flag in AF_XDP rings.  Enabled by default
        if supported by libbpf.
-     * Add option to enable, disable and query TCP sequence checking in
-       conntrack.
+     * 'xdpmode' option for netdev-afxdp renamed to 'xdp-mode'.
+       Modes also updated.  New values:
+         native-with-zerocopy  - former DRV
+         native                - new one, DRV without zero-copy
+         generic               - former SKB
+         best-effort [default] - new one, chooses the best available from
+                                 3 above modes
+   - DPDK:
+     * DPDK pdump packet capture support disabled by default. New configure
+       option '--enable-dpdk-pdump' to enable it.
+     * DPDK pdump support is deprecated and will be removed in next releases.
+     * DPDK ring ports (dpdkr) are deprecated and will be removed in next
+       releases.
+     * OVS validated with DPDK 18.11.5, due to the inclusion of a fix for
+       CVE-2019-14818, this DPDK version is strongly recommended to be used.
+     * Add hardware offload support for output, drop, set of MAC, IPv4,
+       TCP/UDP ports and tunnel push-output/pop actions (experimental).
+     * Add hardware offload support VXLAN vports.
 
 v2.12.0 - 03 Sep 2019
 ---------------------

@@ -1470,6 +1470,55 @@ check_max_dp_hash_alg(struct dpif_backer *backer)
     return max_alg;
 }
 
+/* Tests whether 'backer''s datapath supports IPv6 ND extensions.
+ * Only userspace datapath support OVS_KEY_ATTR_ND_EXTENSIONS in keys.
+ *
+ * Returns false if 'backer' definitely does not support matching and
+ * setting reserved and options type, true if it seems to support. */
+static bool
+check_nd_extensions(struct dpif_backer *backer)
+{
+    struct eth_header *eth;
+    struct ofpbuf actions;
+    struct dpif_execute execute;
+    struct dp_packet packet;
+    struct flow flow;
+    int error;
+    struct ovs_key_nd_extensions key, mask;
+
+    ofpbuf_init(&actions, 64);
+    memset(&key, 0x53, sizeof key);
+    memset(&mask, 0x7f, sizeof mask);
+    commit_masked_set_action(&actions, OVS_KEY_ATTR_ND_EXTENSIONS, &key, &mask,
+                             sizeof key);
+
+    /* Compose a dummy ethernet packet. */
+    dp_packet_init(&packet, ETH_HEADER_LEN);
+    eth = dp_packet_put_zeros(&packet, ETH_HEADER_LEN);
+    eth->eth_type = htons(0x1234);
+
+    flow_extract(&packet, &flow);
+
+    /* Execute the actions.  On datapaths without support fails with EINVAL. */
+    execute.actions = actions.data;
+    execute.actions_len = actions.size;
+    execute.packet = &packet;
+    execute.flow = &flow;
+    execute.needs_help = false;
+    execute.probe = true;
+    execute.mtu = 0;
+
+    error = dpif_execute(backer->dpif, &execute);
+
+    dp_packet_uninit(&packet);
+    ofpbuf_uninit(&actions);
+
+    VLOG_INFO("%s: Datapath %s IPv6 ND Extensions", dpif_name(backer->dpif),
+              error ? "does not support" : "supports");
+
+    return !error;
+}
+
 #define CHECK_FEATURE__(NAME, SUPPORT, FIELD, VALUE, ETHTYPE)               \
 static bool                                                                 \
 check_##NAME(struct dpif_backer *backer)                                    \
@@ -1541,10 +1590,10 @@ check_support(struct dpif_backer *backer)
     backer->rt_support.odp.ct_zone = check_ct_zone(backer);
     backer->rt_support.odp.ct_mark = check_ct_mark(backer);
     backer->rt_support.odp.ct_label = check_ct_label(backer);
-
     backer->rt_support.odp.ct_state_nat = check_ct_state_nat(backer);
     backer->rt_support.odp.ct_orig_tuple = check_ct_orig_tuple(backer);
     backer->rt_support.odp.ct_orig_tuple6 = check_ct_orig_tuple6(backer);
+    backer->rt_support.odp.nd_ext = check_nd_extensions(backer);
 }
 
 static int
@@ -4551,6 +4600,14 @@ check_actions(const struct ofproto_dpif *ofproto,
                                        "ct original direction tuple");
                 return OFPERR_NXBAC_CT_DATAPATH_SUPPORT;
             }
+        } else if (!support->nd_ext && ofpact->type == OFPACT_SET_FIELD) {
+            const struct mf_field *dst = ofpact_get_mf_dst(ofpact);
+
+            if (dst->id == MFF_ND_RESERVED || dst->id == MFF_ND_OPTIONS_TYPE) {
+                report_unsupported_act("set field",
+                                       "setting IPv6 ND Extensions fields");
+                return OFPERR_OFPBAC_BAD_SET_ARGUMENT;
+            }
         }
     }
 
@@ -4827,12 +4884,13 @@ ofproto_dpif_xcache_execute(struct ofproto_dpif *ofproto,
 }
 
 static void
-packet_execute(struct ofproto *ofproto_, struct ofproto_packet_out *opo)
+packet_execute_prepare(struct ofproto *ofproto_,
+                       struct ofproto_packet_out *opo)
     OVS_REQUIRES(ofproto_mutex)
 {
     struct ofproto_dpif *ofproto = ofproto_dpif_cast(ofproto_);
     struct dpif_flow_stats stats;
-    struct dpif_execute execute;
+    struct dpif_execute *execute;
 
     struct ofproto_dpif_packet_out *aux = opo->aux;
     ovs_assert(aux);
@@ -4841,22 +4899,40 @@ packet_execute(struct ofproto *ofproto_, struct ofproto_packet_out *opo)
     dpif_flow_stats_extract(opo->flow, opo->packet, time_msec(), &stats);
     ofproto_dpif_xcache_execute(ofproto, &aux->xcache, &stats);
 
-    execute.actions = aux->odp_actions.data;
-    execute.actions_len = aux->odp_actions.size;
+    execute = xzalloc(sizeof *execute);
+    execute->actions = xmemdup(aux->odp_actions.data, aux->odp_actions.size);
+    execute->actions_len = aux->odp_actions.size;
 
     pkt_metadata_from_flow(&opo->packet->md, opo->flow);
-    execute.packet = opo->packet;
-    execute.flow = opo->flow;
-    execute.needs_help = aux->needs_help;
-    execute.probe = false;
-    execute.mtu = 0;
+    execute->packet = opo->packet;
+    execute->flow = opo->flow;
+    execute->needs_help = aux->needs_help;
+    execute->probe = false;
+    execute->mtu = 0;
 
     /* Fix up in_port. */
     ofproto_dpif_set_packet_odp_port(ofproto, opo->flow->in_port.ofp_port,
                                      opo->packet);
 
-    dpif_execute(ofproto->backer->dpif, &execute);
     ofproto_dpif_packet_out_delete(aux);
+    opo->aux = execute;
+}
+
+static void
+packet_execute(struct ofproto *ofproto_, struct ofproto_packet_out *opo)
+    OVS_EXCLUDED(ofproto_mutex)
+{
+    struct ofproto_dpif *ofproto = ofproto_dpif_cast(ofproto_);
+    struct dpif_execute *execute = opo->aux;
+
+    if (!execute) {
+        return;
+    }
+
+    dpif_execute(ofproto->backer->dpif, execute);
+
+    free(CONST_CAST(struct nlattr *, execute->actions));
+    free(execute);
     opo->aux = NULL;
 }
 
@@ -5442,6 +5518,57 @@ ct_del_zone_timeout_policy(const char *datapath_type, uint16_t zone_id)
         ct_timeout_policy_unref(backer, ct_zone->ct_tp);
         ct_zone_remove_and_destroy(backer, ct_zone);
     }
+}
+
+static void
+get_datapath_cap(const char *datapath_type, struct smap *cap)
+{
+    char *str_value;
+    struct odp_support odp;
+    struct dpif_backer_support s;
+    struct dpif_backer *backer = shash_find_data(&all_dpif_backers,
+                                                 datapath_type);
+    if (!backer) {
+        return;
+    }
+    s = backer->rt_support;
+    odp = s.odp;
+
+    /* ODP_SUPPORT_FIELDS */
+    str_value = xasprintf("%"PRIuSIZE, odp.max_vlan_headers);
+    smap_add(cap, "max_vlan_headers", str_value);
+    free(str_value);
+
+    str_value = xasprintf("%"PRIuSIZE, odp.max_mpls_depth);
+    smap_add(cap, "max_mpls_depth", str_value);
+    free(str_value);
+
+    smap_add(cap, "recirc", odp.recirc ? "true" : "false");
+    smap_add(cap, "ct_state", odp.ct_state ? "true" : "false");
+    smap_add(cap, "ct_zone", odp.ct_zone ? "true" : "false");
+    smap_add(cap, "ct_mark", odp.ct_mark ? "true" : "false");
+    smap_add(cap, "ct_label", odp.ct_label ? "true" : "false");
+    smap_add(cap, "ct_state_nat", odp.ct_state_nat ? "true" : "false");
+    smap_add(cap, "ct_orig_tuple", odp.ct_orig_tuple ? "true" : "false");
+    smap_add(cap, "ct_orig_tuple6", odp.ct_orig_tuple6 ? "true" : "false");
+    smap_add(cap, "nd_ext", odp.nd_ext ? "true" : "false");
+
+    /* DPIF_SUPPORT_FIELDS */
+    smap_add(cap, "masked_set_action", s.masked_set_action ? "true" : "false");
+    smap_add(cap, "tnl_push_pop", s.tnl_push_pop ? "true" : "false");
+    smap_add(cap, "ufid", s.ufid ? "true" : "false");
+    smap_add(cap, "trunc", s.trunc ? "true" : "false");
+    smap_add(cap, "clone", s.clone ? "true" : "false");
+    smap_add(cap, "sample_nesting", s.sample_nesting ? "true" : "false");
+    smap_add(cap, "ct_eventmask", s.ct_eventmask ? "true" : "false");
+    smap_add(cap, "ct_clear", s.ct_clear ? "true" : "false");
+
+    str_value = xasprintf("%"PRIuSIZE, s.max_hash_alg);
+    smap_add(cap, "max_hash_alg", str_value);
+    free(str_value);
+
+    smap_add(cap, "check_pkt_len", s.check_pkt_len ? "true" : "false");
+    smap_add(cap, "ct_timeout", s.ct_timeout ? "true" : "false");
 }
 
 /* Gets timeout policy name in 'backer' based on 'zone', 'dl_type' and
@@ -6529,6 +6656,7 @@ const struct ofproto_class ofproto_dpif_class = {
     rule_get_stats,
     packet_xlate,
     packet_xlate_revert,
+    packet_execute_prepare,
     packet_execute,
     set_frag_handling,
     nxt_resume,
@@ -6581,6 +6709,7 @@ const struct ofproto_class ofproto_dpif_class = {
     NULL,                       /* group_modify */
     group_get_stats,            /* group_get_stats */
     get_datapath_version,       /* get_datapath_version */
+    get_datapath_cap,
     type_set_config,
     ct_flush,                   /* ct_flush */
     ct_set_zone_timeout_policy,
