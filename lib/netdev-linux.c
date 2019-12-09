@@ -1593,6 +1593,15 @@ netdev_linux_set_mtu(struct netdev *netdev_, int mtu)
         goto exit;
     }
 
+#ifdef HAVE_AF_XDP
+    if (netdev_get_class(netdev_) == &netdev_afxdp_class) {
+        error = netdev_afxdp_verify_mtu_size(netdev_, mtu);
+        if (error) {
+            goto exit;
+        }
+    }
+#endif
+
     if (netdev->cache_valid & VALID_MTU) {
         error = netdev->netdev_mtu_error;
         if (error || netdev->mtu == mtu) {
@@ -3290,6 +3299,7 @@ const struct netdev_class netdev_afxdp_class = {
     NETDEV_LINUX_CLASS_COMMON,
     .type = "afxdp",
     .is_pmd = true,
+    .init = netdev_afxdp_init,
     .construct = netdev_afxdp_construct,
     .destruct = netdev_afxdp_destruct,
     .get_stats = netdev_afxdp_get_stats,

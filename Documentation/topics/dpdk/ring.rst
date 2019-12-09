@@ -27,6 +27,12 @@ DPDK Ring Ports
 
 .. warning::
 
+   DPDK ring ports are considered *deprecated*.  Please migrate to
+   virtio-based interfaces, e.g. :doc:`vhost-user <vhost-user>` ports,
+   ``net_virtio_user`` :doc:`DPDK vdev <vdev>`.
+
+.. warning::
+
    DPDK ring interfaces cannot be used for guest communication and are retained
    mainly for backwards compatibility purposes. In nearly all cases,
    :doc:`vhost-user ports <vhost-user>` are a better choice and should be used
@@ -83,4 +89,4 @@ DPDK. However, this functionality was removed because:
   guests
 
 .. _DPDK documentation:
-   https://doc.dpdk.org/guides-18.11/prog_guide/ring_lib.html
+   https://doc.dpdk.org/guides-19.11/prog_guide/ring_lib.html

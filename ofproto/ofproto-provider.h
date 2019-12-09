@@ -588,6 +588,13 @@ struct ofgroup {
     struct rule_collection rules OVS_GUARDED;   /* Referring rules. */
 };
 
+struct pkt_stats {
+    uint64_t n_packets;
+    uint64_t n_bytes;
+    uint64_t n_offload_packets; /* n_offload_packets are a subset n_packets */
+    uint64_t n_offload_bytes;   /* n_offload_bytes are a subset of n_bytes */
+};
+
 struct ofgroup *ofproto_group_lookup(const struct ofproto *ofproto,
                                      uint32_t group_id, ovs_version_t version,
                                      bool take_ref);
@@ -1348,8 +1355,8 @@ struct ofproto_class {
      * matched it in '*packet_count' and the number of bytes in those packets
      * in '*byte_count'.  UINT64_MAX indicates that the packet count or byte
      * count is unknown. */
-    void (*rule_get_stats)(struct rule *rule, uint64_t *packet_count,
-                           uint64_t *byte_count, long long int *used)
+    void (*rule_get_stats)(struct rule *rule, struct pkt_stats *stats,
+                           long long int *used)
         /* OVS_EXCLUDED(ofproto_mutex) */;
 
     /* Translates actions in 'opo->ofpacts', for 'opo->packet' in flow tables
@@ -1376,9 +1383,15 @@ struct ofproto_class {
      * packet_xlate_revert() calls have to be made in reverse order. */
     void (*packet_xlate_revert)(struct ofproto *, struct ofproto_packet_out *);
 
-    /* Executes the datapath actions, translation side-effects, and stats as
-     * produced by ->packet_xlate().  The caller retains ownership of 'opo'.
-     */
+    /* Translates side-effects, and stats as produced by ->packet_xlate().
+     * Prepares to execute datapath actions.  The caller retains ownership
+     * of 'opo'. */
+    void (*packet_execute_prepare)(struct ofproto *,
+                                   struct ofproto_packet_out *opo);
+
+    /* Executes the datapath actions.  The caller retains ownership of 'opo'.
+     * Should be called after successful packet_execute_prepare().
+     * No-op if called after packet_xlate_revert(). */
     void (*packet_execute)(struct ofproto *, struct ofproto_packet_out *opo);
 
     /* Changes the OpenFlow IP fragment handling policy to 'frag_handling',
@@ -1866,6 +1879,9 @@ struct ofproto_class {
      * This function should be NULL if an implementation does not support it.
      */
     const char *(*get_datapath_version)(const struct ofproto *);
+
+    /* Get capabilities of the datapath type 'dp_type'. */
+    void (*get_datapath_cap)(const char *dp_type, struct smap *caps);
 
     /* Pass custom configuration options to the 'type' datapath.
      *
