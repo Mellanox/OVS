@@ -468,6 +468,102 @@ put_table_id(uint32_t table_id)
     put_context_data_by_id(&table_id_md, table_id);
 }
 
+#define MIN_TUNNEL_ID 1
+#define MAX_TUNNEL_ID reg_fields[REG_FIELD_TUN_INFO].mask
+
+static struct id_pool *tnl_id_pool = NULL;
+
+static uint32_t
+tnl_id_alloc(void)
+{
+    uint32_t id;
+
+    if (!tnl_id_pool) {
+        /* Haven't initiated yet, do it here */
+        tnl_id_pool = id_pool_create(MIN_TUNNEL_ID, MAX_TUNNEL_ID);
+    }
+
+    if (id_pool_alloc_id(tnl_id_pool, &id)) {
+        return id;
+    }
+
+    return 0;
+}
+
+static void
+tnl_id_free(uint32_t id)
+{
+    id_pool_free_id(tnl_id_pool, id);
+}
+
+static struct ds *
+dump_tnl_id(struct ds *s, void *data)
+{
+    struct flow_tnl *tnl = data;
+
+    ds_put_format(s, IP_FMT" -> "IP_FMT", tun_id=%"PRIu64,
+                  IP_ARGS(tnl->ip_src), IP_ARGS(tnl->ip_dst),
+                  ntohll(tnl->tun_id));
+    return s;
+}
+
+static struct context_metadata tnl_md = {
+    .name = "tunnel",
+    .dump_context_data = dump_tnl_id,
+    .d2i_hmap = HMAP_INITIALIZER(&tnl_md.d2i_hmap),
+    .i2d_hmap = HMAP_INITIALIZER(&tnl_md.i2d_hmap),
+    .id_alloc = tnl_id_alloc,
+    .id_free = tnl_id_free,
+    .data_size = 2 * sizeof(struct flow_tnl),
+};
+
+static void
+get_tnl_masked(struct flow_tnl *dst_key, struct flow_tnl *dst_mask,
+               struct flow_tnl *src_key, struct flow_tnl *src_mask)
+{
+    char *psrc_key, *psrc_mask;
+    char *pdst_key;
+    int i;
+
+    if (dst_mask) {
+        memcpy(dst_mask, src_mask, sizeof *dst_mask);
+
+        pdst_key = (char *)dst_key;
+        psrc_key = (char *)src_key;
+        psrc_mask = (char *)src_mask;
+        for (i = 0; i < sizeof *dst_key; i++) {
+            *pdst_key++ = *psrc_key++ & *psrc_mask++;
+        }
+    } else {
+        memcpy(dst_key, src_key, sizeof *dst_key);
+    }
+}
+
+OVS_UNUSED
+static int
+get_tnl_id(struct flow_tnl *tnl_key, struct flow_tnl *tnl_mask,
+           uint32_t *tnl_id)
+{
+    struct flow_tnl tnl_tmp[2];
+    struct context_data tnl_ctx = {
+        .data = tnl_tmp,
+    };
+
+    get_tnl_masked(&tnl_tmp[0], &tnl_tmp[1], tnl_key, tnl_mask);
+    if (is_all_zeros(&tnl_tmp, sizeof tnl_tmp)) {
+        *tnl_id = 0;
+        return 0;
+    }
+    return get_context_data_id_by_data(&tnl_md, &tnl_ctx, tnl_id);
+}
+
+OVS_UNUSED
+static void
+put_tnl_id(uint32_t tnl_id)
+{
+    put_context_data_by_id(&tnl_md, tnl_id);
+}
+
 struct flow_miss_ctx {
     odp_port_t vport;
 };
