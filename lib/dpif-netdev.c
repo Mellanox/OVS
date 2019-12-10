@@ -7034,13 +7034,13 @@ dfc_processing(struct dp_netdev_pmd_thread *pmd,
              * of HW offload processing.
              */
             struct tx_port *p;
-            int hw_ret;
 
             tcp_flags = parse_tcp_flags(packet);
             p = pmd_send_port_cache_lookup(pmd, port_no);
-            hw_ret = p ? netdev_hw_miss_packet_recover(p->port->netdev, mark,
-                                                       packet) : -1;
-            flow = hw_ret == -1 ? mark_to_flow_find(pmd, mark) : NULL;
+            if (p) {
+                netdev_hw_miss_packet_recover(p->port->netdev, mark, packet);
+            }
+            flow = mark_to_flow_find(pmd, mark);
             if (OVS_LIKELY(flow)) {
                 if (OVS_LIKELY(batch_enable)) {
                     dp_netdev_queue_batches(packet, flow, tcp_flags, batches,
