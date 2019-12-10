@@ -181,6 +181,9 @@ ufid_to_rte_flow_disassociate(struct ufid_to_rte_flow_data *data)
  * "name" and "dump_context_data" are used for log messages.
  * "d2i_hmap" is the data-to-id map.
  * "i2d_hmap" is the id-to-data map.
+ * "associated_i2d_cmap" is a id-to-data map used to associate already
+ *      allocated ids.
+ * "has_associated_map" is true if this metadata has an associated map.
  * "id_alloc" is used to allocate an id for a new data.
  * "id_free" is used to free an id for the last data release.
  * "data_size" is the size of the data in the elements.
@@ -190,6 +193,8 @@ struct context_metadata {
     struct ds *(*dump_context_data)(struct ds *s, void *data);
     struct hmap d2i_hmap;
     struct hmap i2d_hmap;
+    struct hmap associated_i2d_hmap;
+    bool has_associated_map;
     uint32_t (*id_alloc)(void);
     void (*id_free)(uint32_t id);
     size_t data_size;
@@ -198,6 +203,7 @@ struct context_metadata {
 struct context_data {
     struct hmap_node d2i_node;
     struct hmap_node i2d_node;
+    struct hmap_node associated_i2d_node;
     void *data;
     uint32_t id;
     uint32_t refcnt;
@@ -270,6 +276,16 @@ get_context_data_by_id(struct context_metadata *md, uint32_t id, void *data)
     struct ds s;
 
     ds_init(&s);
+    if (md->has_associated_map) {
+        HMAP_FOR_EACH_WITH_HASH (data_cur, associated_i2d_node, ihash,
+                                 &md->associated_i2d_hmap) {
+            if (data_cur->id == id) {
+                memcpy(data, data_cur->data, md->data_size);
+                ds_destroy(&s);
+                return 0;
+            }
+        }
+    }
     HMAP_FOR_EACH_WITH_HASH (data_cur, i2d_node, ihash, &md->i2d_hmap) {
         if (data_cur->id == id) {
             memcpy(data, data_cur->data, md->data_size);
@@ -313,6 +329,70 @@ put_context_data_by_id(struct context_metadata *md, uint32_t id)
     }
     VLOG_ERR_RL(&rl,
                 "%s: %s: error. id=%d not found", __func__, md->name, id);
+}
+
+static int
+associate_id_data(struct context_metadata *md,
+                  struct context_data *data_req)
+{
+    struct context_data *data_cur;
+    size_t ihash;
+    struct ds s;
+
+    ds_init(&s);
+    data_cur = xzalloc(sizeof *data_cur);
+    if (!data_cur) {
+        goto err;
+    }
+    data_cur->data = xmalloc(md->data_size);
+    if (!data_cur->data) {
+        goto err_data_alloc;
+    }
+    memcpy(data_cur->data, data_req->data, md->data_size);
+    data_cur->refcnt = 1;
+    data_cur->id = data_req->id;
+    ihash = hash_add(0, data_cur->id);
+    hmap_insert(&md->associated_i2d_hmap, &data_cur->associated_i2d_node,
+                ihash);
+    VLOG_DBG_RL(&rl, "%s: %s: '%s', refcnt=%d, id=%d", __func__, md->name,
+                ds_cstr(md->dump_context_data(&s, data_cur->data)),
+                data_cur->refcnt, data_cur->id);
+    ds_destroy(&s);
+    return 0;
+
+err_data_alloc:
+    free(data_cur);
+err:
+    VLOG_ERR_RL(&rl, "%s: %s: error. '%s'", __func__, md->name,
+                ds_cstr(md->dump_context_data(&s, data_cur->data)));
+    ds_destroy(&s);
+    return -1;
+}
+
+static int
+disassociate_id_data(struct context_metadata *md, uint32_t id)
+{
+    struct context_data *data_cur;
+    size_t ihash;
+    struct ds s;
+
+    ihash = hash_add(0, id);
+    HMAP_FOR_EACH_WITH_HASH (data_cur, associated_i2d_node, ihash,
+                             &md->associated_i2d_hmap) {
+        if (data_cur->id == id) {
+            ds_init(&s);
+            VLOG_DBG_RL(&rl, "%s: %s: '%s', id=%d", __func__, md->name,
+                        ds_cstr(md->dump_context_data(&s, data_cur->data)),
+                        data_cur->id);
+            ds_destroy(&s);
+            hmap_remove(&md->associated_i2d_hmap,
+                        &data_cur->associated_i2d_node);
+            free(data_cur);
+            return 0;
+        }
+    }
+    VLOG_DBG_RL(&rl, "%s: %s: error. id=%d not found", __func__, md->name, id);
+    return -1;
 }
 
 enum {
@@ -591,6 +671,9 @@ static struct context_metadata flow_miss_ctx_md = {
     .dump_context_data = dump_flow_ctx_id,
     .d2i_hmap = HMAP_INITIALIZER(&flow_miss_ctx_md.d2i_hmap),
     .i2d_hmap = HMAP_INITIALIZER(&flow_miss_ctx_md.i2d_hmap),
+    .associated_i2d_hmap =
+        HMAP_INITIALIZER(&flow_miss_ctx_md.associated_i2d_hmap),
+    .has_associated_map = true,
     .id_alloc = netdev_offload_flow_mark_alloc,
     .id_free = netdev_offload_flow_mark_free,
     .data_size = sizeof(struct flow_miss_ctx),
@@ -618,6 +701,27 @@ static int
 find_flow_miss_ctx(int flow_ctx_id, struct flow_miss_ctx *ctx)
 {
     return get_context_data_by_id(&flow_miss_ctx_md, flow_ctx_id, ctx);
+}
+
+OVS_UNUSED
+static int
+associate_flow_id(uint32_t flow_id, struct flow_miss_ctx *flow_ctx_data)
+{
+    struct context_data flow_ctx = {
+        .data = flow_ctx_data,
+        .id = flow_id,
+    };
+
+    flow_miss_ctx_md.data_size = sizeof *flow_ctx_data;
+
+    return associate_id_data(&flow_miss_ctx_md, &flow_ctx);
+}
+
+OVS_UNUSED
+static int
+disassociate_flow_id(uint32_t flow_id)
+{
+    return disassociate_id_data(&flow_miss_ctx_md, flow_id);
 }
 
 static void
