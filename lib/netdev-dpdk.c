@@ -5202,6 +5202,29 @@ out:
     return devargs;
 }
 
+struct netdev *
+netdev_dpdk_get_netdev_by_devargs(const char *devargs)
+{
+    struct netdev *netdev = NULL;
+    struct netdev_dpdk *dev;
+    dpdk_port_t port_id;
+
+    ovs_mutex_lock(&dpdk_mutex);
+    port_id = netdev_dpdk_get_port_by_devargs(devargs);
+    if (!rte_eth_dev_is_valid_port(port_id)) {
+        goto out;
+    }
+    dev = netdev_dpdk_lookup_by_port_id(port_id);
+    ovs_mutex_lock(&dev->mutex);
+    netdev = &dev->up;
+    netdev_ref(netdev);
+    ovs_mutex_unlock(&dev->mutex);
+
+out:
+    ovs_mutex_unlock(&dpdk_mutex);
+    return netdev;
+}
+
 bool
 netdev_dpdk_flow_api_supported(struct netdev *netdev)
 {
