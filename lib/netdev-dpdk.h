@@ -57,6 +57,8 @@ int
 netdev_dpdk_get_port_id(struct netdev *netdev);
 bool
 netdev_dpdk_is_uplink_port(struct netdev *netdev);
+const char *
+netdev_dpdk_get_port_devargs(struct netdev *netdev);
 
 #else
 
