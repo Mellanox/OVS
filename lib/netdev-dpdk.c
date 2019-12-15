@@ -5184,6 +5184,24 @@ out:
     return ret;
 }
 
+const char *
+netdev_dpdk_get_port_devargs(struct netdev *netdev)
+{
+    const char *devargs = NULL;
+    struct netdev_dpdk *dev;
+
+    if (!is_dpdk_class(netdev->netdev_class)) {
+        goto out;
+    }
+
+    dev = netdev_dpdk_cast(netdev);
+    ovs_mutex_lock(&dev->mutex);
+    devargs = dev->devargs;
+    ovs_mutex_unlock(&dev->mutex);
+out:
+    return devargs;
+}
+
 bool
 netdev_dpdk_flow_api_supported(struct netdev *netdev)
 {
