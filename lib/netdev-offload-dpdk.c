@@ -16,6 +16,8 @@
  */
 #include <config.h>
 
+#include <sys/types.h>
+#include <netinet/ip6.h>
 #include <rte_flow.h>
 
 #include "cmap.h"
@@ -322,6 +324,61 @@ dump_flow_pattern(struct ds *s, const struct rte_flow_item *item)
         } else {
             ds_put_cstr(s, "  Mask = null\n");
         }
+    } else if (item->type == RTE_FLOW_ITEM_TYPE_IPV6) {
+        const struct rte_flow_item_ipv6 *ipv6_spec = item->spec;
+        const struct rte_flow_item_ipv6 *ipv6_mask = item->mask;
+
+        char src_addr_str[INET6_ADDRSTRLEN];
+        char dst_addr_str[INET6_ADDRSTRLEN];
+
+        ds_put_cstr(s, "rte flow ipv6 pattern:\n");
+        if (ipv6_spec) {
+            ipv6_string_mapped(src_addr_str,
+                               (struct in6_addr *)&ipv6_spec->hdr.src_addr);
+            ipv6_string_mapped(dst_addr_str,
+                               (struct in6_addr *)&ipv6_spec->hdr.dst_addr);
+
+            ds_put_format(s, "  Spec:  vtc_flow=%#"PRIx32",  proto=%"PRIu8","
+                          "  hlim=%"PRIu8",  src=%s,  dst=%s\n",
+                          ipv6_spec->hdr.vtc_flow, ipv6_spec->hdr.proto,
+                          ipv6_spec->hdr.hop_limits, src_addr_str,
+                          dst_addr_str);
+        } else {
+            ds_put_cstr(s, "  Spec = null\n");
+        }
+        if (ipv6_mask) {
+            ipv6_string_mapped(src_addr_str,
+                               (struct in6_addr *)&ipv6_mask->hdr.src_addr);
+            ipv6_string_mapped(dst_addr_str,
+                               (struct in6_addr *)&ipv6_mask->hdr.dst_addr);
+
+            ds_put_format(s, "  Mask:  vtc_flow=%#"PRIx32",  proto=%#"PRIx8","
+                          "  hlim=%#"PRIx8",  src=%s,  dst=%s\n",
+                          ipv6_mask->hdr.vtc_flow, ipv6_mask->hdr.proto,
+                          ipv6_mask->hdr.hop_limits, src_addr_str,
+                          dst_addr_str);
+        } else {
+            ds_put_cstr(s, "  Mask = null\n");
+        }
+    } else if (item->type == RTE_FLOW_ITEM_TYPE_VXLAN) {
+        const struct rte_flow_item_vxlan *vxlan_spec = item->spec;
+        const struct rte_flow_item_vxlan *vxlan_mask = item->mask;
+
+        ds_put_cstr(s, "rte flow vxlan pattern:\n");
+        if (vxlan_spec) {
+            ds_put_format(s, "  Spec: flags=0x%x, vni=%d\n",
+                          vxlan_spec->flags,
+                          ntohl(*(ovs_be32 *)vxlan_spec->vni) >> 8);
+        } else {
+            ds_put_cstr(s, "  Spec = null\n");
+        }
+        if (vxlan_mask) {
+            ds_put_format(s, "  Mask: flags=0x%x, vni=0x%06x\n",
+                          vxlan_mask->flags,
+                          ntohl(*(ovs_be32 *)vxlan_mask->vni) >> 8);
+        } else {
+            ds_put_cstr(s, "  Mask = null\n");
+        }
     } else {
         ds_put_format(s, "unknown rte flow pattern (%d)\n", item->type);
     }
@@ -431,6 +488,14 @@ dump_flow_action(struct ds *s, const struct rte_flow_action *actions)
             ds_put_hex_dump(s, raw_encap->data, raw_encap->size, 0, false);
         } else {
             ds_put_cstr(s, "  Raw-encap = null\n");
+        }
+    } else if (actions->type == RTE_FLOW_ACTION_TYPE_VXLAN_ENCAP) {
+        const struct rte_flow_action_vxlan_encap *vxlan_encap = actions->conf;
+        const struct rte_flow_item *items = vxlan_encap->definition;
+
+        ds_put_cstr(s, "rte flow vxlan-encap action:\n");
+        while (items && items->type != RTE_FLOW_ITEM_TYPE_END) {
+            dump_flow_pattern(s, items++);
         }
     } else {
         ds_put_format(s, "unknown rte flow action (%d)\n", actions->type);
@@ -981,6 +1046,93 @@ parse_set_actions(struct flow_actions *actions,
     return 0;
 }
 
+/* Maximum number of items in struct rte_flow_action_vxlan_encap.
+ * ETH / IPv4(6) / UDP / VXLAN / END
+ */
+#define ACTION_VXLAN_ENCAP_ITEMS_NUM 5
+
+static int
+add_vxlan_encap_action(struct flow_actions *actions,
+                       const void *header)
+{
+    const struct eth_header *eth;
+    const struct udp_header *udp;
+    struct vxlan_data {
+        struct rte_flow_action_vxlan_encap conf;
+        struct rte_flow_item items[0];
+    } *vxlan_data;
+    BUILD_ASSERT_DECL(offsetof(struct vxlan_data, conf) == 0);
+    const void *vxlan;
+    const void *l3;
+    const void *l4;
+    int field;
+
+    vxlan_data = xzalloc(sizeof *vxlan_data +
+                         sizeof(struct rte_flow_item) *
+                         ACTION_VXLAN_ENCAP_ITEMS_NUM);
+    field = 0;
+
+    eth = header;
+    /* Ethernet */
+    vxlan_data->items[field].type = RTE_FLOW_ITEM_TYPE_ETH;
+    vxlan_data->items[field].spec = eth;
+    vxlan_data->items[field].mask = &rte_flow_item_eth_mask;
+    field++;
+
+    l3 = eth + 1;
+    /* IP */
+    if (eth->eth_type == htons(ETH_TYPE_IP)) {
+        /* IPv4 */
+        const struct ip_header *ip = l3;
+
+        vxlan_data->items[field].type = RTE_FLOW_ITEM_TYPE_IPV4;
+        vxlan_data->items[field].spec = ip;
+        vxlan_data->items[field].mask = &rte_flow_item_ipv4_mask;
+
+        if (ip->ip_proto != IPPROTO_UDP) {
+            goto err;
+        }
+        l4 = (ip + 1);
+    } else if (eth->eth_type == htons(ETH_TYPE_IPV6)) {
+        const struct ovs_16aligned_ip6_hdr *ip6 = l3;
+
+        vxlan_data->items[field].type = RTE_FLOW_ITEM_TYPE_IPV6;
+        vxlan_data->items[field].spec = ip6;
+        vxlan_data->items[field].mask = &rte_flow_item_ipv6_mask;
+
+        if (ip6->ip6_nxt != IPPROTO_UDP) {
+            goto err;
+        }
+        l4 = (ip6 + 1);
+    } else {
+        goto err;
+    }
+    field++;
+
+    udp = (const struct udp_header *)l4;
+    vxlan_data->items[field].type = RTE_FLOW_ITEM_TYPE_UDP;
+    vxlan_data->items[field].spec = udp;
+    vxlan_data->items[field].mask = &rte_flow_item_udp_mask;
+    field++;
+
+    vxlan = (udp + 1);
+    vxlan_data->items[field].type = RTE_FLOW_ITEM_TYPE_VXLAN;
+    vxlan_data->items[field].spec = vxlan;
+    vxlan_data->items[field].mask = &rte_flow_item_vxlan_mask;
+    field++;
+
+    vxlan_data->items[field].type = RTE_FLOW_ITEM_TYPE_END;
+
+    vxlan_data->conf.definition = vxlan_data->items;
+
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_VXLAN_ENCAP, vxlan_data);
+
+    return 0;
+err:
+    free(vxlan_data);
+    return -1;
+}
+
 static int
 parse_clone_actions(struct netdev *netdev,
                     struct flow_actions *actions,
@@ -995,9 +1147,14 @@ parse_clone_actions(struct netdev *netdev,
 
         if (clone_type == OVS_ACTION_ATTR_TUNNEL_PUSH) {
             const struct ovs_action_push_tnl *tnl_push = nl_attr_get(ca);
-            struct rte_flow_action_raw_encap *raw_encap =
-                xzalloc(sizeof *raw_encap);
+            struct rte_flow_action_raw_encap *raw_encap;
 
+            if (tnl_push->tnl_type == OVS_VPORT_TYPE_VXLAN &&
+                !add_vxlan_encap_action(actions, tnl_push->header)) {
+                continue;
+            }
+
+            raw_encap = xzalloc(sizeof *raw_encap);
             raw_encap->data = (uint8_t *)tnl_push->header;
             raw_encap->preserve = NULL;
             raw_encap->size = tnl_push->header_len;
