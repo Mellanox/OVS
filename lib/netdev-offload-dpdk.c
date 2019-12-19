@@ -476,18 +476,45 @@ static struct reg_field reg_fields[] = {
     },
 };
 
+enum table_type {
+    TABLE_TYPE_FLOW,
+    TABLE_TYPE_CT,
+    TABLE_TYPE_CT_NAT,
+    TABLE_TYPE_POST_CT,
+};
+
 struct table_id_data {
     odp_port_t vport;
     uint32_t recirc_id;
+    enum table_type table_type;
 };
 
 static struct ds *
 dump_table_id(struct ds *s, void *data)
 {
     struct table_id_data *table_id_data = data;
+    char *table_type_str;
 
-    ds_put_format(s, "vport=%"PRIu32", recirc_id=%"PRIu32,
-                  table_id_data->vport, table_id_data->recirc_id);
+    switch (table_id_data->table_type) {
+    case TABLE_TYPE_FLOW:
+        table_type_str = "flow";
+        break;
+    case TABLE_TYPE_CT:
+        table_type_str = "ct";
+        break;
+    case TABLE_TYPE_CT_NAT:
+        table_type_str = "ct-nat";
+        break;
+    case TABLE_TYPE_POST_CT:
+        table_type_str = "post-ct";
+        break;
+    default:
+        OVS_NOT_REACHED();
+    }
+
+    ds_put_format(s, "(%s): vport=%"PRIu32", recirc_id=%"PRIu32,
+                  table_type_str, table_id_data->vport,
+                  table_id_data->recirc_id);
     return s;
 }
 
@@ -529,17 +556,20 @@ static struct context_metadata table_id_md = {
 };
 
 static int
-get_table_id(odp_port_t vport, uint32_t recirc_id, uint32_t *table_id)
+get_table_id(odp_port_t vport, uint32_t recirc_id, enum table_type table_type,
+             uint32_t *table_id)
 {
     struct table_id_data table_id_data = {
         .vport = vport,
         .recirc_id = recirc_id,
+        .table_type = table_type,
     };
     struct context_data table_id_context = {
         .data = &table_id_data,
     };
 
-    if (vport == ODPP_NONE && recirc_id == 0) {
+    if (vport == ODPP_NONE && recirc_id == 0 &&
+        table_type == TABLE_TYPE_FLOW) {
         *table_id = 0;
         return 0;
     }
@@ -1762,7 +1792,7 @@ parse_flow_match(struct netdev *netdev,
         return -1;
     }
 
-    ret = get_table_id(act_vars->vport, match->flow.recirc_id,
+    ret = get_table_id(act_vars->vport, match->flow.recirc_id, TABLE_TYPE_FLOW,
                        &act_resources->self_table_id);
     if (ret) {
         return -1;
@@ -2509,7 +2539,8 @@ add_tnl_pop_action(struct flow_actions *actions,
         return -1;
     }
     add_mark_action(actions, act_resources->flow_miss_ctx_id);
-    if (get_table_id(port, 0, &act_resources->next_table_id)) {
+    if (get_table_id(port, 0, TABLE_TYPE_FLOW,
+                     &act_resources->next_table_id)) {
         return -1;
     }
     add_jump_action(actions, act_resources->next_table_id);
@@ -2536,7 +2567,7 @@ add_recirc_action(struct flow_actions *actions,
         return -1;
     }
     add_mark_action(actions, act_resources->flow_miss_ctx_id);
-    if (get_table_id(act_vars->vport, miss_ctx.recirc_id,
+    if (get_table_id(act_vars->vport, miss_ctx.recirc_id, TABLE_TYPE_FLOW,
         &act_resources->next_table_id)) {
         return -1;
     }
