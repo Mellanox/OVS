@@ -1489,6 +1489,29 @@ free_flow_actions(struct flow_actions *actions)
 }
 
 static int
+netdev_offload_dpdk_destroy_flow(struct netdev *netdev,
+                                 struct rte_flow *rte_flow,
+                                 const ovs_u128 *ufid)
+{
+    struct rte_flow_error error;
+    int ret;
+
+    ret = netdev_dpdk_rte_flow_destroy(netdev, rte_flow, &error);
+    if (!ret) {
+        VLOG_DBG("%s: removed rte flow %p associated with ufid "UUID_FMT,
+                 netdev_get_name(netdev), rte_flow,
+                 UUID_ARGS((struct uuid *)ufid));
+    } else {
+        VLOG_ERR("%s: Failed to destroy flow: %s (%u)",
+                 netdev_get_name(netdev), error.message,
+                 error.type);
+        return -1;
+    }
+
+    return ret;
+}
+
+static int
 parse_tnl_ip_match(struct flow_patterns *patterns,
                    struct match *match,
                    uint8_t proto)
@@ -2904,9 +2927,8 @@ out:
 }
 
 static int
-netdev_offload_dpdk_flow_destroy(struct ufid_to_rte_flow_data *rte_flow_data)
+netdev_offload_dpdk_remove_flows(struct ufid_to_rte_flow_data *rte_flow_data)
 {
-    struct rte_flow_error error;
     struct netdev *flow_netdev;
     struct flows_handle *flows;
     struct netdev *netdev;
@@ -2941,15 +2963,8 @@ netdev_offload_dpdk_flow_destroy(struct ufid_to_rte_flow_data *rte_flow_data)
             if (!rte_flow) {
                 continue;
             }
-            ret = netdev_dpdk_rte_flow_destroy(flow_netdev, rte_flow, &error);
-            if (!ret) {
-                VLOG_DBG("%s: removed rte flow %p associated with ufid "
-                         UUID_FMT, netdev_get_name(flow_netdev), rte_flow,
-                         UUID_ARGS((struct uuid *)ufid));
-            } else {
-                VLOG_ERR("%s: Failed to destroy flow: %s (%u)",
-                         netdev_get_name(flow_netdev), error.message,
-                         error.type);
+            ret = netdev_offload_dpdk_destroy_flow(flow_netdev, rte_flow, ufid);
+            if (ret) {
                 netdev_close(flow_netdev);
                 goto out;
             }
@@ -2985,7 +3000,7 @@ netdev_offload_dpdk_flow_put(struct netdev *netdev, struct match *match,
     if (rte_flow_data) {
         old_stats = rte_flow_data->stats;
         modification = true;
-        ret = netdev_offload_dpdk_flow_destroy(rte_flow_data);
+        ret = netdev_offload_dpdk_remove_flows(rte_flow_data);
         if (ret < 0) {
             return ret;
         }
@@ -3020,7 +3035,7 @@ netdev_offload_dpdk_flow_del(struct netdev *netdev OVS_UNUSED,
     if (stats) {
         memset(stats, 0, sizeof *stats);
     }
-    return netdev_offload_dpdk_flow_destroy(rte_flow_data);
+    return netdev_offload_dpdk_remove_flows(rte_flow_data);
 }
 
 static int
@@ -3121,7 +3136,7 @@ netdev_offload_dpdk_flow_flush(struct netdev *netdev)
             continue;
         }
 
-        netdev_offload_dpdk_flow_destroy(data);
+        netdev_offload_dpdk_remove_flows(data);
     }
 
     return 0;
