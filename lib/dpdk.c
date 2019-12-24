@@ -29,6 +29,7 @@
 #ifdef DPDK_PDUMP
 #include <rte_pdump.h>
 #endif
+#include <rte_flow.h>
 
 #include "dirs.h"
 #include "fatal-signal.h"
@@ -440,6 +441,7 @@ dpdk_init__(const struct smap *ovs_other_config)
     }
 #endif
 
+    rte_flow_dynf_metadata_register();
     /* Finally, register the dpdk classes */
     netdev_dpdk_register();
     netdev_register_flow_api_provider(&netdev_offload_dpdk);
