@@ -27,6 +27,7 @@
 #include <rte_log.h>
 #include <rte_memzone.h>
 #include <rte_version.h>
+#include <rte_flow.h>
 
 #include "dirs.h"
 #include "fatal-signal.h"
@@ -529,6 +530,8 @@ dpdk_init__(const struct smap *ovs_other_config)
     /* We are called from the main thread here */
     RTE_PER_LCORE(_lcore_id) = NON_PMD_CORE_ID;
 
+
+    rte_flow_dynf_metadata_register();
     /* Finally, register the dpdk classes */
     netdev_dpdk_register();
     netdev_register_flow_api_provider(&netdev_offload_dpdk);

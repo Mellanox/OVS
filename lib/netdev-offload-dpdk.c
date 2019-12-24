@@ -314,6 +314,87 @@ put_context_data_by_id(struct context_metadata *md, uint32_t id)
                 "%s: %s: error. id=%d not found", __func__, md->name, id);
 }
 
+enum {
+    REG_FIELD_CT_STATE,
+    REG_FIELD_CT_ZONE,
+    REG_FIELD_CT_MARK,
+    REG_FIELD_CT_LABEL0,
+    REG_FIELD_CT_LABEL1,
+    REG_FIELD_CT_LABEL2,
+    REG_FIELD_CT_LABEL3,
+    REG_FIELD_TUN_INFO,
+    REG_FIELD_CT_CTX,
+    REG_FIELD_NUM,
+};
+
+enum reg_type {
+    REG_TYPE_TAG,
+    REG_TYPE_META,
+};
+
+struct reg_field {
+    enum reg_type type;
+    uint8_t index;
+    uint32_t offset;
+    uint32_t mask;
+};
+
+static struct reg_field reg_fields[] = {
+    [REG_FIELD_CT_STATE] = {
+        .type = REG_TYPE_TAG,
+        .index = 0,
+        .offset = 0,
+        .mask = 0x000000FF,
+    },
+    [REG_FIELD_CT_ZONE] = {
+        .type = REG_TYPE_TAG,
+        .index = 0,
+        .offset = 8,
+        .mask = 0x000000FF,
+    },
+    [REG_FIELD_TUN_INFO] = {
+        .type = REG_TYPE_TAG,
+        .index = 0,
+        .offset = 16,
+        .mask = 0x0000FFFF,
+    },
+    [REG_FIELD_CT_MARK] = {
+        .type = REG_TYPE_TAG,
+        .index = 1,
+        .offset = 0,
+        .mask = 0xFFFFFFFF,
+    },
+    [REG_FIELD_CT_LABEL0] = {
+        .type = REG_TYPE_TAG,
+        .index = 2,
+        .offset = 0,
+        .mask = 0xFFFFFFFF,
+    },
+    [REG_FIELD_CT_LABEL1] = {
+        .type = REG_TYPE_TAG,
+        .index = 3,
+        .mask = 0xFFFFFFFF,
+    },
+    [REG_FIELD_CT_LABEL2] = {
+        .type = REG_TYPE_TAG,
+        .index = 4,
+        .offset = 0,
+        .mask = 0xFFFFFFFF,
+    },
+    [REG_FIELD_CT_LABEL3] = {
+        .type = REG_TYPE_TAG,
+        .index = 5,
+        .offset = 0,
+        .mask = 0xFFFFFFFF,
+    },
+    [REG_FIELD_CT_CTX] = {
+        .type = REG_TYPE_META,
+        .index = 0,
+        .offset = 0,
+        .mask = 0x0000FFFF,
+    },
+};
+
 struct table_id_data {
     odp_port_t vport;
 };
@@ -663,6 +744,34 @@ dump_flow_pattern(struct ds *s, const struct rte_flow_item *item)
                               ntohl(*(ovs_be32 *)vxlan_mask->vni) >> 8);
         }
         ds_put_cstr(s, "/ ");
+    } else if (item->type == RTE_FLOW_ITEM_TYPE_TAG) {
+        const struct rte_flow_item_tag *tag_spec = item->spec;
+        const struct rte_flow_item_tag *tag_mask = item->mask;
+
+        ds_put_cstr(s, "tag ");
+        if (tag_spec) {
+            if (!tag_mask) {
+                tag_mask = &rte_flow_item_tag_mask;
+            }
+            DUMP_PATTERN_ITEM(tag_mask->index, "index", "%"PRIu8,
+                              tag_spec->index, tag_mask->index);
+            DUMP_PATTERN_ITEM(tag_mask->data, "data", "0x%"PRIx32,
+                              tag_spec->data, tag_mask->data);
+        }
+        ds_put_cstr(s, "/ ");
+    } else if (item->type == RTE_FLOW_ITEM_TYPE_META) {
+        const struct rte_flow_item_meta *meta_spec = item->spec;
+        const struct rte_flow_item_meta *meta_mask = item->mask;
+
+        ds_put_cstr(s, "meta ");
+        if (meta_spec) {
+            if (!meta_mask) {
+                meta_mask = &rte_flow_item_meta_mask;
+            }
+            DUMP_PATTERN_ITEM(meta_mask->data, "data", "0x%"PRIx32,
+                              meta_spec->data, meta_mask->data);
+        }
+        ds_put_cstr(s, "/ ");
     } else {
         ds_put_format(s, "unknown rte flow pattern (%d)\n", item->type);
     }
@@ -869,6 +978,24 @@ dump_flow_action(struct ds *s, struct ds *s_extra,
         ds_put_cstr(s, "/ ");
     } else if (actions->type == RTE_FLOW_ACTION_TYPE_VXLAN_DECAP) {
         ds_put_cstr(s, "vxlan_decap / ");
+    } else if (actions->type == RTE_FLOW_ACTION_TYPE_SET_TAG) {
+        const struct rte_flow_action_set_tag *set_tag = actions->conf;
+
+        ds_put_cstr(s, "set_tag ");
+        if (set_tag) {
+            ds_put_format(s, "index %u data 0x%08x mask 0x%08x ",
+                          set_tag->index, set_tag->data, set_tag->mask);
+        }
+        ds_put_cstr(s, "/ ");
+    } else if (actions->type == RTE_FLOW_ACTION_TYPE_SET_META) {
+        const struct rte_flow_action_set_meta *meta = actions->conf;
+
+        ds_put_cstr(s, "set_meta ");
+        if (meta) {
+            ds_put_format(s, "data 0x%08x mask 0x%08x ", meta->data,
+                          meta->mask);
+        }
+        ds_put_cstr(s, "/ ");
     } else {
         ds_put_format(s, "unknown rte flow action (%d)\n", actions->type);
     }
@@ -1156,6 +1283,142 @@ parse_vxlan_match(struct flow_patterns *patterns,
     consumed_masks->tunnel.flags = 0;
 
     add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_VXLAN, vx_spec, vx_mask);
+    return 0;
+}
+
+OVS_UNUSED
+static int
+get_packet_reg_field(struct dp_packet *packet, uint8_t reg_field_id,
+                     uint32_t *val)
+{
+    struct reg_field *reg_field;
+    uint32_t mark = 0;
+    uint32_t meta;
+
+    if (reg_field_id >= REG_FIELD_NUM) {
+        VLOG_ERR("unkonwn reg id %d", reg_field_id);
+        return -1;
+    }
+    reg_field = &reg_fields[reg_field_id];
+    if (reg_field->type != REG_TYPE_META) {
+        VLOG_ERR("reg id %d is not meta", reg_field_id);
+        return -1;
+    }
+    if (!dp_packet_get_meta(packet, &meta)) {
+        return -1;
+    }
+
+    meta >>= reg_field->offset;
+    meta &= reg_field->mask;
+
+    if (meta == 0) {
+        dp_packet_has_flow_mark(packet, &mark);
+        VLOG_ERR_RL(&rl, "port %d, recirc=%d: packet reg field id %d is 0, mark=%d",
+                    packet->md.in_port.odp_port, packet->md.recirc_id, reg_field_id, mark);
+        return -1;
+    }
+
+    *val = meta;
+    return 0;
+}
+
+OVS_UNUSED
+static int
+add_pattern_match_reg_field(struct flow_patterns *patterns,
+                            uint8_t reg_field_id, uint32_t val, uint32_t mask)
+{
+    struct rte_flow_item_meta *meta_spec, *meta_mask;
+    struct rte_flow_item_tag *tag_spec, *tag_mask;
+    struct reg_field *reg_field;
+    uint32_t reg_spec, reg_mask;
+
+    if (reg_field_id >= REG_FIELD_NUM) {
+        VLOG_ERR("unkonwn reg id %d", reg_field_id);
+        return -1;
+    }
+    reg_field = &reg_fields[reg_field_id];
+    if (val != (val & reg_field->mask)) {
+        VLOG_ERR("value 0x%"PRIx32" is out of range for reg id %d", val,
+                 reg_field_id);
+        return -1;
+    }
+
+    reg_spec = (val & reg_field->mask) << reg_field->offset;
+    reg_mask = (mask & reg_field->mask) << reg_field->offset;
+    switch (reg_field->type) {
+    case REG_TYPE_TAG:
+        tag_spec = xzalloc(sizeof *tag_spec);
+        tag_spec->index = reg_field->index;
+        tag_spec->data = reg_spec;
+
+        tag_mask = xzalloc(sizeof *tag_mask);
+        tag_mask->index = 0xFF;
+        tag_mask->data = reg_mask;
+
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_TAG, tag_spec, tag_mask);
+        break;
+    case REG_TYPE_META:
+        meta_spec = xzalloc(sizeof *meta_spec);
+        meta_spec->data = reg_spec;
+
+        meta_mask = xzalloc(sizeof *meta_mask);
+        meta_mask->data = reg_mask;
+
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_META, meta_spec,
+                         meta_mask);
+        break;
+    default:
+        VLOG_ERR("unkonwn reg type (%d) for reg field %d", reg_field->type,
+                 reg_field_id);
+        return -1;
+    }
+
+    return 0;
+}
+
+OVS_UNUSED
+static int
+add_action_set_reg_field(struct flow_actions *actions,
+                         uint8_t reg_field_id, uint32_t val, uint32_t mask)
+{
+    struct rte_flow_action_set_meta *set_meta;
+    struct rte_flow_action_set_tag *set_tag;
+    struct reg_field *reg_field;
+    uint32_t reg_spec, reg_mask;
+
+    if (reg_field_id >= REG_FIELD_NUM) {
+        VLOG_ERR("unkonwn reg id %d", reg_field_id);
+        return -1;
+    }
+    reg_field = &reg_fields[reg_field_id];
+    if (val != (val & reg_field->mask)) {
+        VLOG_ERR_RL(&rl, "value 0x%"PRIx32" is out of range for reg id %d",
+                          val, reg_field_id);
+        return -1;
+    }
+
+    reg_spec = (val & reg_field->mask) << reg_field->offset;
+    reg_mask = (mask & reg_field->mask) << reg_field->offset;
+    switch (reg_field->type) {
+    case REG_TYPE_TAG:
+        set_tag = xzalloc(sizeof *set_tag);
+        set_tag->index = reg_field->index;
+        set_tag->data = reg_spec;
+        set_tag->mask = reg_mask;
+        add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_TAG, set_tag);
+        break;
+    case REG_TYPE_META:
+        set_meta = xzalloc(sizeof *set_meta);
+        set_meta->data = reg_spec;
+        set_meta->mask = reg_mask;
+        add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_META, set_meta);
+        break;
+    default:
+        VLOG_ERR("unkonwn reg type (%d) for reg field %d", reg_field->type,
+                 reg_field_id);
+        return -1;
+    }
+
     return 0;
 }
 
