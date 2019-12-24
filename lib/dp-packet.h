@@ -23,6 +23,7 @@
 #ifdef DPDK_NETDEV
 #include <rte_config.h>
 #include <rte_mbuf.h>
+#include <rte_flow.h>
 #endif
 
 #include "netdev-afxdp.h"
@@ -602,6 +603,19 @@ static inline void
 dp_packet_set_allocated(struct dp_packet *b, uint16_t s)
 {
     b->mbuf.buf_len = s;
+}
+
+
+static inline bool
+dp_packet_get_meta(const struct dp_packet *p, uint32_t *meta)
+{
+    if (p->mbuf.ol_flags & PKT_RX_DYNF_METADATA) {
+        *meta = rte_flow_dynf_metadata_get(CONST_CAST(struct rte_mbuf *,
+                                                      &p->mbuf));
+        return true;
+    }
+
+    return false;
 }
 
 #else /* DPDK_NETDEV */
