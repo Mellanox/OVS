@@ -61,6 +61,7 @@ struct act_resources {
     uint32_t next_table_id;
     uint32_t self_table_id;
     uint32_t flow_miss_ctx_id;
+    uint32_t tnl_id;
 };
 
 struct flow_item {
@@ -397,6 +398,7 @@ static struct reg_field reg_fields[] = {
 
 struct table_id_data {
     odp_port_t vport;
+    uint32_t recirc_id;
 };
 
 static struct ds *
@@ -404,7 +406,8 @@ dump_table_id(struct ds *s, void *data)
 {
     struct table_id_data *table_id_data = data;
 
-    ds_put_format(s, "vport=%"PRIu32, table_id_data->vport);
+    ds_put_format(s, "vport=%"PRIu32", recirc_id=%"PRIu32,
+                  table_id_data->vport, table_id_data->recirc_id);
     return s;
 }
 
@@ -446,14 +449,17 @@ static struct context_metadata table_id_md = {
 };
 
 static int
-get_table_id(odp_port_t vport, uint32_t *table_id)
+get_table_id(odp_port_t vport, uint32_t recirc_id, uint32_t *table_id)
 {
-    struct table_id_data table_id_data = { .vport = vport };
+    struct table_id_data table_id_data = {
+        .vport = vport,
+        .recirc_id = recirc_id,
+    };
     struct context_data table_id_context = {
         .data = &table_id_data,
     };
 
-    if (vport == ODPP_NONE) {
+    if (vport == ODPP_NONE && recirc_id == 0) {
         *table_id = 0;
         return 0;
     }
@@ -539,7 +545,6 @@ get_tnl_masked(struct flow_tnl *dst_key, struct flow_tnl *dst_mask,
     }
 }
 
-OVS_UNUSED
 static int
 get_tnl_id(struct flow_tnl *tnl_key, struct flow_tnl *tnl_mask,
            uint32_t *tnl_id)
@@ -557,7 +562,6 @@ get_tnl_id(struct flow_tnl *tnl_key, struct flow_tnl *tnl_mask,
     return get_context_data_id_by_data(&tnl_md, &tnl_ctx, tnl_id);
 }
 
-OVS_UNUSED
 static void
 put_tnl_id(uint32_t tnl_id)
 {
@@ -566,6 +570,8 @@ put_tnl_id(uint32_t tnl_id)
 
 struct flow_miss_ctx {
     odp_port_t vport;
+    uint32_t recirc_id;
+    struct flow_tnl tnl;
 };
 
 static struct ds *
@@ -573,7 +579,10 @@ dump_flow_ctx_id(struct ds *s, void *data)
 {
     struct flow_miss_ctx *flow_ctx_data = data;
 
-    ds_put_format(s, "vport=%"PRIu32, flow_ctx_data->vport);
+    ds_put_format(s, "vport=%"PRIu32", recirc_id=%"PRIu32", ",
+                  flow_ctx_data->vport, flow_ctx_data->recirc_id);
+    dump_tnl_id(s, &flow_ctx_data->tnl);
+
     return s;
 }
 
@@ -617,6 +626,7 @@ put_action_resources(struct act_resources *act_resources)
     put_table_id(act_resources->self_table_id);
     put_table_id(act_resources->next_table_id);
     put_flow_miss_ctx_id(act_resources->flow_miss_ctx_id);
+    put_tnl_id(act_resources->tnl_id);
 }
 
 /*
@@ -1084,6 +1094,10 @@ enum ct_mode {
 struct act_vars {
     enum ct_mode ct_mode;
     bool pre_ct_tuple_rewrite;
+    odp_port_t vport;
+    uint32_t recirc_id;
+    struct flow_tnl *tnl_key;
+    struct flow_tnl tnl_mask;
 };
 
 static int
@@ -1311,6 +1325,10 @@ parse_vxlan_match(struct flow_patterns *patterns,
     struct flow *consumed_masks;
     int ret;
 
+    if (is_all_zeros(&match->wc.masks.tunnel, sizeof match->wc.masks.tunnel)) {
+        return 0;
+    }
+
     ret = parse_tnl_ip_match(patterns, match, IPPROTO_UDP);
     if (ret) {
         return -1;
@@ -1367,7 +1385,6 @@ get_packet_reg_field(struct dp_packet *packet, uint8_t reg_field_id,
     return 0;
 }
 
-OVS_UNUSED
 static int
 add_pattern_match_reg_field(struct flow_patterns *patterns,
                             uint8_t reg_field_id, uint32_t val, uint32_t mask)
@@ -1421,7 +1438,6 @@ add_pattern_match_reg_field(struct flow_patterns *patterns,
     return 0;
 }
 
-OVS_UNUSED
 static int
 add_action_set_reg_field(struct flow_actions *actions,
                          uint8_t reg_field_id, uint32_t val, uint32_t mask)
@@ -1468,10 +1484,28 @@ add_action_set_reg_field(struct flow_actions *actions,
 }
 
 static int
+parse_tnl_match_recirc(struct flow_patterns *patterns,
+                       struct match *match,
+                       struct act_resources *act_resources)
+{
+    if (get_tnl_id(&match->flow.tunnel, &match->wc.masks.tunnel,
+                   &act_resources->tnl_id)) {
+        return -1;
+    }
+    if (add_pattern_match_reg_field(patterns, REG_FIELD_TUN_INFO,
+                                    act_resources->tnl_id, 0xFFFFFFFF)) {
+        return -1;
+    }
+    memset(&match->wc.masks.tunnel, 0, sizeof match->wc.masks.tunnel);
+    return 0;
+}
+
+static int
 parse_flow_match(struct netdev *netdev,
                  struct flow_patterns *patterns,
                  struct match *match,
-                 struct act_resources *act_resources)
+                 struct act_resources *act_resources,
+                 struct act_vars *act_vars)
 {
     uint8_t *next_proto_mask = NULL;
     struct flow *consumed_masks;
@@ -1481,9 +1515,12 @@ parse_flow_match(struct netdev *netdev,
     consumed_masks = &match->wc.masks;
 
     if (netdev_vport_is_vport_class(netdev->netdev_class)) {
-        ret = get_table_id(match->flow.in_port.odp_port,
-                           &act_resources->self_table_id);
-        if (ret) {
+        act_vars->vport = match->flow.in_port.odp_port;
+        act_vars->tnl_key = &match->flow.tunnel;
+        act_vars->tnl_mask = match->wc.masks.tunnel;
+        if (match->flow.recirc_id &&
+            parse_tnl_match_recirc(patterns, match, act_resources)) {
+            ret = -1;
             goto out;
         }
     }
@@ -1494,11 +1531,14 @@ parse_flow_match(struct netdev *netdev,
         goto out;
     }
 
-    memset(&consumed_masks->in_port, 0, sizeof consumed_masks->in_port);
-    if (match->flow.recirc_id != 0) {
-        ret = -1;
+    ret = get_table_id(act_vars->vport, match->flow.recirc_id,
+                       &act_resources->self_table_id);
+    if (ret) {
         goto out;
     }
+    act_vars->recirc_id = match->flow.recirc_id;
+
+    memset(&consumed_masks->in_port, 0, sizeof consumed_masks->in_port);
     consumed_masks->recirc_id = 0;
     consumed_masks->packet_type = 0;
 
@@ -2143,12 +2183,52 @@ add_tnl_pop_action(struct flow_actions *actions,
 
     port = nl_attr_get_odp_port(nla);
     miss_ctx.vport = port;
+    miss_ctx.recirc_id = 0;
+    memset(&miss_ctx.tnl, 0, sizeof miss_ctx.tnl);
     if (get_flow_miss_ctx_id(&miss_ctx, &act_resources->flow_miss_ctx_id)) {
         return -1;
     }
     add_mark_action(actions, act_resources->flow_miss_ctx_id);
-    if (get_table_id(port, &act_resources->next_table_id)) {
+    if (get_table_id(port, 0, &act_resources->next_table_id)) {
         return -1;
+    }
+    add_jump_action(actions, act_resources->next_table_id);
+    return 0;
+}
+
+static int
+add_recirc_action(struct flow_actions *actions,
+                  const struct nlattr *nla,
+                  struct act_resources *act_resources,
+                  struct act_vars *act_vars)
+{
+    struct flow_miss_ctx miss_ctx;
+
+    miss_ctx.vport = act_vars->vport;
+    miss_ctx.recirc_id = nl_attr_get_u32(nla);
+    if (act_vars->vport != ODPP_NONE) {
+        get_tnl_masked(&miss_ctx.tnl, NULL, act_vars->tnl_key,
+                       &act_vars->tnl_mask);
+    } else {
+        memset(&miss_ctx.tnl, 0, sizeof miss_ctx.tnl);
+    }
+    if (get_flow_miss_ctx_id(&miss_ctx, &act_resources->flow_miss_ctx_id)) {
+        return -1;
+    }
+    add_mark_action(actions, act_resources->flow_miss_ctx_id);
+    if (get_table_id(act_vars->vport, miss_ctx.recirc_id,
+        &act_resources->next_table_id)) {
+        return -1;
+    }
+    if (act_vars->vport != ODPP_NONE && act_vars->recirc_id == 0) {
+        if (get_tnl_id(act_vars->tnl_key, &act_vars->tnl_mask,
+                       &act_resources->tnl_id)) {
+            return -1;
+        }
+        if (add_action_set_reg_field(actions, REG_FIELD_TUN_INFO,
+                                     act_resources->tnl_id, 0xFFFFFFFF)) {
+            return -1;
+        }
     }
     add_jump_action(actions, act_resources->next_table_id);
     return 0;
@@ -2208,7 +2288,8 @@ parse_flow_actions(struct netdev *netdev,
     struct nlattr *nla;
     size_t left;
 
-    if (nl_actions_len != 0 && !strcmp(netdev_get_type(netdev), "vxlan")) {
+    if (nl_actions_len != 0 && !strcmp(netdev_get_type(netdev), "vxlan") &&
+        act_vars->recirc_id == 0) {
         add_vxlan_decap_action(actions);
     }
     add_count_action(actions);
@@ -2239,6 +2320,10 @@ parse_flow_actions(struct netdev *netdev,
             }
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_TUNNEL_POP) {
             if (add_tnl_pop_action(actions, nla, act_resources)) {
+                return -1;
+            }
+        } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_RECIRC) {
+            if (add_recirc_action(actions, nla, act_resources, act_vars)) {
                 return -1;
             }
         } else {
@@ -2321,7 +2406,7 @@ netdev_offload_dpdk_actions(struct netdev *netdev,
                             struct act_vars *act_vars,
                             struct flows_handle *flows)
 {
-    const struct rte_flow_attr flow_attr = { .ingress = 1, .transfer = 1 };
+    struct rte_flow_attr flow_attr = { .ingress = 1, .transfer = 1 };
     struct flow_actions actions = { .actions = NULL, .cnt = 0 };
     struct flow_item flow_item = { .devargs = NULL };
     struct rte_flow_error error;
@@ -2337,6 +2422,7 @@ netdev_offload_dpdk_actions(struct netdev *netdev,
                                                    ufid, act_resources,
                                                    act_vars, flows);
     } else {
+        flow_attr.group = act_resources->self_table_id;
         ret = netdev_offload_dpdk_flow_create(netdev, &flow_attr,
                                               patterns->items,
                                               actions.actions, &error,
@@ -2365,7 +2451,7 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
 {
     struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
     struct flows_handle flows = { .items = NULL, .cnt = 0 };
-    struct act_vars act_vars = { .ct_mode = CT_MODE_NONE };
+    struct act_vars act_vars = { .vport = ODPP_NONE };
     struct flow_item flow_item = { .devargs = NULL };
     struct act_resources act_resources;
     bool actions_offloaded = true;
@@ -2373,7 +2459,8 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
 
     memset(&act_resources, 0, sizeof act_resources);
 
-    ret = parse_flow_match(netdev, &patterns, match, &act_resources);
+    ret = parse_flow_match(netdev, &patterns, match, &act_resources,
+                           &act_vars);
     if (ret) {
         goto out;
     }
@@ -2608,20 +2695,27 @@ netdev_offload_dpdk_hw_miss_packet_recover(struct netdev *netdev,
         return -1;
     }
 
+    packet->md.recirc_id = flow_miss_ctx.recirc_id;
     if (flow_miss_ctx.vport != ODPP_NONE) {
-        vport_netdev = netdev_ports_get(flow_miss_ctx.vport,
-                                        netdev->dpif_type);
-        if (vport_netdev) {
-            pkt_metadata_init(&packet->md, flow_miss_ctx.vport);
-            if (vport_netdev->netdev_class->pop_header) {
-                vport_netdev->netdev_class->pop_header(packet);
-                dp_packet_reset_offload(packet);
-                packet->md.in_port.odp_port = flow_miss_ctx.vport;
-            } else {
-                VLOG_ERR("vport nedtdev=%s with no pop_header method",
-                         netdev_get_name(vport_netdev));
+        if (flow_miss_ctx.recirc_id == 0) {
+            vport_netdev = netdev_ports_get(flow_miss_ctx.vport,
+                                            netdev->dpif_type);
+            if (vport_netdev) {
+                pkt_metadata_init(&packet->md, flow_miss_ctx.vport);
+                if (vport_netdev->netdev_class->pop_header) {
+                    vport_netdev->netdev_class->pop_header(packet);
+                    dp_packet_reset_offload(packet);
+                    packet->md.in_port.odp_port = flow_miss_ctx.vport;
+                } else {
+                    VLOG_ERR("vport nedtdev=%s with no pop_header method",
+                             netdev_get_name(vport_netdev));
+                }
+                netdev_close(vport_netdev);
             }
-            netdev_close(vport_netdev);
+        } else {
+            memcpy(&packet->md.tunnel, &flow_miss_ctx.tnl,
+                   sizeof packet->md.tunnel);
+            packet->md.in_port.odp_port = flow_miss_ctx.vport;
         }
     }
 
