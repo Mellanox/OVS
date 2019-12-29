@@ -197,5 +197,7 @@ struct conntrack_zone_limit zone_limit_get(struct conntrack *ct,
                                            int32_t zone);
 int zone_limit_update(struct conntrack *ct, int32_t zone, uint32_t limit);
 int zone_limit_delete(struct conntrack *ct, uint16_t zone);
+void conntrack_init_offload_class(struct conntrack *,
+                                  struct conntrack_offload_class *);
 
 #endif /* conntrack.h */
