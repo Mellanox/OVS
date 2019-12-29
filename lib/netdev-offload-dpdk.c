@@ -907,12 +907,12 @@ struct act_vars {
 };
 
 static int
-netdev_offload_dpdk_flow_create(struct netdev *netdev,
-                                const struct rte_flow_attr *attr,
-                                const struct rte_flow_item *items,
-                                const struct rte_flow_action *actions,
-                                struct rte_flow_error *error,
-                                struct flow_item *fi)
+create_rte_flow(struct netdev *netdev,
+                const struct rte_flow_attr *attr,
+                const struct rte_flow_item *items,
+                const struct rte_flow_action *actions,
+                struct rte_flow_error *error,
+                struct flow_item *fi)
 {
     struct ds s_extra = DS_EMPTY_INITIALIZER;
     struct ds s = DS_EMPTY_INITIALIZER;
@@ -1493,8 +1493,8 @@ netdev_offload_dpdk_mark_rss(struct flow_patterns *patterns,
 
     add_flow_mark_rss_actions(&actions, flow_mark, netdev);
 
-    netdev_offload_dpdk_flow_create(netdev, &flow_attr, patterns->items,
-                                    actions.actions, &error, &flow_item);
+    create_rte_flow(netdev, &flow_attr, patterns->items, actions.actions,
+                    &error, &flow_item);
 
     free_flow_actions(&actions);
     return flow_item.rte_flow;
@@ -1893,6 +1893,43 @@ add_vxlan_decap_action(struct flow_actions *actions)
 }
 
 static int
+create_pre_post_ct(struct netdev *netdev OVS_UNUSED,
+                   const struct rte_flow_attr *attr OVS_UNUSED,
+                   const struct rte_flow_item *items OVS_UNUSED,
+                   const struct rte_flow_action *actions OVS_UNUSED,
+                   struct rte_flow_error *error OVS_UNUSED,
+                   struct act_resources *act_resources OVS_UNUSED,
+                   struct act_vars *act_vars OVS_UNUSED,
+                   struct flow_item *fi OVS_UNUSED)
+{
+    VLOG_DBG_RL(&rl, "CT actions not supported");
+    return -1;
+}
+
+static int
+netdev_offload_dpdk_flow_create(struct netdev *netdev,
+                                const struct rte_flow_attr *attr,
+                                const struct rte_flow_item *items,
+                                const struct rte_flow_action *actions,
+                                struct rte_flow_error *error,
+                                struct act_resources *act_resources,
+                                struct act_vars *act_vars,
+                                struct flow_item *fi)
+{
+    switch (act_vars->ct_mode) {
+    case CT_MODE_NONE:
+        return create_rte_flow(netdev, attr, items, actions, error, fi);
+    case CT_MODE_CT:
+        /* fallthrough */
+    case CT_MODE_CT_NAT:
+        return create_pre_post_ct(netdev, attr, items, actions, error,
+                                  act_resources, act_vars, fi);
+    default:
+        OVS_NOT_REACHED();
+    }
+}
+
+static int
 parse_flow_actions(struct netdev *netdev,
                    struct flow_actions *actions,
                    struct nlattr *nl_actions,
@@ -1971,6 +2008,7 @@ netdev_offload_dpdk_create_tnl_flows(struct netdev *netdev,
                                      struct flow_actions *actions,
                                      const ovs_u128 *ufid,
                                      struct act_resources *act_resources,
+                                     struct act_vars *act_vars,
                                      struct flows_handle *flows)
 {
     struct rte_flow_attr flow_attr = { .ingress = 1, .transfer = 1 };
@@ -1991,6 +2029,7 @@ netdev_offload_dpdk_create_tnl_flows(struct netdev *netdev,
         ret = netdev_offload_dpdk_flow_create(netdev_dumps[i]->netdev,
                                               &flow_attr, patterns->items,
                                               actions->actions, &error,
+                                              act_resources, act_vars,
                                               &flow_item);
         if (ret) {
             continue;
@@ -2037,11 +2076,13 @@ netdev_offload_dpdk_actions(struct netdev *netdev,
     }
     if (netdev_vport_is_vport_class(netdev->netdev_class)) {
         ret = netdev_offload_dpdk_create_tnl_flows(netdev, patterns, &actions,
-                                                   ufid, act_resources, flows);
+                                                   ufid, act_resources,
+                                                   act_vars, flows);
     } else {
         ret = netdev_offload_dpdk_flow_create(netdev, &flow_attr,
                                               patterns->items,
                                               actions.actions, &error,
+                                              act_resources, act_vars,
                                               &flow_item);
         if (ret) {
             goto out;
