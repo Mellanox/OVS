@@ -3454,3 +3454,10 @@ handle_tftp_ctl(struct conntrack *ct,
                        conn_for_expectation,
                        !!(pkt->md.ct_state & CS_REPLY_DIR), false, false);
 }
+
+void
+conntrack_init_offload_class(struct conntrack *ct,
+                             struct conntrack_offload_class *cls)
+{
+    ct->offload_class = cls;
+}
