@@ -61,6 +61,38 @@ enum OVS_PACKED_ENUM ct_conn_type {
     CT_CONN_TYPE_UN_NAT,
 };
 
+enum ct_direction {
+    CT_DIR_INIT,
+    CT_DIR_REP,
+    CT_DIR_NUM,
+};
+
+static inline int
+ct_get_packet_dir(bool reply)
+{
+    return reply ? CT_DIR_REP : CT_DIR_INIT;
+}
+
+struct ct_port_info {
+    struct ovs_mutex *port_mutex;
+    odp_port_t port;
+    ovs_u128 ufid;
+    const char *class_type;
+};
+
+enum ct_offload_flag {
+    CT_OFFLOAD_NONE = 0,
+    CT_OFFLOAD_INIT = 0x1 << 0,
+    CT_OFFLOAD_REP  = 0x1 << 1,
+    CT_OFFLOAD_SKIP = 0x1 << 2,
+    CT_OFFLOAD_BOTH = (CT_OFFLOAD_INIT | CT_OFFLOAD_REP),
+};
+
+struct ct_offloads {
+    uint8_t flags;
+    struct ct_port_info port_info[CT_DIR_NUM];
+};
+
 struct conn {
     /* Immutable data. */
     struct conn_key key;
@@ -91,6 +123,7 @@ struct conn {
     /* Immutable data. */
     bool alg_related; /* True if alg data connection. */
     enum ct_conn_type conn_type;
+    struct ct_offloads offloads;
 };
 
 enum ct_update_res {

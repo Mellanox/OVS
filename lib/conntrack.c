@@ -31,6 +31,7 @@
 #include "dp-packet.h"
 #include "flow.h"
 #include "netdev.h"
+#include "netdev-offload.h"
 #include "odp-netlink.h"
 #include "openvswitch/hmap.h"
 #include "openvswitch/vlog.h"
@@ -291,6 +292,13 @@ ct_print_conn_info(const struct conn *c, const char *log_msg,
     }
 }
 
+static void
+conntrack_offload_del_conn(struct conntrack *ct OVS_UNUSED,
+                           struct conn *conn OVS_UNUSED)
+{
+    VLOG_DBG("conntrack_offload_del_conn");
+}
+
 /* Initializes the connection tracker 'ct'.  The caller is responsible for
  * calling 'conntrack_destroy()', when the instance is not needed anymore */
 struct conntrack *
@@ -454,6 +462,10 @@ conn_clean(struct conntrack *ct, struct conn *conn)
     OVS_REQUIRES(ct->ct_lock)
 {
     ovs_assert(conn->conn_type == CT_CONN_TYPE_DEFAULT);
+
+    if (netdev_is_flow_api_enabled()) {
+        conntrack_offload_del_conn(ct, conn);
+    }
 
     conn_clean_cmn(ct, conn);
     if (conn->nat_conn) {
@@ -1379,6 +1391,18 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
     set_cached_conn(nat_action_info, ctx, conn, pkt);
 }
 
+static void
+conntrack_offload_add_conn(struct conntrack *ct OVS_UNUSED,
+                           struct dp_packet *packet OVS_UNUSED,
+                           struct ovs_mutex *port_mutex OVS_UNUSED,
+                           const char *class_type OVS_UNUSED,
+                           uint32_t mark OVS_UNUSED,
+                           ovs_u128 label OVS_UNUSED)
+{
+    VLOG_DBG("conntrack_add_ct_offload_item");
+    packet->md.conn->offloads.flags |= CT_OFFLOAD_SKIP;
+}
+
 /* Sends the packets in '*pkt_batch' through the connection tracker 'ct'.  All
  * the packets must have the same 'dl_type' (IPv4 or IPv6) and should have
  * the l3 and and l4 offset properly set.  Performs fragment reassembly with
@@ -1395,17 +1419,21 @@ conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
                   const struct ovs_key_ct_labels *setlabel,
                   ovs_be16 tp_src, ovs_be16 tp_dst, const char *helper,
                   const struct nat_action_info_t *nat_action_info,
-                  long long now, struct ovs_mutex *port_mutex OVS_UNUSED,
-                  const char *dp_class_type OVS_UNUSED)
+                  long long now, struct ovs_mutex *port_mutex,
+                  const char *dp_class_type)
 {
     ipf_preprocess_conntrack(ct->ipf, pkt_batch, now, dl_type, zone,
                              ct->hash_basis);
 
     struct dp_packet *packet;
     struct conn_lookup_ctx ctx;
+    uint32_t mark;
+    ovs_u128 label;
 
     DP_PACKET_BATCH_FOR_EACH (i, packet, pkt_batch) {
         struct conn *conn = packet->md.conn;
+        mark = conn ? conn->mark : 0;
+        label = conn ? conn->label : OVS_U128_ZERO;
         if (OVS_UNLIKELY(packet->md.ct_state == CS_INVALID)) {
             write_ct_md(packet, zone, NULL, NULL, NULL);
         } else if (conn && conn->key.zone == zone && !force
@@ -1419,6 +1447,12 @@ conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
         } else {
             process_one(ct, packet, &ctx, zone, force, commit, now, setmark,
                         setlabel, nat_action_info, tp_src, tp_dst, helper);
+        }
+        if (netdev_is_flow_api_enabled() && packet->md.conn &&
+            !(packet->md.conn->offloads.flags & CT_OFFLOAD_SKIP) &&
+            (packet->md.ct_state & CS_ESTABLISHED)) {
+            conntrack_offload_add_conn(ct, packet, port_mutex, dp_class_type,
+                                       mark, label);
         }
     }
 
