@@ -2510,8 +2510,9 @@ dp_netdev_flow_offload_main(void *data OVS_UNUSED)
             OVS_NOT_REACHED();
         }
 
-        VLOG_DBG("%s to %s netdev flow\n",
-                 ret == 0 ? "succeed" : "failed", op);
+        VLOG_DBG("%s to %s netdev flow "UUID_FMT"\n",
+                 ret == 0 ? "succeed" : "failed", op,
+                 UUID_ARGS((struct uuid *) &offload->flow->mega_ufid));
         dp_netdev_free_flow_offload(offload);
         ovsrcu_quiesce();
     }
@@ -3383,6 +3384,8 @@ dp_netdev_flow_add(struct dp_netdev_pmd_thread *pmd,
 
         ds_put_cstr(&ds, "flow_add: ");
         odp_format_ufid(ufid, &ds);
+        ds_put_cstr(&ds, " mega_");
+        odp_format_ufid(&flow->mega_ufid, &ds);
         ds_put_cstr(&ds, " ");
         odp_flow_format(key_buf.data, key_buf.size,
                         mask_buf.data, mask_buf.size,
