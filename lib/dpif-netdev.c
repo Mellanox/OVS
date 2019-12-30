@@ -412,6 +412,7 @@ enum {
 
 enum {
     DP_FLOW_OFFLOAD_ITEM = 1 << 0,
+    DP_CT_OFFLOAD_ITEM = 1 << 1,
 };
 
 struct dp_flow_offload_item {
@@ -429,6 +430,7 @@ struct dp_offload_item {
     const char *dpif_type_str;
     union {
         struct dp_flow_offload_item flow_offload_item;
+        struct ct_flow_offload_item ct_offload_item;
     };
 };
 
@@ -445,6 +447,32 @@ static struct dp_flow_offload dp_flow_offload = {
 
 static struct ovsthread_once offload_thread_once
     = OVSTHREAD_ONCE_INITIALIZER;
+
+static void
+dp_netdev_append_ct_offload(struct ct_flow_offload_item *offload OVS_UNUSED)
+{
+    VLOG_DBG("dp_netdev_append_ct_offload");
+}
+
+static void
+dp_netdev_ct_offload_add_item(struct ct_flow_offload_item *offload)
+{
+    offload->op = DP_NETDEV_FLOW_OFFLOAD_OP_ADD;
+    dp_netdev_append_ct_offload(offload);
+}
+
+static void
+dp_netdev_ct_offload_del_item(struct ct_flow_offload_item *offload)
+{
+    offload->op = DP_NETDEV_FLOW_OFFLOAD_OP_DEL;
+    dp_netdev_append_ct_offload(offload);
+}
+
+OVS_UNUSED
+static struct conntrack_offload_class dpif_ct_offload_class = {
+    .conn_add = dp_netdev_ct_offload_add_item,
+    .conn_del = dp_netdev_ct_offload_del_item,
+};
 
 #define XPS_TIMEOUT 500000LL    /* In microseconds. */
 
@@ -2460,6 +2488,18 @@ err_free:
     return -1;
 }
 
+static int
+dp_netdev_ct_offload_add(struct dp_offload_item *offload_item OVS_UNUSED)
+{
+    return -1;
+}
+
+static int
+dp_netdev_ct_offload_del(struct dp_offload_item *offload_item OVS_UNUSED)
+{
+    return -1;
+}
+
 static void *
 dp_netdev_flow_offload_main(void *data OVS_UNUSED)
 {
@@ -2503,6 +2543,23 @@ dp_netdev_flow_offload_main(void *data OVS_UNUSED)
                 OVS_NOT_REACHED();
             }
             dp_netdev_free_flow_offload(dp_offload);
+        } else if (offload_item->type == DP_CT_OFFLOAD_ITEM) {
+            struct ct_flow_offload_item *ct_offload =
+                    &offload_item->ct_offload_item;
+
+            flow_type = "ct";
+            switch (ct_offload->op) {
+            case DP_NETDEV_FLOW_OFFLOAD_OP_ADD:
+                op = "add";
+                ret = dp_netdev_ct_offload_add(offload_item);
+                break;
+            case DP_NETDEV_FLOW_OFFLOAD_OP_DEL:
+                op = "delete";
+                ret = dp_netdev_ct_offload_del(offload_item);
+                break;
+            default:
+                OVS_NOT_REACHED();
+            }
         } else {
             OVS_NOT_REACHED();
         }
