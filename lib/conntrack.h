@@ -112,6 +112,12 @@ struct nat_action_info_t {
     uint16_t nat_action;
 };
 
+enum ct_direction {
+    CT_DIR_INIT,
+    CT_DIR_REP,
+    CT_DIR_NUM,
+};
+
 struct conntrack *conntrack_init(void *dp);
 void conntrack_destroy(struct conntrack *);
 
