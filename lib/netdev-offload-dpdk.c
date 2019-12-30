@@ -1466,11 +1466,11 @@ free_flow_patterns(struct flow_patterns *patterns)
 }
 
 static void
-free_flow_actions(struct flow_actions *actions)
+free_flow_actions(struct flow_actions *actions, bool free_confs)
 {
     int i;
 
-    for (i = 0; i < actions->cnt; i++) {
+    for (i = 0; free_confs && i < actions->cnt; i++) {
         if (actions->actions[i].conf) {
             free(CONST_CAST(void *, actions->actions[i].conf));
         }
@@ -2180,7 +2180,7 @@ netdev_offload_dpdk_mark_rss(struct flow_patterns *patterns,
     create_rte_flow(netdev, &flow_attr, patterns->items, actions.actions,
                     &error, &flow_item, 0);
 
-    free_flow_actions(&actions);
+    free_flow_actions(&actions, true);
     return flow_item.rte_flow[0];
 }
 
@@ -2884,7 +2884,7 @@ netdev_offload_dpdk_actions(struct netdev *netdev,
         add_flow_item(flows, &flow_item);
     }
 out:
-    free_flow_actions(&actions);
+    free_flow_actions(&actions, true);
     return ret;
 }
 
