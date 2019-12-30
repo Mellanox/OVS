@@ -120,7 +120,8 @@ int conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
                       const struct ovs_key_ct_labels *setlabel,
                       ovs_be16 tp_src, ovs_be16 tp_dst, const char *helper,
                       const struct nat_action_info_t *nat_action_info,
-                      long long now);
+                      long long now, struct ovs_mutex *port_mutex,
+                      const char *dp_class_type);
 void conntrack_clear(struct dp_packet *packet);
 
 struct conntrack_dump {
