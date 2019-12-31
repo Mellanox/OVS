@@ -627,7 +627,6 @@ put_ct_ctx_id(uint32_t ct_ctx_id)
     put_context_data_by_id(&ct_miss_ctx_md, ct_ctx_id);
 }
 
-OVS_UNUSED
 static int
 find_ct_miss_ctx(int ct_ctx_id, struct ct_miss_ctx *ctx)
 {
@@ -2921,7 +2920,9 @@ netdev_offload_dpdk_hw_miss_packet_recover(struct netdev *netdev,
                                            struct dp_packet *packet)
 {
     struct flow_miss_ctx flow_miss_ctx;
+    struct ct_miss_ctx ct_miss_ctx;
     struct netdev *vport_netdev;
+    uint32_t ct_ctx_id;
 
     if (find_flow_miss_ctx(flow_miss_ctx_id, &flow_miss_ctx)) {
         return -1;
@@ -2949,6 +2950,16 @@ netdev_offload_dpdk_hw_miss_packet_recover(struct netdev *netdev,
                    sizeof packet->md.tunnel);
             packet->md.in_port.odp_port = flow_miss_ctx.vport;
         }
+    }
+    if (!get_packet_reg_field(packet, REG_FIELD_CT_CTX, &ct_ctx_id)) {
+        if (find_ct_miss_ctx(ct_ctx_id, &ct_miss_ctx)) {
+            VLOG_ERR("ct ctx id %d is not found", ct_ctx_id);
+            return -1;
+        }
+        packet->md.ct_state = ct_miss_ctx.state;
+        packet->md.ct_zone = ct_miss_ctx.zone;
+        packet->md.ct_mark = ct_miss_ctx.mark;
+        packet->md.ct_label = ct_miss_ctx.label;
     }
 
     return 0;
