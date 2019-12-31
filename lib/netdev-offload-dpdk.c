@@ -554,6 +554,86 @@ put_table_id(uint32_t table_id)
     put_context_data_by_id(&table_id_md, table_id);
 }
 
+#define MIN_CT_CTX_ID 1
+#define MAX_CT_CTX_ID reg_fields[REG_FIELD_CT_CTX].mask
+
+static struct id_pool *ct_ctx_pool = NULL;
+
+static uint32_t
+ct_ctx_id_alloc(void)
+{
+    uint32_t id;
+
+    if (!ct_ctx_pool) {
+        /* Haven't initiated yet, do it here */
+        ct_ctx_pool = id_pool_create(MIN_CT_CTX_ID, MAX_CT_CTX_ID);
+    }
+
+    if (id_pool_alloc_id(ct_ctx_pool, &id)) {
+        return id;
+    }
+
+    return 0;
+}
+
+static void
+ct_ctx_id_free(uint32_t id)
+{
+    id_pool_free_id(ct_ctx_pool, id);
+}
+
+struct ct_miss_ctx {
+    uint8_t state;
+    uint16_t zone;
+    uint32_t mark;
+    ovs_u128 label;
+};
+
+static struct ds *
+dump_ct_ctx_id(struct ds *s, void *data)
+{
+    struct ct_miss_ctx *ct_ctx_data = data;
+
+    ds_put_format(s, "ct_state=0x%"PRIx8", zone=%d", ct_ctx_data->state,
+                  ct_ctx_data->zone);
+    return s;
+}
+
+static struct context_metadata ct_miss_ctx_md = {
+    .name = "ct_miss_ctx",
+    .dump_context_data = dump_ct_ctx_id,
+    .d2i_hmap = HMAP_INITIALIZER(&ct_miss_ctx_md.d2i_hmap),
+    .i2d_hmap = HMAP_INITIALIZER(&ct_miss_ctx_md.i2d_hmap),
+    .id_alloc = ct_ctx_id_alloc,
+    .id_free = ct_ctx_id_free,
+    .data_size = sizeof(struct ct_miss_ctx),
+};
+
+OVS_UNUSED
+static int
+get_ct_ctx_id(struct ct_miss_ctx *ct_miss_ctx_data, uint32_t *ct_ctx_id)
+{
+    struct context_data ct_ctx = {
+        .data = ct_miss_ctx_data,
+    };
+
+    return get_context_data_id_by_data(&ct_miss_ctx_md, &ct_ctx, ct_ctx_id);
+}
+
+OVS_UNUSED
+static void
+put_ct_ctx_id(uint32_t ct_ctx_id)
+{
+    put_context_data_by_id(&ct_miss_ctx_md, ct_ctx_id);
+}
+
+OVS_UNUSED
+static int
+find_ct_miss_ctx(int ct_ctx_id, struct ct_miss_ctx *ctx)
+{
+    return get_context_data_by_id(&ct_miss_ctx_md, ct_ctx_id, ctx);
+}
+
 #define MIN_TUNNEL_ID 1
 #define MAX_TUNNEL_ID reg_fields[REG_FIELD_TUN_INFO].mask
 
