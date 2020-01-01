@@ -64,9 +64,11 @@ struct act_resources {
     uint32_t tnl_id;
 };
 
+#define NUM_RTE_FLOWS_PER_PORT 2
 struct flow_item {
     const char *devargs;
-    struct rte_flow *rte_flow;
+    struct rte_flow *rte_flow[NUM_RTE_FLOWS_PER_PORT];
+    bool has_count[NUM_RTE_FLOWS_PER_PORT];
 };
 
 struct flows_handle {
@@ -114,8 +116,8 @@ add_flow_item(struct flows_handle *flows,
                                 sizeof *flows->items);
     }
 
+    memcpy(&flows->items[cnt], item, sizeof flows->items[cnt]);
     flows->items[cnt].devargs = nullable_xstrdup(item->devargs);
-    flows->items[cnt].rte_flow = item->rte_flow;
     flows->cnt++;
 }
 
@@ -1319,18 +1321,19 @@ create_rte_flow(struct netdev *netdev,
                 const struct rte_flow_item *items,
                 const struct rte_flow_action *actions,
                 struct rte_flow_error *error,
-                struct flow_item *fi)
+                struct flow_item *fi,
+                int pos)
 {
     struct ds s;
 
-    fi->rte_flow = netdev_dpdk_rte_flow_create(netdev, attr, items, actions,
-                                               error);
-    if (fi->rte_flow) {
+    fi->rte_flow[pos] = netdev_dpdk_rte_flow_create(netdev, attr, items,
+                                                    actions, error);
+    if (fi->rte_flow[pos]) {
         if (!VLOG_DROP_DBG(&rl)) {
             ds_init(&s);
             dump_flow(&s, attr, items, actions);
             VLOG_DBG_RL(&rl, "%s: rte_flow 0x%"PRIxPTR" created:\n%s",
-                        netdev_get_name(netdev), (intptr_t) fi->rte_flow,
+                        netdev_get_name(netdev), (intptr_t) fi->rte_flow[pos],
                         ds_cstr(&s));
             ds_destroy(&s);
         }
@@ -1349,7 +1352,7 @@ create_rte_flow(struct netdev *netdev,
             ds_destroy(&s);
         }
     }
-    return fi->rte_flow ? 0 : -1;
+    return fi->rte_flow[pos] ? 0 : -1;
 }
 
 static void
@@ -2103,10 +2106,10 @@ netdev_offload_dpdk_mark_rss(struct flow_patterns *patterns,
     add_flow_mark_rss_actions(&actions, flow_mark, netdev);
 
     create_rte_flow(netdev, &flow_attr, patterns->items, actions.actions,
-                    &error, &flow_item);
+                    &error, &flow_item, 0);
 
     free_flow_actions(&actions);
-    return flow_item.rte_flow;
+    return flow_item.rte_flow[0];
 }
 
 static void
@@ -2585,7 +2588,8 @@ netdev_offload_dpdk_flow_create(struct netdev *netdev,
 {
     switch (act_vars->ct_mode) {
     case CT_MODE_NONE:
-        return create_rte_flow(netdev, attr, items, actions, error, fi);
+        fi->has_count[0] = true;
+        return create_rte_flow(netdev, attr, items, actions, error, fi, 0);
     case CT_MODE_CT:
         /* fallthrough */
     case CT_MODE_CT_NAT:
@@ -2707,7 +2711,7 @@ netdev_offload_dpdk_create_tnl_flows(struct netdev *netdev,
         flow_item.devargs =
             netdev_dpdk_get_port_devargs(netdev_dumps[i]->netdev);
         VLOG_DBG_RL(&rl, "%s: installed flow %p by ufid "UUID_FMT"\n",
-                    netdev_get_name(netdev), flow_item.rte_flow,
+                    netdev_get_name(netdev), flow_item.rte_flow[0],
                     UUID_ARGS((struct uuid *)ufid));
         add_flow_item(flows, &flow_item);
     }
@@ -2759,7 +2763,7 @@ netdev_offload_dpdk_actions(struct netdev *netdev,
             goto out;
         }
         VLOG_DBG_RL(&rl, "%s: installed flow %p by ufid "UUID_FMT"\n",
-                    netdev_get_name(netdev), flow_item.rte_flow,
+                    netdev_get_name(netdev), flow_item.rte_flow[0],
                     UUID_ARGS((struct uuid *)ufid));
         add_flow_item(flows, &flow_item);
     }
@@ -2800,15 +2804,15 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
          * actions.
          */
         actions_offloaded = false;
-        flow_item.rte_flow = act_resources.self_table_id == 0 ?
+        flow_item.rte_flow[0] = act_resources.self_table_id == 0 ?
             netdev_offload_dpdk_mark_rss(&patterns, netdev, info->flow_mark) :
             NULL;
-        ret = flow_item.rte_flow ? 0 : -1;
+        ret = flow_item.rte_flow[0] ? 0 : -1;
         if (ret) {
             goto out;
         }
         VLOG_DBG_RL(&rl, "%s: installed flow %p by ufid "UUID_FMT"\n",
-                    netdev_get_name(netdev), flow_item.rte_flow,
+                    netdev_get_name(netdev), flow_item.rte_flow[0],
                     UUID_ARGS((struct uuid *)ufid));
         add_flow_item(&flows, &flow_item);
     }
@@ -2837,6 +2841,7 @@ netdev_offload_dpdk_destroy_flow(struct netdev *netdev,
     struct netdev *flow_netdev;
     int ret;
     int i;
+    int j;
 
     for (i = 0; i < flows->cnt; i++) {
         struct flow_item *fi = &flows->items[i];
@@ -2854,18 +2859,26 @@ netdev_offload_dpdk_destroy_flow(struct netdev *netdev,
             flow_netdev = netdev;
             netdev_ref(flow_netdev);
         }
-        ret = netdev_dpdk_rte_flow_destroy(flow_netdev, fi->rte_flow, &error);
-        if (!ret) {
-            VLOG_DBG("%s: removed rte flow %p associated with ufid " UUID_FMT
-                     "\n", netdev_get_name(flow_netdev), fi->rte_flow,
-                     UUID_ARGS((struct uuid *)ufid));
-            netdev_close(flow_netdev);
-        } else {
-            VLOG_ERR("%s: Failed to destroy flow: %s (%u)\n",
-                     netdev_get_name(flow_netdev), error.message, error.type);
-            netdev_close(flow_netdev);
-            goto out;
+        for (j = 0; j < NUM_RTE_FLOWS_PER_PORT; j++) {
+            struct rte_flow *rte_flow = fi->rte_flow[j];
+
+            if (!rte_flow) {
+                continue;
+            }
+            ret = netdev_dpdk_rte_flow_destroy(flow_netdev, rte_flow, &error);
+            if (!ret) {
+                VLOG_DBG("%s: removed rte flow %p associated with ufid "
+                         UUID_FMT "\n", netdev_get_name(flow_netdev), rte_flow,
+                         UUID_ARGS((struct uuid *)ufid));
+            } else {
+                VLOG_ERR("%s: Failed to destroy flow: %s (%u)\n",
+                         netdev_get_name(flow_netdev), error.message,
+                         error.type);
+                netdev_close(flow_netdev);
+                goto out;
+            }
         }
+        netdev_close(flow_netdev);
     }
 
     data = ufid_to_rte_flow_data_find(ufid);
@@ -2959,6 +2972,7 @@ netdev_offload_dpdk_flow_get(struct netdev *netdev,
     struct netdev *flow_netdev;
     int ret = 0;
     int i;
+    int j;
 
     rte_flow_data = ufid_to_rte_flow_data_find(ufid);
     if (!rte_flow_data || rte_flow_data->flows.cnt == 0) {
@@ -2977,8 +2991,6 @@ netdev_offload_dpdk_flow_get(struct netdev *netdev,
     for (i = 0; i < rte_flow_data->flows.cnt; i++) {
         struct flow_item *fi = &rte_flow_data->flows.items[i];
 
-        memset(&query, 0, sizeof query);
-        query.reset = 1;
         if (rte_flow_data->flows.items[i].devargs) {
             flow_netdev = netdev_dpdk_get_netdev_by_devargs(fi->devargs);
             if (!flow_netdev) {
@@ -2989,20 +3001,30 @@ netdev_offload_dpdk_flow_get(struct netdev *netdev,
             flow_netdev = netdev;
             netdev_ref(flow_netdev);
         }
-        ret = netdev_dpdk_rte_flow_query_count(flow_netdev, fi->rte_flow,
-                                               &query, &error);
-        if (ret) {
-            VLOG_DBG_RL(&rl, "%s: Failed to query ufid "UUID_FMT" flow: %p\n",
-                        netdev_get_name(netdev),
-                        UUID_ARGS((struct uuid *) ufid), fi->rte_flow);
-            goto out;
+        for (j = 0; j < NUM_RTE_FLOWS_PER_PORT; j++) {
+            struct rte_flow *rte_flow = fi->rte_flow[j];
+
+            if (!rte_flow || !fi->has_count[j]) {
+                continue;
+            }
+            memset(&query, 0, sizeof query);
+            query.reset = 1;
+            ret = netdev_dpdk_rte_flow_query_count(flow_netdev, rte_flow,
+                                                   &query, &error);
+            if (ret) {
+                VLOG_DBG_RL(&rl, "%s: Failed to query ufid "UUID_FMT" flow:"
+                            " %p\n", netdev_get_name(netdev),
+                            UUID_ARGS((struct uuid *) ufid), rte_flow);
+                netdev_close(flow_netdev);
+                goto out;
+            }
+            rte_flow_data->stats.n_packets += query.hits_set ? query.hits : 0;
+            rte_flow_data->stats.n_bytes += query.bytes_set ? query.bytes : 0;
+            if (query.hits_set && query.hits) {
+                rte_flow_data->stats.used = time_msec();
+            }
         }
         netdev_close(flow_netdev);
-        rte_flow_data->stats.n_packets += (query.hits_set) ? query.hits : 0;
-        rte_flow_data->stats.n_bytes += (query.bytes_set) ? query.bytes : 0;
-        if (query.hits_set && query.hits) {
-            rte_flow_data->stats.used = time_msec();
-        }
     }
     memcpy(stats, &rte_flow_data->stats, sizeof *stats);
 out:
