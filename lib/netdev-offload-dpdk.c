@@ -66,6 +66,7 @@ struct act_resources {
     uint32_t post_ct_table_id;
     uint32_t flow_id;
     bool associated_flow_id;
+    uint32_t ct_miss_ctx_id;
 };
 
 #define NUM_RTE_FLOWS_PER_PORT 2
@@ -645,7 +646,6 @@ static struct context_metadata ct_miss_ctx_md = {
     .data_size = sizeof(struct ct_miss_ctx),
 };
 
-OVS_UNUSED
 static int
 get_ct_ctx_id(struct ct_miss_ctx *ct_miss_ctx_data, uint32_t *ct_ctx_id)
 {
@@ -656,7 +656,6 @@ get_ct_ctx_id(struct ct_miss_ctx *ct_miss_ctx_data, uint32_t *ct_ctx_id)
     return get_context_data_id_by_data(&ct_miss_ctx_md, &ct_ctx, ct_ctx_id);
 }
 
-OVS_UNUSED
 static void
 put_ct_ctx_id(uint32_t ct_ctx_id)
 {
@@ -849,6 +848,7 @@ put_action_resources(struct act_resources *act_resources)
     if (act_resources->associated_flow_id) {
         disassociate_flow_id(act_resources->flow_id);
     }
+    put_ct_ctx_id(act_resources->ct_miss_ctx_id);
 }
 
 /*
@@ -1326,6 +1326,7 @@ enum ct_mode {
     CT_MODE_NONE,
     CT_MODE_CT,
     CT_MODE_CT_NAT,
+    CT_MODE_CT_CONN,
 };
 
 struct act_vars {
@@ -2555,11 +2556,14 @@ static int
 parse_ct_actions(struct flow_actions *actions,
                  const struct nlattr *ct_actions,
                  const size_t ct_actions_len,
+                 struct act_resources *act_resources,
                  struct act_vars *act_vars)
 {
+    struct ct_miss_ctx ct_miss_ctx;
     const struct nlattr *cta;
     unsigned int ctleft;
 
+    memset(&ct_miss_ctx, 0, sizeof ct_miss_ctx);
     act_vars->ct_mode = CT_MODE_CT;
     NL_ATTR_FOR_EACH_UNSAFE (cta, ctleft, ct_actions, ct_actions_len) {
         if (nl_attr_type(cta) == OVS_CT_ATTR_COMMIT ||
@@ -2571,11 +2575,13 @@ parse_ct_actions(struct flow_actions *actions,
         } else if (nl_attr_type(cta) == OVS_CT_ATTR_ZONE) {
             add_action_set_reg_field(actions, REG_FIELD_CT_ZONE,
                                      nl_attr_get_u16(cta), 0xFFFF);
+            ct_miss_ctx.zone = nl_attr_get_u16(cta);
         } else if (nl_attr_type(cta) == OVS_CT_ATTR_MARK) {
             const uint32_t *key = nl_attr_get(cta);
             const uint32_t *mask = key + 1;
 
             add_action_set_reg_field(actions, REG_FIELD_CT_MARK, *key, *mask);
+            ct_miss_ctx.mark = *key;
         } else if (nl_attr_type(cta) == OVS_CT_ATTR_LABELS) {
             const ovs_32aligned_u128 *key = nl_attr_get(cta);
             const ovs_32aligned_u128 *mask = key + 1;
@@ -2596,8 +2602,39 @@ parse_ct_actions(struct flow_actions *actions,
                 add_action_set_reg_field(actions, REG_FIELD_CT_LABEL3,
                                          key->u32[3], mask->u32[3]);
             }
+            ct_miss_ctx.label.u32[0] = key->u32[0];
+            ct_miss_ctx.label.u32[1] = key->u32[1];
+            ct_miss_ctx.label.u32[2] = key->u32[2];
+            ct_miss_ctx.label.u32[3] = key->u32[3];
         } else if (nl_attr_type(cta) == OVS_CT_ATTR_NAT) {
             act_vars->ct_mode = CT_MODE_CT_NAT;
+        } else if (nl_attr_type(cta) == OVS_CT_ATTR_HELPER) {
+            const char *helper = nl_attr_get(cta);
+
+            if (strncmp(helper, "offload", strlen("offload"))) {
+                continue;
+            }
+
+            if (!ovs_scan(helper, "offload, ct_state(0x%"SCNx8")",
+                          &ct_miss_ctx.state)) {
+                VLOG_ERR("Invalid offload helper: '%s'", helper);
+                return -1;
+            }
+
+            act_vars->ct_mode = CT_MODE_CT_CONN;
+            act_vars->pre_ct_tuple_rewrite = false;
+            if (get_table_id(act_vars->vport, 0, TABLE_TYPE_POST_CT,
+                             &act_resources->next_table_id)) {
+                return -1;
+            }
+            if (get_ct_ctx_id(&ct_miss_ctx, &act_resources->ct_miss_ctx_id)) {
+                return -1;
+            }
+            add_action_set_reg_field(actions, REG_FIELD_CT_STATE,
+                                     ct_miss_ctx.state, 0xFF);
+            add_action_set_reg_field(actions, REG_FIELD_CT_CTX,
+                                     act_resources->ct_miss_ctx_id, 0xFFFFFFFF);
+            add_jump_action(actions, act_resources->next_table_id);
         } else {
             VLOG_DBG_RL(&rl,
                         "Ignored nested action inside ct(), action type: %d",
@@ -2606,6 +2643,19 @@ parse_ct_actions(struct flow_actions *actions,
         }
     }
     return 0;
+}
+
+static int
+create_ct_conn(struct netdev *netdev OVS_UNUSED,
+               const struct rte_flow_item *items OVS_UNUSED,
+               const struct rte_flow_action *actions OVS_UNUSED,
+               struct rte_flow_error *error OVS_UNUSED,
+               struct act_resources *act_resources OVS_UNUSED,
+               struct act_vars *act_vars OVS_UNUSED,
+               struct flow_item *fi OVS_UNUSED)
+{
+    VLOG_DBG_RL(&rl, "create CT conn is not supported");
+    return -1;
 }
 
 static void
@@ -2725,6 +2775,9 @@ netdev_offload_dpdk_flow_create(struct netdev *netdev,
     case CT_MODE_CT_NAT:
         return create_pre_post_ct(netdev, attr, items, actions, error,
                                   act_resources, act_vars, fi);
+    case CT_MODE_CT_CONN:
+        return create_ct_conn(netdev, items, actions, error, act_resources,
+                              act_vars, fi);
     default:
         OVS_NOT_REACHED();
     }
@@ -2784,7 +2837,7 @@ parse_flow_actions(struct netdev *netdev,
             size_t ct_actions_len = nl_attr_get_size(nla);
 
             if (parse_ct_actions(actions, ct_actions, ct_actions_len,
-                                 act_vars)) {
+                                 act_resources, act_vars)) {
                 return -1;
             }
         } else {
