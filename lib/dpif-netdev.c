@@ -3295,8 +3295,10 @@ dp_netdev_pmd_find_flow(const struct dp_netdev_pmd_thread *pmd,
 }
 
 static bool
-dpif_netdev_get_flow_offload_status(const struct dp_netdev *dp,
-                                    const struct dp_netdev_flow *netdev_flow,
+dpif_netdev_get_flow_offload_status(const char *dpif_type,
+                                    struct ovs_mutex *port_mutex,
+                                    odp_port_t odp_port,
+                                    const ovs_u128 *mega_ufid,
                                     struct dpif_flow_stats *stats,
                                     struct dpif_flow_attrs *attrs)
 {
@@ -3312,18 +3314,17 @@ dpif_netdev_get_flow_offload_status(const struct dp_netdev *dp,
         return false;
     }
 
-    netdev = netdev_ports_get(netdev_flow->flow.in_port.odp_port,
-                              dpif_normalize_type(dp->class->type));
+    netdev = netdev_ports_get(odp_port, dpif_normalize_type(dpif_type));
     if (!netdev) {
         return false;
     }
     ofpbuf_use_stack(&buf, &act_buf, sizeof act_buf);
     /* Taking a global 'port_mutex' to fulfill thread safety
      * restrictions for the netdev-offload-dpdk module. */
-    ovs_mutex_lock(&dp->port_mutex);
-    ret = netdev_flow_get(netdev, &match, &actions, &netdev_flow->mega_ufid,
-                          stats, attrs, &buf);
-    ovs_mutex_unlock(&dp->port_mutex);
+    ovs_mutex_lock(port_mutex);
+    ret = netdev_flow_get(netdev, &match, &actions, mega_ufid, stats, attrs,
+                          &buf);
+    ovs_mutex_unlock(port_mutex);
     netdev_close(netdev);
     if (ret) {
         return false;
@@ -3333,7 +3334,7 @@ dpif_netdev_get_flow_offload_status(const struct dp_netdev *dp,
 }
 
 static void
-get_dpif_flow_status(const struct dp_netdev *dp,
+get_dpif_flow_status(struct dp_netdev *dp,
                      const struct dp_netdev_flow *netdev_flow_,
                      struct dpif_flow_stats *stats,
                      struct dpif_flow_attrs *attrs)
@@ -3356,7 +3357,9 @@ get_dpif_flow_status(const struct dp_netdev *dp,
     atomic_read_relaxed(&netdev_flow->stats.tcp_flags, &flags);
     stats->tcp_flags = flags;
 
-    if (dpif_netdev_get_flow_offload_status(dp, netdev_flow,
+    if (dpif_netdev_get_flow_offload_status(dp->class->type, &dp->port_mutex,
+                                            netdev_flow->flow.in_port.odp_port,
+                                            &netdev_flow->mega_ufid,
                                             &offload_stats, &offload_attrs)) {
         stats->n_packets += offload_stats.n_packets;
         stats->n_bytes += offload_stats.n_bytes;
@@ -3377,7 +3380,7 @@ get_dpif_flow_status(const struct dp_netdev *dp,
  * 'mask_buf'. Actions will be returned without copying, by relying on RCU to
  * protect them. */
 static void
-dp_netdev_flow_to_dpif_flow(const struct dp_netdev *dp,
+dp_netdev_flow_to_dpif_flow(struct dp_netdev *dp,
                             const struct dp_netdev_flow *netdev_flow,
                             struct ofpbuf *key_buf, struct ofpbuf *mask_buf,
                             struct dpif_flow *flow, bool terse)
