@@ -410,16 +410,26 @@ enum {
     DP_NETDEV_FLOW_OFFLOAD_OP_DEL,
 };
 
+enum {
+    DP_FLOW_OFFLOAD_ITEM = 1 << 0,
+};
+
 struct dp_flow_offload_item {
     struct dp_netdev_flow *flow;
     int op;
     struct match match;
     struct nlattr *actions;
     size_t actions_len;
+};
+
+struct dp_offload_item {
+    struct ovs_list node;
+    int type;
     struct ovs_mutex *port_mutex;
     const char *dpif_type_str;
-
-    struct ovs_list node;
+    union {
+        struct dp_flow_offload_item flow_offload_item;
+    };
 };
 
 struct dp_flow_offload {
@@ -2246,10 +2256,10 @@ flow_mark_has_no_ref(uint32_t mark)
 }
 
 static int
-mark_to_flow_disassociate(struct dp_flow_offload_item *offload)
+mark_to_flow_disassociate(struct dp_offload_item *offload_item)
 {
-    const char *dpif_type_str = offload->dpif_type_str;
-    struct dp_netdev_flow *flow = offload->flow;
+    const char *dpif_type_str = offload_item->dpif_type_str;
+    struct dp_netdev_flow *flow = offload_item->flow_offload_item.flow;
     struct cmap_node *mark_node = CONST_CAST(struct cmap_node *,
                                              &flow->mark_node);
     uint32_t mark = flow->mark;
@@ -2270,9 +2280,9 @@ mark_to_flow_disassociate(struct dp_flow_offload_item *offload)
         if (port) {
             /* Taking a global 'port_mutex' to fulfill thread safety
              * restrictions for the netdev-offload-dpdk module. */
-            ovs_mutex_lock(offload->port_mutex);
+            ovs_mutex_lock(offload_item->port_mutex);
             ret = netdev_flow_del(port, &flow->mega_ufid, NULL);
-            ovs_mutex_unlock(offload->port_mutex);
+            ovs_mutex_unlock(offload_item->port_mutex);
             netdev_close(port);
         }
 
@@ -2321,15 +2331,18 @@ dp_netdev_alloc_flow_offload(struct dp_netdev_pmd_thread *pmd,
                              int op)
 {
     struct dp_flow_offload_item *offload;
+    struct dp_offload_item *offload_item;
 
-    offload = xzalloc(sizeof(*offload));
-    offload->dpif_type_str = dpif_normalize_type(pmd->dp->class->type);
-    offload->port_mutex = &pmd->dp->port_mutex;
+    offload_item = xzalloc(sizeof *offload_item);
+    offload_item->type = DP_FLOW_OFFLOAD_ITEM;
+    offload_item->dpif_type_str = dpif_normalize_type(pmd->dp->class->type);
+    offload_item->port_mutex = &pmd->dp->port_mutex;
+
+    offload = &offload_item->flow_offload_item;
     offload->flow = flow;
     offload->op = op;
 
     dp_netdev_flow_ref(flow);
-    dp_netdev_pmd_try_ref(pmd);
 
     return offload;
 }
@@ -2340,22 +2353,24 @@ dp_netdev_free_flow_offload(struct dp_flow_offload_item *offload)
     dp_netdev_flow_unref(offload->flow);
 
     free(offload->actions);
-    free(offload);
 }
 
 static void
 dp_netdev_append_flow_offload(struct dp_flow_offload_item *offload)
 {
+    struct dp_offload_item *offload_item = CONTAINER_OF(offload,
+            struct dp_offload_item, flow_offload_item);
+
     ovs_mutex_lock(&dp_flow_offload.mutex);
-    ovs_list_push_back(&dp_flow_offload.list, &offload->node);
+    ovs_list_push_back(&dp_flow_offload.list, &offload_item->node);
     xpthread_cond_signal(&dp_flow_offload.cond);
     ovs_mutex_unlock(&dp_flow_offload.mutex);
 }
 
 static int
-dp_netdev_flow_offload_del(struct dp_flow_offload_item *offload)
+dp_netdev_flow_offload_del(struct dp_offload_item *offload_item)
 {
-    return mark_to_flow_disassociate(offload);
+    return mark_to_flow_disassociate(offload_item);
 }
 
 /*
@@ -2370,11 +2385,12 @@ dp_netdev_flow_offload_del(struct dp_flow_offload_item *offload)
  * valid, thus only item 2 needed.
  */
 static int
-dp_netdev_flow_offload_put(struct dp_flow_offload_item *offload)
+dp_netdev_flow_offload_put(struct dp_offload_item *offload_item)
 {
+    struct dp_flow_offload_item *offload = &offload_item->flow_offload_item;
     struct dp_netdev_flow *flow = offload->flow;
     odp_port_t in_port = flow->flow.in_port.odp_port;
-    const char *dpif_type_str = offload->dpif_type_str;
+    const char *dpif_type_str = offload_item->dpif_type_str;
     bool modification = offload->op == DP_NETDEV_FLOW_OFFLOAD_OP_MOD;
     struct offload_info info;
     struct netdev *port;
@@ -2417,12 +2433,12 @@ dp_netdev_flow_offload_put(struct dp_flow_offload_item *offload)
     }
     /* Taking a global 'port_mutex' to fulfill thread safety restrictions for
      * the netdev-offload-dpdk module. */
-    ovs_mutex_lock(offload->port_mutex);
+    ovs_mutex_lock(offload_item->port_mutex);
     ret = netdev_flow_put(port, &offload->match,
                           CONST_CAST(struct nlattr *, offload->actions),
                           offload->actions_len, &flow->mega_ufid, &info,
                           NULL);
-    ovs_mutex_unlock(offload->port_mutex);
+    ovs_mutex_unlock(offload_item->port_mutex);
     netdev_close(port);
 
     if (ret) {
@@ -2439,7 +2455,7 @@ err_free:
     if (!modification) {
         netdev_offload_flow_mark_free(mark);
     } else {
-        mark_to_flow_disassociate(offload);
+        mark_to_flow_disassociate(offload_item);
     }
     return -1;
 }
@@ -2447,8 +2463,9 @@ err_free:
 static void *
 dp_netdev_flow_offload_main(void *data OVS_UNUSED)
 {
-    struct dp_flow_offload_item *offload;
+    struct dp_offload_item *offload_item;
     struct ovs_list *list;
+    const char *flow_type;
     const char *op;
     int ret;
 
@@ -2461,29 +2478,38 @@ dp_netdev_flow_offload_main(void *data OVS_UNUSED)
             ovsrcu_quiesce_end();
         }
         list = ovs_list_pop_front(&dp_flow_offload.list);
-        offload = CONTAINER_OF(list, struct dp_flow_offload_item, node);
+        offload_item = CONTAINER_OF(list, struct dp_offload_item, node);
         ovs_mutex_unlock(&dp_flow_offload.mutex);
 
-        switch (offload->op) {
-        case DP_NETDEV_FLOW_OFFLOAD_OP_ADD:
-            op = "add";
-            ret = dp_netdev_flow_offload_put(offload);
-            break;
-        case DP_NETDEV_FLOW_OFFLOAD_OP_MOD:
-            op = "modify";
-            ret = dp_netdev_flow_offload_put(offload);
-            break;
-        case DP_NETDEV_FLOW_OFFLOAD_OP_DEL:
-            op = "delete";
-            ret = dp_netdev_flow_offload_del(offload);
-            break;
-        default:
+        if (offload_item->type == DP_FLOW_OFFLOAD_ITEM) {
+            struct dp_flow_offload_item *dp_offload =
+                    &offload_item->flow_offload_item;
+
+            flow_type = "netdev";
+            switch (dp_offload->op) {
+            case DP_NETDEV_FLOW_OFFLOAD_OP_ADD:
+                op = "add";
+                ret = dp_netdev_flow_offload_put(offload_item);
+                break;
+            case DP_NETDEV_FLOW_OFFLOAD_OP_MOD:
+                op = "modify";
+                ret = dp_netdev_flow_offload_put(offload_item);
+                break;
+            case DP_NETDEV_FLOW_OFFLOAD_OP_DEL:
+                op = "delete";
+                ret = dp_netdev_flow_offload_del(offload_item);
+                break;
+            default:
+                OVS_NOT_REACHED();
+            }
+            dp_netdev_free_flow_offload(dp_offload);
+        } else {
             OVS_NOT_REACHED();
         }
 
-        VLOG_DBG("%s to %s netdev flow\n",
-                 ret == 0 ? "succeed" : "failed", op);
-        dp_netdev_free_flow_offload(offload);
+        VLOG_DBG("%s to %s %s flow\n",
+                 ret == 0 ? "succeed" : "failed", op, flow_type);
+        free(offload_item);
         ovsrcu_quiesce();
     }
 
