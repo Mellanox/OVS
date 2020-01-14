@@ -1114,6 +1114,16 @@ nat_res_exhaustion:
     return NULL;
 }
 
+static int
+conn_get_tm(struct conn *conn, enum ct_timeout *tm)
+{
+    if (!l4_protos[conn->key.nw_proto]->get_tm) {
+        return -1;
+    }
+    *tm = l4_protos[conn->key.nw_proto]->get_tm(conn);
+    return 0;
+}
+
 static bool
 conn_update_state(struct conntrack *ct, struct dp_packet *pkt,
                   struct conn_lookup_ctx *ctx, struct conn *conn,
@@ -1633,13 +1643,33 @@ ct_sweep(struct conntrack *ct, long long now, size_t limit)
 {
     struct conn *conn, *next;
     long long min_expiration = LLONG_MAX;
+    struct ct_flow_offload_item item;
+    enum ct_timeout tm = 0;
     size_t count = 0;
+    bool hw_updated;
+    int dir;
 
     ovs_mutex_lock(&ct->ct_lock);
 
     for (unsigned i = 0; i < N_CT_TM; i++) {
         LIST_FOR_EACH_SAFE (conn, next, exp_node, &ct->exp_lists[i]) {
             ovs_mutex_lock(&conn->lock);
+            hw_updated = false;
+            for (dir = 0; ct->offload_class &&
+                          ct->offload_class->conn_active && dir < CT_DIR_NUM;
+                 dir++) {
+                if (!conn_get_tm(conn, &tm) &&
+                    conntrack_offload_fill_item_common(&item, conn, dir) &&
+                    ct->offload_class->conn_active(&item, now)) {
+                    conn_protected_update_expiration(ct, conn, tm, now);
+                    hw_updated = true;
+                    break;
+                }
+            }
+            if (hw_updated) {
+                ovs_mutex_unlock(&conn->lock);
+                continue;
+            }
             if (now < conn->expiration || count >= limit) {
                 min_expiration = MIN(min_expiration, conn->expiration);
                 ovs_mutex_unlock(&conn->lock);
