@@ -170,6 +170,16 @@ tcp_states_to_tm(struct tcp_peer *src, struct tcp_peer *dst)
     }
 }
 
+static enum ct_timeout
+tcp_get_tm(struct conn *conn_)
+{
+    struct conn_tcp *conn = conn_tcp_cast(conn_);
+    struct tcp_peer *peer1 = &conn->peer[0];
+    struct tcp_peer *peer2 = &conn->peer[1];
+
+    return tcp_states_to_tm(peer1, peer2);
+}
+
 static bool
 tcp_bypass_seq_chk(struct conntrack *ct)
 {
@@ -524,4 +534,5 @@ struct ct_l4_proto ct_proto_tcp = {
     .valid_new = tcp_valid_new,
     .conn_update = tcp_conn_update,
     .conn_get_protoinfo = tcp_conn_get_protoinfo,
+    .get_tm = tcp_get_tm,
 };
