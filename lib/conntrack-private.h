@@ -177,6 +177,9 @@ struct conntrack {
     uint32_t zone_limit_seq; /* Used to disambiguate zone limit counts. */
     atomic_bool tcp_seq_chk; /* Check TCP sequence numbers. */
     void *dp; /* DP handler for offloads. */
+
+    /* Holding HW offload callbacks */
+    struct conntrack_offload_class *offload_class;
 };
 
 /* Lock acquisition order:
