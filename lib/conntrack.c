@@ -293,6 +293,17 @@ ct_print_conn_info(const struct conn *c, const char *log_msg,
 }
 
 static void
+conntrack_offload_fill_item_common(struct ct_flow_offload_item *item,
+                                   struct conn *conn,
+                                   int dir)
+{
+    item->ufid = &conn->offloads.port_info[dir].ufid;
+    item->odp_port = conn->offloads.port_info[dir].port;
+    item->mutex = conn->offloads.port_info[dir].port_mutex;
+    item->class_type = conn->offloads.port_info[dir].class_type;
+}
+
+static void
 conntrack_offload_del_conn(struct conntrack *ct OVS_UNUSED,
                            struct conn *conn OVS_UNUSED)
 {
@@ -1389,6 +1400,58 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
     handle_alg_ctl(ct, ctx, pkt, ct_alg_ctl, conn, now, !!nat_action_info);
 
     set_cached_conn(nat_action_info, ctx, conn, pkt);
+}
+
+static void
+conntrack_swap_conn_key(const struct conn_key *key,
+                        struct conn_key *swapped)
+{
+    memcpy(swapped, key, sizeof *swapped);
+    swapped->src = key->dst;
+    swapped->dst = key->src;
+}
+
+OVS_UNUSED
+static void
+conntrack_offload_fill_item_add(struct ct_flow_offload_item *item,
+                                struct conn *conn,
+                                struct dp_packet *pkt,
+                                uint32_t mark,
+                                ovs_u128 label)
+{
+    int dir = ct_get_packet_dir(pkt->md.reply);
+
+    if (pkt->md.reply) {
+        item->key = conn->rev_key;
+        conntrack_swap_conn_key(&conn->key, &item->nat.key);
+    } else {
+        item->key = conn->key;
+        conntrack_swap_conn_key(&conn->rev_key, &item->nat.key);
+    }
+
+    item->nat.mod_flags = 0;
+    if (memcmp(&item->nat.key.src.addr, &item->key.src.addr,
+               sizeof item->nat.key.src)) {
+        item->nat.mod_flags |= NAT_ACTION_SRC;
+    }
+    if (item->nat.key.src.port != item->key.src.port) {
+        item->nat.mod_flags |= NAT_ACTION_SRC_PORT;
+    }
+    if (memcmp(&item->nat.key.dst.addr, &item->key.dst.addr,
+               sizeof item->nat.key.dst)) {
+        item->nat.mod_flags |= NAT_ACTION_DST;
+    }
+    if (item->nat.key.dst.port != item->key.dst.port) {
+        item->nat.mod_flags |= NAT_ACTION_DST_PORT;
+    }
+
+    conntrack_offload_fill_item_common(item, conn, dir);
+    item->ct_state = pkt->md.ct_state;
+    item->mark_key = conn->mark;
+    item->mark_mask = mark ^ conn->mark;
+    item->label_key = conn->label;
+    item->label_mask.u64.hi = label.u64.hi ^ conn->label.u64.hi;
+    item->label_mask.u64.lo = label.u64.lo ^ conn->label.u64.lo;
 }
 
 static void

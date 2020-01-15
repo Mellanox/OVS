@@ -111,6 +111,29 @@ struct nat_action_info_t {
     uint16_t nat_action;
 };
 
+struct ct_flow_offload_item {
+    int  op;
+    ovs_u128 *ufid;
+    struct ovs_mutex *mutex;
+    const char *class_type;
+
+    /* matches */
+    odp_port_t odp_port;
+    struct conn_key key;
+
+    /* actions */
+    uint8_t ct_state;
+    ovs_u128 label_key;
+    ovs_u128 label_mask;
+    uint32_t mark_key;
+    uint32_t mark_mask;
+
+    struct {
+        uint8_t mod_flags;
+        struct conn_key  key;
+    } nat;
+};
+
 struct conntrack *conntrack_init(void);
 void conntrack_destroy(struct conntrack *);
 
