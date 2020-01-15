@@ -140,6 +140,13 @@ struct ct_flow_offload_item {
     } nat;
 };
 
+/* hw-offload callbacks */
+struct conntrack_offload_class {
+    void (*conn_add)(struct ct_flow_offload_item *);
+    void (*conn_del)(struct ct_flow_offload_item *);
+    bool (*conn_active)(struct ct_flow_offload_item *, long long now);
+};
+
 struct conntrack *conntrack_init(void *dp);
 void conntrack_destroy(struct conntrack *);
 
