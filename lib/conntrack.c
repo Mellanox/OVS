@@ -305,9 +305,14 @@ conntrack_offload_fill_item_common(struct ct_flow_offload_item *item,
 
 static void
 conntrack_offload_del_conn(struct conntrack *ct OVS_UNUSED,
-                           struct conn *conn OVS_UNUSED)
+                           struct conn *conn)
 {
-    VLOG_DBG("conntrack_offload_del_conn");
+    struct ct_flow_offload_item item;
+    int dir;
+
+    for (dir = 0; dir < CT_DIR_NUM; dir ++) {
+        conntrack_offload_fill_item_common(&item, conn, dir);
+    }
 }
 
 /* Initializes the connection tracker 'ct'.  The caller is responsible for
@@ -1420,7 +1425,6 @@ conntrack_swap_conn_key(const struct conn_key *key,
     swapped->dst = key->src;
 }
 
-OVS_UNUSED
 static void
 conntrack_offload_fill_item_add(struct ct_flow_offload_item *item,
                                 struct conn *conn,
@@ -1464,13 +1468,46 @@ conntrack_offload_fill_item_add(struct ct_flow_offload_item *item,
 }
 
 static void
-conntrack_offload_add_conn(struct conntrack *ct OVS_UNUSED,
-                           struct dp_packet *packet OVS_UNUSED,
-                           uint32_t mark OVS_UNUSED,
-                           ovs_u128 label OVS_UNUSED)
+conntrack_offload_prepare_add(struct ct_flow_offload_item *item,
+                              struct conn *conn,
+                              struct dp_packet *packet,
+                              uint32_t mark,
+                              ovs_u128 label,
+                              void *dp)
 {
-    VLOG_DBG("conntrack_add_ct_offload_item");
-    packet->md.conn->offloads.flags |= CT_OFFLOAD_SKIP;
+    int dir = ct_get_packet_dir(packet->md.reply);
+
+    conn->offloads.dir_info[dir].port = packet->md.in_port.odp_port;
+    conn->offloads.dir_info[dir].dp = dp;
+
+    conntrack_offload_fill_item_add(item, conn, packet, mark, label);
+}
+
+static void
+conntrack_offload_add_conn(struct conntrack *ct,
+                           struct dp_packet *packet,
+                           uint32_t mark,
+                           ovs_u128 label)
+{
+    struct conn *conn = packet->md.conn;
+    struct ct_flow_offload_item item;
+
+    /* CT doesn't handle alg */
+    if (conn->alg || conn->alg_related) {
+        conn->offloads.flags |= CT_OFFLOAD_SKIP;
+        return;
+    }
+
+    if ((packet->md.reply && !(conn->offloads.flags & CT_OFFLOAD_REP)) ||
+        (!packet->md.reply && !(conn->offloads.flags & CT_OFFLOAD_INIT))) {
+        conntrack_offload_prepare_add(&item, conn, packet, mark, label, ct->dp);
+        conn->offloads.flags |= packet->md.reply ? CT_OFFLOAD_REP
+                                                 : CT_OFFLOAD_INIT;
+    }
+
+    if ((conn->offloads.flags & CT_OFFLOAD_BOTH) == CT_OFFLOAD_BOTH) {
+        conn->offloads.flags |= CT_OFFLOAD_SKIP;
+    }
 }
 
 /* Sends the packets in '*pkt_batch' through the connection tracker 'ct'.  All
