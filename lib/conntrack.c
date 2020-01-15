@@ -1496,6 +1496,7 @@ conntrack_offload_add_conn(struct conntrack *ct,
                            uint32_t mark,
                            ovs_u128 label)
 {
+    int dir = ct_get_packet_dir(packet->md.reply);
     struct conn *conn = packet->md.conn;
     struct ct_flow_offload_item item;
 
@@ -1510,6 +1511,7 @@ conntrack_offload_add_conn(struct conntrack *ct,
         (!packet->md.reply && !(conn->offloads.flags & CT_OFFLOAD_INIT))) {
         conntrack_offload_prepare_add(&item, conn, packet, mark, label, ct->dp);
         ct->offload_class->conn_add(&item);
+        conn->offloads.port_info[dir].ufid = item.ufid;
         conn->offloads.flags |= packet->md.reply ? CT_OFFLOAD_REP
                                                  : CT_OFFLOAD_INIT;
     }
