@@ -118,6 +118,28 @@ enum ct_direction {
     CT_DIR_NUM,
 };
 
+struct ct_flow_offload_item {
+    int  op;
+    ovs_u128 ufid;
+    void *dp;
+
+    /* matches */
+    odp_port_t odp_port;
+    struct conn_key key;
+
+    /* actions */
+    uint8_t ct_state;
+    ovs_u128 label_key;
+    ovs_u128 label_mask;
+    uint32_t mark_key;
+    uint32_t mark_mask;
+
+    struct {
+        uint8_t mod_flags;
+        struct conn_key  key;
+    } nat;
+};
+
 struct conntrack *conntrack_init(void *dp);
 void conntrack_destroy(struct conntrack *);
 
