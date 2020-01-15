@@ -263,6 +263,8 @@ static bool dpcls_lookup(struct dpcls *cls,
                          const struct netdev_flow_key *keys[],
                          struct dpcls_rule **rules, size_t cnt,
                          int *num_lookups_p);
+static void dp_netdev_get_mega_ufid(const struct match *match,
+                                    ovs_u128 *mega_ufid);
 
 /* Set of supported meter flags */
 #define DP_SUPPORTED_METER_FLAGS_MASK \
@@ -449,9 +451,24 @@ static struct ovsthread_once offload_thread_once
     = OVSTHREAD_ONCE_INITIALIZER;
 
 static void
-dp_netdev_append_ct_offload(struct ct_flow_offload_item *offload OVS_UNUSED)
+dp_netdev_append_ct_offload(struct ct_flow_offload_item *offload)
 {
-    VLOG_DBG("dp_netdev_append_ct_offload");
+    struct dp_offload_item *offload_item;
+
+    if (!netdev_is_flow_api_enabled()) {
+        return;
+    }
+
+    offload_item = xzalloc(sizeof *offload_item);
+    offload_item->type = DP_CT_OFFLOAD_ITEM;
+    offload_item->ct_offload_item = *offload;
+    offload_item->port_mutex = offload->mutex;
+    offload_item->dpif_type_str = offload->class_type;
+
+    ovs_mutex_lock(&dp_flow_offload.mutex);
+    ovs_list_push_back(&dp_flow_offload.list, &offload_item->node);
+    xpthread_cond_signal(&dp_flow_offload.cond);
+    ovs_mutex_unlock(&dp_flow_offload.mutex);
 }
 
 static void
@@ -2488,16 +2505,205 @@ err_free:
     return -1;
 }
 
-static int
-dp_netdev_ct_offload_add(struct dp_offload_item *offload_item OVS_UNUSED)
+static void
+dp_netdev_fill_ct_match(struct match *match,
+                        struct ct_flow_offload_item *offload)
 {
-    return -1;
+    memset(match, 0, sizeof *match);
+    if (offload->key.dl_type == htons(ETH_TYPE_IP)) {
+        /* Fill in ipv4 5-tuples */
+        match->flow.nw_src = offload->key.src.addr.ipv4;
+        match->flow.nw_dst = offload->key.dst.addr.ipv4;
+        match->wc.masks.nw_src = OVS_BE32_MAX;
+        match->wc.masks.nw_dst = OVS_BE32_MAX;
+    } else {
+        /* Fill in ipv6 5-tuples */
+        memcpy(&match->flow.ipv6_src,
+               &offload->key.src.addr.ipv6,
+               sizeof match->flow.ipv6_src);
+        memcpy(&match->flow.ipv6_dst,
+               &offload->key.dst.addr.ipv6,
+               sizeof match->flow.ipv6_dst);
+        memset(&match->wc.masks.ipv6_src, 0xFF,
+                sizeof match->wc.masks.ipv6_src);
+        memset(&match->wc.masks.ipv6_dst, 0xFF,
+                sizeof match->wc.masks.ipv6_dst);
+    }
+    match->flow.dl_type = offload->key.dl_type;
+    match->flow.nw_proto = offload->key.nw_proto;
+    match->wc.masks.dl_type = OVS_BE16_MAX;
+    match->wc.masks.nw_proto = UINT8_MAX;
+    if (match->flow.nw_proto == IPPROTO_TCP) {
+        match->wc.masks.tcp_flags = htons(TCP_RST | TCP_FIN);
+    }
+    match->flow.tp_src = offload->key.src.port;
+    match->flow.tp_dst = offload->key.dst.port;
+    match->wc.masks.tp_src = OVS_BE16_MAX;
+    match->wc.masks.tp_dst = OVS_BE16_MAX;
+    match->flow.ct_zone = offload->key.zone;
+    match->wc.masks.ct_zone = UINT16_MAX;
+    match->flow.in_port.odp_port = offload->odp_port;
+    match->wc.masks.in_port.odp_port = u32_to_odp(UINT32_MAX);
+}
+
+static void
+dp_netdev_create_ct_actions(struct ofpbuf *buf,
+                            struct ct_flow_offload_item *offload)
+{
+    size_t offset;
+    char *helper;
+
+    if (offload->nat.mod_flags) {
+        offset = nl_msg_start_nested(buf, OVS_ACTION_ATTR_SET_MASKED);
+        if (offload->key.dl_type == htons(ETH_TYPE_IP)) {
+            struct ovs_key_ipv4 *ipv4_key = NULL, *ipv4_mask = NULL;
+
+            if (offload->nat.mod_flags & NAT_ACTION_SRC ||
+                offload->nat.mod_flags & NAT_ACTION_DST) {
+                ipv4_key = nl_msg_put_unspec_zero(buf, OVS_KEY_ATTR_IPV4,
+                                                  2 * sizeof *ipv4_key);
+                ipv4_mask = ipv4_key + 1;
+            }
+            if (offload->nat.mod_flags & NAT_ACTION_SRC) {
+                ipv4_key->ipv4_src = offload->nat.key.src.addr.ipv4;
+                ipv4_mask->ipv4_src = OVS_BE32_MAX;
+            }
+            if (offload->nat.mod_flags & NAT_ACTION_DST) {
+                ipv4_key->ipv4_dst = offload->nat.key.dst.addr.ipv4;
+                ipv4_mask->ipv4_dst = OVS_BE32_MAX;
+            }
+        } else {
+            struct ovs_key_ipv6 *ipv6_key = NULL, *ipv6_mask = NULL;
+
+            if (offload->nat.mod_flags & NAT_ACTION_SRC ||
+                offload->nat.mod_flags & NAT_ACTION_DST) {
+                ipv6_key = nl_msg_put_unspec_zero(buf, OVS_KEY_ATTR_IPV6,
+                                                  2 * sizeof *ipv6_key);
+                ipv6_mask = ipv6_key + 1;
+            }
+            if (offload->nat.mod_flags & NAT_ACTION_SRC) {
+                ipv6_key->ipv6_src = offload->nat.key.src.addr.ipv6;
+                memset(&ipv6_mask->ipv6_src, 0xFF, sizeof ipv6_mask->ipv6_src);
+            }
+            if (offload->nat.mod_flags & NAT_ACTION_DST) {
+                ipv6_key->ipv6_dst = offload->nat.key.dst.addr.ipv6;
+                memset(&ipv6_mask->ipv6_dst, 0xFF, sizeof ipv6_mask->ipv6_dst);
+            }
+        }
+        if (offload->nat.mod_flags & NAT_ACTION_SRC_PORT ||
+            offload->nat.mod_flags & NAT_ACTION_DST_PORT) {
+            if (offload->key.nw_proto == IPPROTO_TCP) {
+                struct ovs_key_tcp *tcp_key, *tcp_mask;
+
+                tcp_key = nl_msg_put_unspec_zero(buf, OVS_KEY_ATTR_TCP,
+                                                 2 * sizeof *tcp_key);
+                tcp_mask = tcp_key + 1;
+                if (offload->nat.mod_flags & NAT_ACTION_SRC_PORT) {
+                    tcp_key->tcp_src = offload->nat.key.src.port;
+                    tcp_mask->tcp_src = OVS_BE16_MAX;
+                }
+                if (offload->nat.mod_flags & NAT_ACTION_DST_PORT) {
+                    tcp_key->tcp_dst = offload->nat.key.dst.port;
+                    tcp_mask->tcp_dst = OVS_BE16_MAX;
+                }
+            }
+            if (offload->key.nw_proto == IPPROTO_UDP) {
+                struct ovs_key_udp *udp_key, *udp_mask;
+
+                udp_key = nl_msg_put_unspec_zero(buf, OVS_KEY_ATTR_UDP,
+                                                 2 * sizeof *udp_key);
+                udp_mask = udp_key + 1;
+                if (offload->nat.mod_flags & NAT_ACTION_SRC_PORT) {
+                    udp_key->udp_src = offload->nat.key.src.port;
+                    udp_mask->udp_src = OVS_BE16_MAX;
+                }
+                if (offload->nat.mod_flags & NAT_ACTION_DST_PORT) {
+                    udp_key->udp_dst = offload->nat.key.dst.port;
+                    udp_mask->udp_dst = OVS_BE16_MAX;
+                }
+            }
+        }
+        nl_msg_end_nested(buf, offset);
+    }
+    offset = nl_msg_start_nested(buf, OVS_ACTION_ATTR_CT);
+    if (offload->mark_mask) {
+        uint32_t *mark_key, *mark_mask;
+
+        mark_key = nl_msg_put_unspec_zero(buf, OVS_CT_ATTR_MARK,
+                                          2 * sizeof *mark_key);
+        mark_mask = mark_key + 1;
+        *mark_key = offload->mark_key;
+        *mark_mask = offload->mark_mask;
+    }
+    if (!is_all_zeros(&offload->label_mask, sizeof offload->label_mask)) {
+        ovs_u128 *labels_key, *labels_mask;
+
+        labels_key = nl_msg_put_unspec_zero(buf, OVS_CT_ATTR_LABELS,
+                                            2 * sizeof *labels_key);
+        labels_mask = labels_key + 1;
+        *labels_key = offload->label_key;
+        *labels_mask = offload->label_mask;
+    }
+    nl_msg_put_u16(buf, OVS_CT_ATTR_ZONE, offload->key.zone);
+    helper = xasprintf("offload, ct_state(0x%"PRIx8")", offload->ct_state);
+    nl_msg_put_string(buf, OVS_CT_ATTR_HELPER, helper);
+    free(helper);
+    nl_msg_end_nested(buf, offset);
 }
 
 static int
-dp_netdev_ct_offload_del(struct dp_offload_item *offload_item OVS_UNUSED)
+dp_netdev_ct_offload_add(struct dp_offload_item *offload_item)
 {
-    return -1;
+    struct ct_flow_offload_item offload = offload_item->ct_offload_item;
+    struct offload_info info = { .flow_mark = INVALID_FLOW_MARK, };
+    struct nlattr *actions;
+    struct netdev *port;
+    struct match match;
+    struct ofpbuf buf;
+    int ret;
+
+    port = netdev_ports_get(offload.odp_port, offload_item->dpif_type_str);
+    if (!port) {
+        ret = -1;
+        goto out;
+    }
+
+    dp_netdev_fill_ct_match(&match, &offload);
+    ofpbuf_init(&buf, 0);
+    dp_netdev_create_ct_actions(&buf, &offload);
+    actions = ofpbuf_at_assert(&buf, 0, sizeof(struct nlattr));
+
+    dp_netdev_get_mega_ufid((const struct match *)&match, offload.ufid);
+
+    ovs_mutex_lock(offload_item->port_mutex);
+    ret = netdev_flow_put(port, &match, actions, buf.size, offload.ufid, &info,
+                          NULL);
+    ovs_mutex_unlock(offload_item->port_mutex);
+    netdev_close(port);
+    ofpbuf_uninit(&buf);
+
+out:
+    return ret;
+}
+
+static int
+dp_netdev_ct_offload_del(struct dp_offload_item *offload_item)
+{
+    struct ct_flow_offload_item offload = offload_item->ct_offload_item;
+    struct netdev *port;
+    int ret = 0;
+
+    port = netdev_ports_get(offload.odp_port, offload_item->dpif_type_str);
+    if (!port) {
+        return -1;
+    }
+
+    ovs_mutex_lock(offload_item->port_mutex);
+    ret = netdev_flow_del(port, offload.ufid, NULL);
+    ovs_mutex_unlock(offload_item->port_mutex);
+    netdev_close(port);
+
+    return ret;
 }
 
 static void *
