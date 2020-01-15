@@ -304,14 +304,19 @@ conntrack_offload_fill_item_common(struct ct_flow_offload_item *item,
 }
 
 static void
-conntrack_offload_del_conn(struct conntrack *ct OVS_UNUSED,
+conntrack_offload_del_conn(struct conntrack *ct,
                            struct conn *conn)
 {
     struct ct_flow_offload_item item;
     int dir;
 
+    if (!ct->offload_class || !ct->offload_class->conn_del) {
+        return;
+    }
+
     for (dir = 0; dir < CT_DIR_NUM; dir ++) {
         conntrack_offload_fill_item_common(&item, conn, dir);
+        ct->offload_class->conn_del(&item);
     }
 }
 
@@ -1477,7 +1482,7 @@ conntrack_offload_prepare_add(struct ct_flow_offload_item *item,
 }
 
 static void
-conntrack_offload_add_conn(struct conntrack *ct OVS_UNUSED,
+conntrack_offload_add_conn(struct conntrack *ct,
                            struct dp_packet *packet,
                            struct ovs_mutex *port_mutex,
                            const char *class_type,
@@ -1488,7 +1493,8 @@ conntrack_offload_add_conn(struct conntrack *ct OVS_UNUSED,
     struct conn *conn = packet->md.conn;
 
     /* CT doesn't handle alg */
-    if (conn->alg || conn->alg_related) {
+    if (conn->alg || conn->alg_related || !ct->offload_class ||
+        !ct->offload_class->conn_add) {
         conn->offloads.flags |= CT_OFFLOAD_SKIP;
         return;
     }
@@ -1497,7 +1503,10 @@ conntrack_offload_add_conn(struct conntrack *ct OVS_UNUSED,
         (!packet->md.reply && !(conn->offloads.flags & CT_OFFLOAD_INIT))) {
         conntrack_offload_prepare_add(&item, conn, packet, mark, label,
                                       port_mutex, class_type);
-        conn->offloads.flags |= packet->md.reply ? CT_OFFLOAD_REP : CT_OFFLOAD_INIT;
+        ct->offload_class->conn_add(&item);
+        conn->offloads.flags |= packet->md.reply ? CT_OFFLOAD_REP :
+                                                   CT_OFFLOAD_INIT;
+
     }
 
     if ((conn->offloads.flags & CT_OFFLOAD_BOTH) == CT_OFFLOAD_BOTH) {
