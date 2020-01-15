@@ -34,6 +34,7 @@ v2.15.0 - 15 Feb 2021
      * Add support for DPDK 20.11.
      * Add hardware offload support tunnel pop action (experimental).
      * Add hardware offload support VXLAN vports.
+     * Add hardware offload support for CT flows.
    - Userspace datapath:
      * Add the 'pmd' option to "ovs-appctl dpctl/dump-flows", which
        restricts a flow dump to a single PMD thread if set.
