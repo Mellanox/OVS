@@ -994,7 +994,6 @@ dp_netdev_ct_offload_active(struct ct_flow_offload_item *offload,
     return stats.used >= now;
 }
 
-OVS_UNUSED
 static struct conntrack_offload_class dpif_ct_offload_class = {
     .conn_add = dp_netdev_ct_offload_add_item,
     .conn_del = dp_netdev_ct_offload_del_item,
@@ -1869,6 +1868,7 @@ create_dp_netdev(const char *name, const struct dpif_class *class,
     dp->upcall_cb = NULL;
 
     dp->conntrack = conntrack_init(dp);
+    conntrack_init_offload_class(dp->conntrack, &dpif_ct_offload_class);
 
     atomic_init(&dp->emc_insert_min, DEFAULT_EM_FLOW_INSERT_MIN);
     atomic_init(&dp->tx_flush_interval, DEFAULT_TX_FLUSH_INTERVAL);
