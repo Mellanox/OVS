@@ -48,6 +48,7 @@ v2.13.0 - 14 Feb 2020
      partially offloaded flows, dp:dpdk for fully offloaded by dpdk, and
      type filter supports new filters: "dpdk" and "partially-offloaded".
      * 'dpdkvdpa' port type.
+     * Add hardware offload support for matching IPv6 protocol.
    - RSTP:
      * The rstp_statistics column in Port table will only be updated every
        stats-update-interval configured in Open_vSwtich table.
