@@ -16,6 +16,8 @@
  */
 #include <config.h>
 
+#include <sys/types.h>
+#include <netinet/ip6.h>
 #include <rte_flow.h>
 
 #include "cmap.h"
@@ -318,6 +320,42 @@ dump_flow_pattern(struct ds *s, const struct rte_flow_item *item)
                           ntohs(tcp_mask->hdr.dst_port),
                           tcp_mask->hdr.data_off,
                           tcp_mask->hdr.tcp_flags);
+        } else {
+            ds_put_cstr(s, "  Mask = null\n");
+        }
+    } else if (item->type == RTE_FLOW_ITEM_TYPE_IPV6) {
+        const struct rte_flow_item_ipv6 *ipv6_spec = item->spec;
+        const struct rte_flow_item_ipv6 *ipv6_mask = item->mask;
+
+        char src_addr_str[INET6_ADDRSTRLEN];
+        char dst_addr_str[INET6_ADDRSTRLEN];
+
+        ds_put_cstr(s, "rte flow ipv6 pattern:\n");
+        if (ipv6_spec) {
+            ipv6_string_mapped(src_addr_str,
+                               (struct in6_addr *)&ipv6_spec->hdr.src_addr);
+            ipv6_string_mapped(dst_addr_str,
+                               (struct in6_addr *)&ipv6_spec->hdr.dst_addr);
+
+            ds_put_format(s, "  Spec:  vtc_flow=%#"PRIx32",  proto=%"PRIu8","
+                          "  hlim=%"PRIu8",  src=%s,  dst=%s\n",
+                          ntohl(ipv6_spec->hdr.vtc_flow), ipv6_spec->hdr.proto,
+                          ipv6_spec->hdr.hop_limits, src_addr_str,
+                          dst_addr_str);
+        } else {
+            ds_put_cstr(s, "  Spec = null\n");
+        }
+        if (ipv6_mask) {
+            ipv6_string_mapped(src_addr_str,
+                               (struct in6_addr *)&ipv6_mask->hdr.src_addr);
+            ipv6_string_mapped(dst_addr_str,
+                               (struct in6_addr *)&ipv6_mask->hdr.dst_addr);
+
+            ds_put_format(s, "  Mask:  vtc_flow=%#"PRIx32",  proto=%#"PRIx8","
+                          "  hlim=%#"PRIx8",  src=%s,  dst=%s\n",
+                          ntohl(ipv6_mask->hdr.vtc_flow), ipv6_mask->hdr.proto,
+                          ipv6_mask->hdr.hop_limits, src_addr_str,
+                          dst_addr_str);
         } else {
             ds_put_cstr(s, "  Mask = null\n");
         }
@@ -659,6 +697,44 @@ parse_flow_match(struct flow_patterns *patterns,
     }
     /* ignore mask match for now */
     consumed_masks->nw_frag = 0;
+
+    /* IP v6 */
+    if (match->flow.dl_type == htons(ETH_TYPE_IPV6)) {
+        struct rte_flow_item_ipv6 *spec, *mask;
+
+        spec = xzalloc(sizeof *spec);
+        mask = xzalloc(sizeof *mask);
+
+        spec->hdr.proto = match->flow.nw_proto;
+        spec->hdr.hop_limits = match->flow.nw_ttl;
+        spec->hdr.vtc_flow = htonl((uint32_t)match->flow.nw_tos <<
+                                   RTE_IPV6_HDR_TC_SHIFT);
+        memcpy(spec->hdr.src_addr, &match->flow.ipv6_src,
+               sizeof spec->hdr.src_addr);
+        memcpy(spec->hdr.dst_addr, &match->flow.ipv6_dst,
+               sizeof spec->hdr.dst_addr);
+
+        mask->hdr.proto = match->wc.masks.nw_proto;
+        mask->hdr.hop_limits = match->wc.masks.nw_ttl;
+        mask->hdr.vtc_flow = htonl((uint32_t)match->wc.masks.nw_tos <<
+                                   RTE_IPV6_HDR_TC_SHIFT);
+        memcpy(mask->hdr.src_addr, &match->wc.masks.ipv6_src,
+               sizeof mask->hdr.src_addr);
+        memcpy(mask->hdr.dst_addr, &match->wc.masks.ipv6_dst,
+               sizeof mask->hdr.dst_addr);
+
+        consumed_masks->nw_proto = 0;
+        consumed_masks->nw_ttl = 0;
+        consumed_masks->nw_tos = 0;
+        memset(&consumed_masks->ipv6_src, 0, sizeof consumed_masks->ipv6_src);
+        memset(&consumed_masks->ipv6_dst, 0, sizeof consumed_masks->ipv6_dst);
+
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV6, spec, mask);
+
+        /* Save proto for L4 protocol setup */
+        proto = spec->hdr.proto & mask->hdr.proto;
+        next_proto_mask = &mask->hdr.proto;
+    }
 
     if (proto != IPPROTO_ICMP && proto != IPPROTO_UDP  &&
         proto != IPPROTO_SCTP && proto != IPPROTO_TCP  &&
