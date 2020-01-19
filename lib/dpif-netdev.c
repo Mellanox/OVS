@@ -970,10 +970,35 @@ dp_netdev_ct_offload_del_item(struct ct_flow_offload_item *offload)
     dp_netdev_append_ct_offload(offload);
 }
 
+static bool
+dpif_netdev_get_flow_offload_status(const struct dp_netdev *dp,
+                                    struct dp_netdev_flow *netdev_flow,
+                                    struct dpif_flow_stats *stats,
+                                    struct dpif_flow_attrs *attrs);
+static bool
+dp_netdev_ct_offload_active(struct ct_flow_offload_item *offload,
+                            long long now)
+{
+    struct dp_netdev_flow netdev_flow;
+    struct dpif_flow_stats stats;
+    struct dpif_flow_attrs attrs;
+
+    memset(&netdev_flow, 0, sizeof netdev_flow);
+    *CONST_CAST(odp_port_t *, &netdev_flow.flow.in_port.odp_port) = offload->odp_port;
+    *CONST_CAST(ovs_u128 *, &netdev_flow.mega_ufid) = offload->ufid;
+    if (!dpif_netdev_get_flow_offload_status(offload->dp, &netdev_flow,
+                                             &stats, &attrs)) {
+        return false;
+    }
+
+    return stats.used >= now;
+}
+
 OVS_UNUSED
 static struct conntrack_offload_class dpif_ct_offload_class = {
     .conn_add = dp_netdev_ct_offload_add_item,
     .conn_del = dp_netdev_ct_offload_del_item,
+    .conn_active = dp_netdev_ct_offload_active,
 };
 
 static void
