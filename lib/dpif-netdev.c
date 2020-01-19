@@ -265,6 +265,12 @@ static bool dpcls_lookup(struct dpcls *cls,
                          int *num_lookups_p);
 static void dp_netdev_get_mega_ufid(const struct match *match,
                                     ovs_u128 *mega_ufid);
+static bool dpif_netdev_get_flow_offload_status(const char *dpif_type,
+                                                struct ovs_mutex *port_mutex,
+                                                odp_port_t odp_port,
+                                                const ovs_u128 *mega_ufid,
+                                                struct dpif_flow_stats *stats,
+                                                struct dpif_flow_attrs *attrs);
 
 /* Set of supported meter flags */
 #define DP_SUPPORTED_METER_FLAGS_MASK \
@@ -485,10 +491,28 @@ dp_netdev_ct_offload_del_item(struct ct_flow_offload_item *offload)
     dp_netdev_append_ct_offload(offload);
 }
 
+static bool
+dp_netdev_ct_offload_active(struct ct_flow_offload_item *offload,
+                            long long now)
+{
+    struct dpif_flow_stats stats;
+    struct dpif_flow_attrs attrs;
+
+    if (!dpif_netdev_get_flow_offload_status(offload->class_type,
+                                             offload->mutex, offload->odp_port,
+                                             (const ovs_u128*)offload->ufid,
+                                             &stats, &attrs)) {
+        return false;
+    }
+
+    return stats.used >= now;
+}
+
 OVS_UNUSED
 static struct conntrack_offload_class dpif_ct_offload_class = {
     .conn_add = dp_netdev_ct_offload_add_item,
     .conn_del = dp_netdev_ct_offload_del_item,
+    .conn_active = dp_netdev_ct_offload_active,
 };
 
 #define XPS_TIMEOUT 500000LL    /* In microseconds. */
