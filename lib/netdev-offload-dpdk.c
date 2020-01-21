@@ -1102,18 +1102,18 @@ parse_flow_match(struct netdev *netdev,
 
     consumed_masks = &match->wc.masks;
 
-    if (!strcmp(netdev_get_type(netdev), "vxlan") &&
-        parse_vxlan_match(patterns, match)) {
-        ret = -1;
-        goto out;
-    }
-
     if (netdev_vport_is_vport_class(netdev->netdev_class)) {
         ret = get_table_id(match->flow.in_port.odp_port,
                            &act_resources->self_table_id);
         if (ret) {
             goto out;
         }
+    }
+
+    if (!strcmp(netdev_get_type(netdev), "vxlan") &&
+        parse_vxlan_match(patterns, match)) {
+        ret = -1;
+        goto out;
     }
 
     memset(&consumed_masks->in_port, 0, sizeof consumed_masks->in_port);
