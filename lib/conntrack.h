@@ -138,6 +138,16 @@ struct ct_flow_offload_item {
         uint8_t mod_flags;
         struct conn_key  key;
     } nat;
+
+    /* The value of status describes whether the connection is offloaded or
+     * not.
+     */
+    int *status;
+
+    /* dont_free flag protects a scenario of freeing the connection while the
+     * offload request has not been handled yet.
+     */
+    bool *dont_free;
 };
 
 /* hw-offload callbacks */

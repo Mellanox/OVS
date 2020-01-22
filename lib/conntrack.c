@@ -463,7 +463,7 @@ zone_limit_delete(struct conntrack *ct, uint16_t zone)
     return 0;
 }
 
-static void
+static int
 conn_clean_cmn(struct conntrack *ct, struct conn *conn)
     OVS_REQUIRES(ct->ct_lock)
 {
@@ -471,6 +471,10 @@ conn_clean_cmn(struct conntrack *ct, struct conn *conn)
         expectation_clean(ct, &conn->key);
     }
 
+    if (conn->offloads.dir_info[CT_DIR_INIT].dont_free ||
+        conn->offloads.dir_info[CT_DIR_REP].dont_free) {
+        return -1;
+    }
     if (netdev_is_flow_api_enabled()) {
         conntrack_offload_del_conn(ct, conn);
     }
@@ -482,6 +486,7 @@ conn_clean_cmn(struct conntrack *ct, struct conn *conn)
     if (zl && zl->czl.zone_limit_seq == conn->zone_limit_seq) {
         zl->czl.count--;
     }
+    return 0;
 }
 
 /* Must be called with 'conn' of 'conn_type' CT_CONN_TYPE_DEFAULT.  Also
@@ -492,7 +497,9 @@ conn_clean(struct conntrack *ct, struct conn *conn)
 {
     ovs_assert(conn->conn_type == CT_CONN_TYPE_DEFAULT);
 
-    conn_clean_cmn(ct, conn);
+    if (conn_clean_cmn(ct, conn)) {
+        return;
+    }
     if (conn->nat_conn) {
         uint32_t hash = conn_key_hash(&conn->nat_conn->key, ct->hash_basis);
         cmap_remove(&ct->conns, &conn->nat_conn->cm_node, hash);
@@ -1482,6 +1489,8 @@ conntrack_offload_fill_item_add(struct ct_flow_offload_item *item,
     item->label_key = conn->label;
     item->label_mask.u64.hi = label.u64.hi ^ conn->label.u64.hi;
     item->label_mask.u64.lo = label.u64.lo ^ conn->label.u64.lo;
+    item->dont_free = &conn->offloads.dir_info[dir].dont_free;
+    item->status = &conn->offloads.dir_info[dir].status;
 }
 
 static void
@@ -1498,6 +1507,7 @@ conntrack_offload_prepare_add(struct ct_flow_offload_item *item,
     conn->offloads.dir_info[dir].dp = dp;
 
     conntrack_offload_fill_item_add(item, conn, packet, mark, label);
+    conn->offloads.dir_info[dir].dont_free = true;
 }
 
 static void

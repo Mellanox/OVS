@@ -71,6 +71,8 @@ struct ct_dir_info {
     odp_port_t port;
     ovs_u128 ufid;
     void *dp;
+    int status;
+    bool dont_free;
 };
 
 enum ct_offload_flag {
