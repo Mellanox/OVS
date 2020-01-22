@@ -2681,6 +2681,8 @@ conn_to_ct_dpif_entry(const struct conn *conn, struct ct_dpif_entry *entry,
     if (class->conn_get_protoinfo) {
         class->conn_get_protoinfo(conn, &entry->protoinfo);
     }
+    entry->offload_status_orig = conn->offloads.dir_info[CT_DIR_INIT].status;
+    entry->offload_status_reply = conn->offloads.dir_info[CT_DIR_REP].status;
     ovs_mutex_unlock(&conn->lock);
 
     entry->timeout = (expiration > 0) ? expiration / 1000 : 0;
