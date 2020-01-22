@@ -217,6 +217,7 @@ for service in openvswitch ovsdb-server ovs-vswitchd ovs-delete-transient-ports 
         install -p -D -m 0644 \
                         rhel/usr_lib_systemd_system_${service}.service \
                         $RPM_BUILD_ROOT%{_unitdir}/${service}.service
+                        sed -i -e "s@/usr/share/openvswitch/scripts@%{_datadir}/openvswitch/scripts@" $RPM_BUILD_ROOT%{_unitdir}/${service}.service
 done
 install -m 0755 rhel/etc_init.d_openvswitch \
         $RPM_BUILD_ROOT%{_datadir}/openvswitch/scripts/openvswitch.init
