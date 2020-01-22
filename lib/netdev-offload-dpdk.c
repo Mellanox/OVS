@@ -1007,6 +1007,8 @@ parse_tnl_ip_match(struct flow_patterns *patterns,
 
         spec->hdr.proto = proto;
         spec->hdr.hop_limits = match->flow.tunnel.ip_ttl;
+        spec->hdr.vtc_flow = htonl((uint32_t)match->flow.tunnel.ip_tos <<
+                                   RTE_IPV6_HDR_TC_SHIFT);
         memcpy(spec->hdr.src_addr, &match->flow.tunnel.ipv6_src,
                sizeof spec->hdr.src_addr);
         memcpy(spec->hdr.dst_addr, &match->flow.tunnel.ipv6_dst,
@@ -1014,11 +1016,14 @@ parse_tnl_ip_match(struct flow_patterns *patterns,
 
         mask->hdr.proto = UINT8_MAX;
         mask->hdr.hop_limits = match->wc.masks.tunnel.ip_ttl;
+        mask->hdr.vtc_flow = htonl((uint32_t)match->wc.masks.tunnel.ip_tos <<
+                                   RTE_IPV6_HDR_TC_SHIFT);
         memcpy(mask->hdr.src_addr, &match->wc.masks.tunnel.ipv6_src,
                sizeof mask->hdr.src_addr);
         memcpy(mask->hdr.dst_addr, &match->wc.masks.tunnel.ipv6_dst,
                sizeof mask->hdr.dst_addr);
 
+        consumed_masks->tunnel.ip_tos = 0;
         consumed_masks->tunnel.ip_ttl = 0;
         memset(&consumed_masks->tunnel.ipv6_src, 0,
                sizeof consumed_masks->tunnel.ipv6_src);
