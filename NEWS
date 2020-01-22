@@ -57,6 +57,8 @@ v2.13.0 - 14 Feb 2020
        interval is increased to 60 seconds for the connection to the
        replication server. This value is configurable with the unixctl
        command - ovsdb-server/set-active-ovsdb-server-probe-interval.
+   - 'ovs-appctl dpctl/dump-conntrack' can now show the offloaded status
+     for CT flows per direction.
 
 v2.12.0 - 03 Sep 2019
 ---------------------

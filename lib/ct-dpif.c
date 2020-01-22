@@ -322,6 +322,14 @@ ct_dpif_format_entry(const struct ct_dpif_entry *entry, struct ds *ds,
         ds_put_hex(ds, &value, sizeof value);
     }
     ct_dpif_format_protoinfo(ds, ",protoinfo=", &entry->protoinfo, verbose);
+    if (verbose) {
+        if (entry->offload_status_orig) {
+            ds_put_format(ds, ",orig_offloaded:yes");
+        }
+        if (entry->offload_status_reply) {
+            ds_put_format(ds, ",reply_offloaded:yes");
+        }
+    }
     ct_dpif_format_helper(ds, ",helper=", &entry->helper);
     if (verbose && entry->tuple_master.l3_type != 0) {
         ds_put_cstr(ds, ",master=(");

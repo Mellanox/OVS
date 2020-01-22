@@ -195,6 +195,8 @@ struct ct_dpif_entry {
     uint32_t timeout;
     uint32_t mark;
     uint32_t bkt;       /* CT bucket number. */
+    uint32_t offload_status_orig;
+    uint32_t offload_status_reply;
 };
 
 enum {
