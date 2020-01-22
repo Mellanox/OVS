@@ -2004,8 +2004,11 @@ netdev_offload_dpdk_destroy_flow(struct netdev *netdev,
         if (fi->devargs) {
             flow_netdev = netdev_dpdk_get_netdev_by_devargs(fi->devargs);
             if (!flow_netdev) {
-                ret = -1;
-                goto out;
+                VLOG_DBG_RL(&rl, "%s: ufid "UUID_FMT": "
+                            "could not find a netdev for devargs='%s'\n",
+                            netdev_get_name(netdev),
+                            UUID_ARGS((struct uuid *)ufid), fi->devargs);
+                continue;
             }
         } else {
             flow_netdev = netdev;
