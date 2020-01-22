@@ -78,6 +78,8 @@ struct ct_port_info {
     odp_port_t port;
     ovs_u128 ufid;
     const char *class_type;
+    int status;
+    bool dont_free;
 };
 
 enum ct_offload_flag {

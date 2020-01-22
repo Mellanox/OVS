@@ -484,6 +484,11 @@ conn_clean(struct conntrack *ct, struct conn *conn)
 {
     ovs_assert(conn->conn_type == CT_CONN_TYPE_DEFAULT);
 
+    if (conn->offloads.port_info[CT_DIR_INIT].dont_free ||
+        conn->offloads.port_info[CT_DIR_REP].dont_free) {
+        return;
+    }
+
     if (netdev_is_flow_api_enabled()) {
         conntrack_offload_del_conn(ct, conn);
     }
@@ -1471,6 +1476,8 @@ conntrack_offload_fill_item_add(struct ct_flow_offload_item *item,
     item->label_key = conn->label;
     item->label_mask.u64.hi = label.u64.hi ^ conn->label.u64.hi;
     item->label_mask.u64.lo = label.u64.lo ^ conn->label.u64.lo;
+    item->dont_free = &conn->offloads.port_info[dir].dont_free;
+    item->status = &conn->offloads.port_info[dir].status;
 }
 
 static void
@@ -1487,8 +1494,9 @@ conntrack_offload_prepare_add(struct ct_flow_offload_item *item,
     conn->offloads.port_info[dir].port = packet->md.in_port.odp_port;
     conn->offloads.port_info[dir].port_mutex = port_mutex;
     conn->offloads.port_info[dir].class_type = class_type;
-
     conntrack_offload_fill_item_add(item, conn, packet, mark, label);
+
+    conn->offloads.port_info[dir].dont_free = true;
 }
 
 static void
