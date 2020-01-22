@@ -29,6 +29,14 @@
 # To enable DPDK support, specify '--with dpdk' when building
 %bcond_with dpdk
 
+# Enable Python 3 by specifying '--with build_python3'.
+# This is enabled by default for versions of the distribution that
+# have Python 3 by default (Fedora > 22).
+%if %{with dpdk}
+%{!?dpdk_datadir:%define dpdk_datadir %{_datadir}}
+%endif
+
+%bcond_with build_python3
 # If there is a need to automatically enable the package after installation,
 # specify the "--with autoenable"
 %bcond_with autoenable
@@ -162,7 +170,7 @@ This package provides IPsec tunneling support for OVS tunnels.
         --disable-libcapng \
 %endif
 %if %{with dpdk}
-        --with-dpdk=$(dirname %{_datadir}/dpdk/*/.config) \
+        --with-dpdk=$(dirname %{dpdk_datadir}/dpdk/*/.config) \
 %endif
         --enable-ssl \
         --disable-static \
