@@ -458,6 +458,23 @@ dump_flow_action(struct ds *s, const struct rte_flow_action *actions)
         } else {
             ds_put_format(s, "  Set-%s-tcp/udp-port = null\n", dirstr);
         }
+    } else if (actions->type == RTE_FLOW_ACTION_TYPE_SET_IPV6_SRC ||
+               actions->type == RTE_FLOW_ACTION_TYPE_SET_IPV6_DST) {
+        const struct rte_flow_action_set_ipv6 *set_ipv6 = actions->conf;
+
+        char *dirstr = actions->type == RTE_FLOW_ACTION_TYPE_SET_IPV6_DST
+                       ? "dst" : "src";
+
+        ds_put_format(s, "rte flow set-ipv6-%s action:\n", dirstr);
+        if (set_ipv6) {
+            char addr_str[INET6_ADDRSTRLEN];
+
+            ipv6_string_mapped(addr_str,
+                               (struct in6_addr *)&set_ipv6->ipv6_addr);
+            ds_put_format(s, "  Set-ipv6-%s: %s\n", dirstr, addr_str);
+        } else {
+            ds_put_format(s, "  Set-ipv6-%s = null\n", dirstr);
+        }
     } else {
         ds_put_format(s, "unknown rte flow action (%d)\n", actions->type);
     }
@@ -1009,6 +1026,12 @@ BUILD_ASSERT_DECL(sizeof(struct rte_flow_action_set_ipv4) ==
                   MEMBER_SIZEOF(struct ovs_key_ipv4, ipv4_dst));
 BUILD_ASSERT_DECL(sizeof(struct rte_flow_action_set_ttl) ==
                   MEMBER_SIZEOF(struct ovs_key_ipv4, ipv4_ttl));
+BUILD_ASSERT_DECL(sizeof(struct rte_flow_action_set_ipv6) ==
+                  MEMBER_SIZEOF(struct ovs_key_ipv6, ipv6_src));
+BUILD_ASSERT_DECL(sizeof(struct rte_flow_action_set_ipv6) ==
+                  MEMBER_SIZEOF(struct ovs_key_ipv6, ipv6_dst));
+BUILD_ASSERT_DECL(sizeof(struct rte_flow_action_set_ttl) ==
+                  MEMBER_SIZEOF(struct ovs_key_ipv6, ipv6_hlimit));
 BUILD_ASSERT_DECL(sizeof(struct rte_flow_action_set_tp) ==
                   MEMBER_SIZEOF(struct ovs_key_tcp, tcp_src));
 BUILD_ASSERT_DECL(sizeof(struct rte_flow_action_set_tp) ==
@@ -1056,6 +1079,18 @@ parse_set_actions(struct flow_actions *actions,
 
             if (mask && !is_all_zeros(mask, sizeof *mask)) {
                 VLOG_DBG_RL(&rl, "Unsupported IPv4 set action");
+                return -1;
+            }
+        } else if (nl_attr_type(sa) == OVS_KEY_ATTR_IPV6) {
+            const struct ovs_key_ipv6 *key = nl_attr_get(sa);
+            const struct ovs_key_ipv6 *mask = masked ? key + 1 : NULL;
+
+            add_set_flow_action(ipv6_src, RTE_FLOW_ACTION_TYPE_SET_IPV6_SRC);
+            add_set_flow_action(ipv6_dst, RTE_FLOW_ACTION_TYPE_SET_IPV6_DST);
+            add_set_flow_action(ipv6_hlimit, RTE_FLOW_ACTION_TYPE_SET_TTL);
+
+            if (mask && !is_all_zeros(mask, sizeof *mask)) {
+                VLOG_DBG_RL(&rl, "Unsupported IPv6 set action");
                 return -1;
             }
         } else if (nl_attr_type(sa) == OVS_KEY_ATTR_TCP) {
