@@ -332,7 +332,7 @@ if [ $1 -eq 1 ]; then
 
 %if %{with dpdk}
     sed -i \
-        's@OVS_USER_ID="openvswitch:openvswitch"@OVS_USER_ID="openvswitch:hugetlbfs"@'\
+        's@OVS_USER_ID="openvswitch:openvswitch"@OVS_USER_ID="root:root"@'\
         /etc/sysconfig/openvswitch
 %endif
 
