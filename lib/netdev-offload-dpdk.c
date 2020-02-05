@@ -2422,6 +2422,12 @@ BUILD_ASSERT_DECL(sizeof(struct rte_flow_action_set_ipv4) ==
                   MEMBER_SIZEOF(struct ovs_key_ipv4, ipv4_dst));
 BUILD_ASSERT_DECL(sizeof(struct rte_flow_action_set_ttl) ==
                   MEMBER_SIZEOF(struct ovs_key_ipv4, ipv4_ttl));
+BUILD_ASSERT_DECL(sizeof(struct rte_flow_action_set_ipv6) ==
+                  MEMBER_SIZEOF(struct ovs_key_ipv6, ipv6_src));
+BUILD_ASSERT_DECL(sizeof(struct rte_flow_action_set_ipv6) ==
+                  MEMBER_SIZEOF(struct ovs_key_ipv6, ipv6_dst));
+BUILD_ASSERT_DECL(sizeof(struct rte_flow_action_set_ttl) ==
+                  MEMBER_SIZEOF(struct ovs_key_ipv6, ipv6_hlimit));
 BUILD_ASSERT_DECL(sizeof(struct rte_flow_action_set_tp) ==
                   MEMBER_SIZEOF(struct ovs_key_tcp, tcp_src));
 BUILD_ASSERT_DECL(sizeof(struct rte_flow_action_set_tp) ==
