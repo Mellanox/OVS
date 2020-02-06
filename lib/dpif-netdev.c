@@ -2700,6 +2700,38 @@ dp_netdev_ct_offload_add(struct dp_offload_item *offload_item)
     dp_netdev_get_mega_ufid((const struct match *)&match, offload.ufid);
 
     ovs_mutex_lock(offload_item->port_mutex);
+    if (OVS_UNLIKELY(!VLOG_DROP_DBG((&upcall_rl)))) {
+        struct ds ds = DS_EMPTY_INITIALIZER;
+        struct ofpbuf key_buf, mask_buf;
+        struct odp_flow_key_parms odp_parms = {
+            .flow = &match.flow,
+            .mask = &match.wc.masks,
+            .support = dp_netdev_support,
+        };
+
+        ofpbuf_init(&key_buf, 0);
+        ofpbuf_init(&mask_buf, 0);
+
+        odp_flow_key_from_flow(&odp_parms, &key_buf);
+        odp_parms.key_buf = &key_buf;
+        odp_flow_key_from_mask(&odp_parms, &mask_buf);
+
+        ds_put_cstr(&ds, "ct_add: ");
+        odp_format_ufid(offload.ufid, &ds);
+        ds_put_cstr(&ds, " ");
+        odp_flow_format(key_buf.data, key_buf.size,
+                        mask_buf.data, mask_buf.size,
+                        NULL, &ds, false);
+        ds_put_cstr(&ds, ", actions:");
+        format_odp_actions(&ds, actions, buf.size, NULL);
+
+        VLOG_DBG("%s", ds_cstr(&ds));
+
+        ofpbuf_uninit(&key_buf);
+        ofpbuf_uninit(&mask_buf);
+
+        ds_destroy(&ds);
+    }
     ret = netdev_flow_put(port, &match, actions, buf.size, offload.ufid, &info,
                           NULL);
     /* A memory barrier that makes sure that the lines will be executed by

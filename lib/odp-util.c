@@ -930,7 +930,7 @@ static const struct nl_policy ovs_conntrack_policy[] = {
     [OVS_CT_ATTR_LABELS] = { .type = NL_A_UNSPEC, .optional = true,
                              .min_len = sizeof(struct ovs_key_ct_labels) * 2 },
     [OVS_CT_ATTR_HELPER] = { .type = NL_A_STRING, .optional = true,
-                             .min_len = 1, .max_len = 16 },
+                             .min_len = 1, .max_len = 32 },
     [OVS_CT_ATTR_NAT] = { .type = NL_A_UNSPEC, .optional = true },
     [OVS_CT_ATTR_TIMEOUT] = { .type = NL_A_STRING, .optional = true,
                               .min_len = 1, .max_len = 32 },
