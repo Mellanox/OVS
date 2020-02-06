@@ -1781,7 +1781,6 @@ parse_vxlan_match(struct flow_patterns *patterns,
     return 0;
 }
 
-OVS_UNUSED
 static int
 get_packet_reg_field(struct dp_packet *packet, uint8_t reg_field_id,
                      uint32_t *val)
