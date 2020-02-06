@@ -1905,7 +1905,13 @@ parse_flow_match(struct netdev *netdev,
                 mask->hdr.next_proto_id;
         next_proto_mask = &mask->hdr.next_proto_id;
     }
-    /* ignore mask match for now */
+    /* do not attempt to offload frags. */
+    if (match->flow.nw_frag != OVS_FRAG_TYPE_NONE && match->wc.masks.nw_frag) {
+        VLOG_DBG_RL(&rl, "Frag (%d/%d) not supported", match->flow.nw_frag,
+                    match->wc.masks.nw_frag);
+        ret = -1;
+        goto out;
+    }
     consumed_masks->nw_frag = 0;
 
     /* IP v6 */
