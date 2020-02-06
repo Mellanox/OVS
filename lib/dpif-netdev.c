@@ -2741,6 +2741,7 @@ static void *
 dp_netdev_flow_offload_main(void *data OVS_UNUSED)
 {
     struct dp_offload_item *offload_item;
+    const ovs_u128 *ufid = NULL;
     struct ovs_list *list;
     const char *flow_type;
     const char *op;
@@ -2763,6 +2764,7 @@ dp_netdev_flow_offload_main(void *data OVS_UNUSED)
                     &offload_item->flow_offload_item;
 
             flow_type = "netdev";
+            ufid = &dp_offload->flow->mega_ufid;
             switch (dp_offload->op) {
             case DP_NETDEV_FLOW_OFFLOAD_OP_ADD:
                 op = "add";
@@ -2785,6 +2787,7 @@ dp_netdev_flow_offload_main(void *data OVS_UNUSED)
                     &offload_item->ct_offload_item;
 
             flow_type = "ct";
+            ufid = ct_offload->ufid;
             switch (ct_offload->op) {
             case DP_NETDEV_FLOW_OFFLOAD_OP_ADD:
                 op = "add";
@@ -2801,8 +2804,9 @@ dp_netdev_flow_offload_main(void *data OVS_UNUSED)
             OVS_NOT_REACHED();
         }
 
-        VLOG_DBG("%s to %s %s flow\n",
-                 ret == 0 ? "succeed" : "failed", op, flow_type);
+        VLOG_DBG("%s to %s %s flow "UUID_FMT"\n",
+                 ret == 0 ? "succeed" : "failed", op, flow_type,
+                 UUID_ARGS((struct uuid *)ufid));
         free(offload_item);
         ovsrcu_quiesce();
     }
