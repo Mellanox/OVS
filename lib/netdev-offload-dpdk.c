@@ -1805,7 +1805,8 @@ get_packet_reg_field(struct dp_packet *packet, uint8_t reg_field_id,
     meta &= reg_field->mask;
 
     if (meta == 0) {
-        VLOG_ERR_RL(&rl, "packet reg field id %d is 0", reg_field_id);
+        VLOG_ERR_RL(&rl, "port %d: packet reg field id %d is 0",
+                    packet->md.in_port.odp_port, reg_field_id);
         return -1;
     }
 
