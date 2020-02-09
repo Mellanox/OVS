@@ -50,6 +50,7 @@ EXTRA_DIST += \
 	utilities/ovs-pipegen.py \
 	utilities/ovs-pki.in \
 	utilities/ovs-save \
+	utilities/ovs-testpmd.py \
 	utilities/ovs-tcpdump.in \
 	utilities/ovs-tcpundump.in \
 	utilities/ovs-test.in \
