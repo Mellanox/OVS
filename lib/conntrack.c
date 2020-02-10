@@ -292,7 +292,7 @@ ct_print_conn_info(const struct conn *c, const char *log_msg,
     }
 }
 
-static void
+static bool
 conntrack_offload_fill_item_common(struct ct_flow_offload_item *item,
                                    struct conn *conn,
                                    int dir)
@@ -301,6 +301,10 @@ conntrack_offload_fill_item_common(struct ct_flow_offload_item *item,
     item->odp_port = conn->offloads.port_info[dir].port;
     item->mutex = conn->offloads.port_info[dir].port_mutex;
     item->class_type = conn->offloads.port_info[dir].class_type;
+
+    return dir == CT_DIR_REP
+           ? !!(conn->offloads.flags & CT_OFFLOAD_REP)
+           : !!(conn->offloads.flags & CT_OFFLOAD_INIT);
 }
 
 static void
@@ -315,7 +319,9 @@ conntrack_offload_del_conn(struct conntrack *ct,
     }
 
     for (dir = 0; dir < CT_DIR_NUM; dir ++) {
-        conntrack_offload_fill_item_common(&item, conn, dir);
+        if (!conntrack_offload_fill_item_common(&item, conn, dir)) {
+            continue;
+        }
         ct->offload_class->conn_del(&item);
     }
 }
@@ -1658,8 +1664,8 @@ ct_sweep(struct conntrack *ct, long long now, size_t limit)
             for (dir = 0; ct->offload_class &&
                           ct->offload_class->conn_active && dir < CT_DIR_NUM;
                  dir++) {
-                conntrack_offload_fill_item_common(&item, conn, dir);
                 if (!conn_get_tm(conn, &tm) &&
+                    conntrack_offload_fill_item_common(&item, conn, dir) &&
                     ct->offload_class->conn_active(&item, now)) {
                     conn->expiration = now + ct_timeout_val[tm];
                     break;
