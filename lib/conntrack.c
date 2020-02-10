@@ -1650,27 +1650,21 @@ ct_sweep(struct conntrack *ct, long long now, size_t limit)
     size_t count = 0;
     int dir;
 
-    for (unsigned i = 0; ct->offload_class && ct->offload_class->conn_active
-         && i < N_CT_TM; i++) {
-        LIST_FOR_EACH_SAFE (conn, next, exp_node, &ct->exp_lists[i]) {
-            ovs_mutex_lock(&conn->lock);
-            for (dir = 0; dir < CT_DIR_NUM; dir ++) {
-                conntrack_offload_fill_item_common(&item, conn, dir);
-                if (!conn_get_tm(conn, &tm) &&
-                    ct->offload_class->conn_active(&item, now)) {
-                    conn_update_expiration(ct, conn, tm, now);
-                    break;
-                }
-            }
-            ovs_mutex_unlock(&conn->lock);
-        }
-    }
-
     ovs_mutex_lock(&ct->ct_lock);
 
     for (unsigned i = 0; i < N_CT_TM; i++) {
         LIST_FOR_EACH_SAFE (conn, next, exp_node, &ct->exp_lists[i]) {
             ovs_mutex_lock(&conn->lock);
+            for (dir = 0; ct->offload_class &&
+                          ct->offload_class->conn_active && dir < CT_DIR_NUM;
+                 dir++) {
+                conntrack_offload_fill_item_common(&item, conn, dir);
+                if (!conn_get_tm(conn, &tm) &&
+                    ct->offload_class->conn_active(&item, now)) {
+                    conn->expiration = now + ct_timeout_val[tm];
+                    break;
+                }
+            }
             if (now < conn->expiration || count >= limit) {
                 min_expiration = MIN(min_expiration, conn->expiration);
                 ovs_mutex_unlock(&conn->lock);
