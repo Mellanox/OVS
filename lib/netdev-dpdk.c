@@ -2114,6 +2114,7 @@ netdev_dpdk_vdpa_set_config(struct netdev *netdev, const struct smap *args,
                 smap_get(args, "vdpa-accelerator-devargs");
     const char *vdpa_socket_path =
                 smap_get(args, "vdpa-socket-path");
+    int vdpa_max_queues = smap_get_int(args, "vdpa-max-queues", -1);
     int err = 0;
 
     if ((vdpa_accelerator_devargs == NULL) || (vdpa_socket_path == NULL)) {
@@ -2131,7 +2132,8 @@ netdev_dpdk_vdpa_set_config(struct netdev *netdev, const struct smap *args,
 
     err = netdev_dpdk_vdpa_config_impl(dev->relay, dev->port_id,
                                        vdpa_socket_path,
-                                       vdpa_accelerator_devargs);
+                                       vdpa_accelerator_devargs,
+                                       vdpa_max_queues);
     if (err) {
         VLOG_ERR("netdev_dpdk_vdpa_config_impl failed. Port %s",
                  netdev->name);
