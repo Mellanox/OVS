@@ -35,7 +35,7 @@
 VLOG_DEFINE_THIS_MODULE(netdev_dpdk_vdpa);
 
 #define NETDEV_DPDK_VDPA_SIZEOF_MBUF        (sizeof(struct rte_mbuf *))
-#define NETDEV_DPDK_VDPA_MAX_QPAIRS         128
+#define NETDEV_DPDK_VDPA_MAX_QPAIRS         16
 #define NETDEV_DPDK_VDPA_INVALID_QUEUE_ID   0xFFFF
 #define NETDEV_DPDK_VDPA_STATS_MAX_STR_SIZE 64
 #define NETDEV_DPDK_VDPA_RX_DESC_DEFAULT    512
@@ -206,7 +206,13 @@ netdev_dpdk_vdpa_queue_state(struct netdev_dpdk_vdpa_relay *relay,
 
     while (!rte_eth_vhost_get_queue_event(port, &event)) {
         q_id = (event.rx ? event.queue_id * 2 : event.queue_id * 2 + 1);
-
+        if ((q_id >= relay->num_queues) && event.enable) {
+            VLOG_ERR("netdev_dpdk_vdpa_queue_state: "
+                     "Queue %u is higher than max queues configures for port "
+                     "%u. Max queues configured: %u",
+                     q_id, port, relay->num_queues);
+            return -1;
+        }
         relay->flow_params.queues_en[event.queue_id] = event.enable;
         /* Load balance the relay's queues on the pr's queues in round robin */
         relay->qpair[q_id].pr_queue = (event.enable ? q_id % relay->n_rxq :
@@ -382,7 +388,11 @@ netdev_dpdk_vdpa_port_init(struct netdev_dpdk_vdpa_relay *relay,
     }
 
     if (port_type == NETDEV_DPDK_VDPA_PORT_TYPE_VM) {
-        netdev_dpdk_vdpa_queue_state(relay, port);
+        err = netdev_dpdk_vdpa_queue_state(relay, port);
+        if (err < 0) {
+            VLOG_ERR("netdev_dpdk_vdpa_queue_state failed for port %u", port);
+            goto dev_close;
+        }
     }
 
     err = rte_eth_dev_callback_register(port, RTE_ETH_EVENT_QUEUE_STATE,
@@ -594,7 +604,8 @@ int
 netdev_dpdk_vdpa_config_impl(struct netdev_dpdk_vdpa_relay *relay,
                              uint16_t port_id,
                              const char *vm_socket,
-                             const char *vf_pci)
+                             const char *vf_pci,
+                             int max_queues)
 {
     char *vhost_args;
     uint16_t q;
@@ -605,11 +616,15 @@ netdev_dpdk_vdpa_config_impl(struct netdev_dpdk_vdpa_relay *relay,
         goto out;
     }
 
+    if (max_queues < 0) {
+        max_queues = NETDEV_DPDK_VDPA_MAX_QPAIRS;
+    }
+
     relay->vf_pci = xstrdup(vf_pci);
     relay->vm_socket = xstrdup(vm_socket);
     relay->vhost_name = xasprintf("net_vhost%d",port_id);
     vhost_args = xasprintf("iface=%s,queues=%d,client=1",
-                           relay->vm_socket, NETDEV_DPDK_VDPA_MAX_QPAIRS);
+                           relay->vm_socket, max_queues);
 
     /* create virtio vdev:*/
     err = rte_eal_hotplug_add("vdev", relay->vhost_name, vhost_args);
@@ -638,7 +653,7 @@ netdev_dpdk_vdpa_config_impl(struct netdev_dpdk_vdpa_relay *relay,
         goto err_clear_vf;
     }
 
-    relay->num_queues = NETDEV_DPDK_VDPA_MAX_QPAIRS;
+    relay->num_queues = max_queues;
     relay->flow_params.priority = 0;
     relay->flow_params.flow = NULL;
     memset(relay->flow_params.queues_en, false,
