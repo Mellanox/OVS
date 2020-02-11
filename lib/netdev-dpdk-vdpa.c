@@ -72,6 +72,7 @@ struct netdev_dpdk_vdpa_relay {
         char *vf_pci;
         char *vm_socket;
         char *vhost_name;
+        bool started;
         );
 };
 
@@ -118,6 +119,7 @@ netdev_dpdk_vdpa_clear_relay(struct netdev_dpdk_vdpa_relay *relay)
         relay->qpair[q].pr_queue = NETDEV_DPDK_VDPA_INVALID_QUEUE_ID;
     }
 
+    relay->started = false;
     relay->port_id_vm = 0;
     relay->port_id_vf = 0;
     relay->num_queues = 0;
@@ -329,6 +331,10 @@ netdev_dpdk_vdpa_port_init(struct netdev_dpdk_vdpa_relay *relay,
         err = -1;
         goto out;
     }
+    if (relay->started) {
+        rte_eth_dev_stop(port);
+        relay->started = false;
+    }
     rte_eth_dev_info_get(port, &dev_info);
     conf.rxmode.offloads = 0;
 
@@ -418,6 +424,7 @@ netdev_dpdk_vdpa_port_init(struct netdev_dpdk_vdpa_relay *relay,
         VLOG_ERR("rte_eth_dev_start failed for port %d", port);
         goto dev_close;
     }
+    relay->started = true;
     goto out;
 
 dev_close:
