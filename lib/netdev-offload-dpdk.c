@@ -3474,7 +3474,7 @@ netdev_offload_dpdk_hw_miss_packet_recover(struct netdev *netdev,
 
     packet->md.recirc_id = flow_miss_ctx.recirc_id;
     if (flow_miss_ctx.vport != ODPP_NONE) {
-        if (flow_miss_ctx.recirc_id == 0) {
+        if (is_all_zeros(&flow_miss_ctx.tnl, sizeof flow_miss_ctx.tnl)) {
             vport_netdev = netdev_ports_get(flow_miss_ctx.vport,
                                             netdev->dpif_type);
             if (vport_netdev) {
