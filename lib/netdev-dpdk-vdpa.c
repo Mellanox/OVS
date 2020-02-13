@@ -90,7 +90,7 @@ netdev_dpdk_vdpa_port_from_name(const char *name)
         }
     }
     VLOG_ERR("No port was found for %s", name);
-    return -1;
+    return ENODEV;
 }
 
 static void
@@ -125,6 +125,11 @@ netdev_dpdk_vdpa_clear_relay(struct netdev_dpdk_vdpa_relay *relay)
     relay->num_queues = 0;
     relay->flow_params.flow = NULL;
     memset(&relay->flow_params, 0, sizeof relay->flow_params);
+}
+
+static void
+netdev_dpdk_vdpa_free_relay_strings(struct netdev_dpdk_vdpa_relay *relay)
+{
     netdev_dpdk_vdpa_free(relay->vm_socket);
     netdev_dpdk_vdpa_free(relay->vf_pci);
     netdev_dpdk_vdpa_free(relay->vhost_name);
@@ -178,7 +183,7 @@ netdev_dpdk_vdpa_generate_rss_flow(struct netdev_dpdk_vdpa_relay *relay)
     if (flow == NULL) {
         VLOG_ERR("Failed to create flow. msg: %s",
                  error.message ? error.message : "(no stated reason)");
-        err = -1;
+        err = EINVAL;
         goto out;
     }
 
@@ -213,7 +218,7 @@ netdev_dpdk_vdpa_queue_state(struct netdev_dpdk_vdpa_relay *relay,
                      "Queue %u is higher than max queues configures for port "
                      "%u. Max queues configured: %u",
                      q_id, port, relay->num_queues);
-            return -1;
+            return ENODEV;
         }
         relay->flow_params.queues_en[event.queue_id] = event.enable;
         /* Load balance the relay's queues on the pr's queues in round robin */
@@ -222,7 +227,7 @@ netdev_dpdk_vdpa_queue_state(struct netdev_dpdk_vdpa_relay *relay,
         if (!event.rx) {
             relay->flow_params.queues_en[event.queue_id] = event.enable;
             err = netdev_dpdk_vdpa_generate_rss_flow(relay);
-            if (err < 0) {
+            if (err) {
                 VLOG_ERR("netdev_dpdk_vdpa_generate_rss_flow failed");
                 return err;
             }
@@ -242,7 +247,7 @@ netdev_dpdk_vdpa_queue_state_cb_fn(uint16_t port_id,
     int ret = 0;
 
     ret = netdev_dpdk_vdpa_queue_state(relay, port_id);
-    if (ret < 0) {
+    if (ret) {
         VLOG_ERR("netdev_dpdk_vdpa_queue_state failed for port %u", port_id);
         return ret;
     }
@@ -328,7 +333,7 @@ netdev_dpdk_vdpa_port_init(struct netdev_dpdk_vdpa_relay *relay,
 
     if (!rte_eth_dev_is_valid_port(port)) {
         VLOG_ERR("rte_eth_dev_is_valid_port failed, invalid port %d", port);
-        err = -1;
+        err = ENODEV;
         goto out;
     }
     if (relay->started) {
@@ -355,7 +360,7 @@ netdev_dpdk_vdpa_port_init(struct netdev_dpdk_vdpa_relay *relay,
                      dev_info.device->name,
                      tso_support ? "":" TSO offloads",
                      csum_support ? "":" checksum offloads");
-            err = -1;
+            err = EINVAL;
             goto out;
         }
 
@@ -373,7 +378,7 @@ netdev_dpdk_vdpa_port_init(struct netdev_dpdk_vdpa_relay *relay,
                                      NETDEV_DPDK_VDPA_RX_DESC_DEFAULT,
                                      rte_eth_dev_socket_id(port),
                                      NULL, mp);
-        if (err < 0) {
+        if (err) {
             VLOG_ERR("rte_eth_rx_queue_setup failed for port %d, error %d",
                      port, err);
             goto dev_close;
@@ -389,13 +394,13 @@ netdev_dpdk_vdpa_port_init(struct netdev_dpdk_vdpa_relay *relay,
         if (err < 0) {
             VLOG_ERR("rte_eth_tx_queue_setup failed for port %d, error %d",
                      port, err);
-            goto dev_close;
+            goto out;
         }
     }
 
     if (port_type == NETDEV_DPDK_VDPA_PORT_TYPE_VM) {
         err = netdev_dpdk_vdpa_queue_state(relay, port);
-        if (err < 0) {
+        if (err) {
             VLOG_ERR("netdev_dpdk_vdpa_queue_state failed for port %u", port);
             goto dev_close;
         }
@@ -428,6 +433,10 @@ netdev_dpdk_vdpa_port_init(struct netdev_dpdk_vdpa_relay *relay,
     goto out;
 
 dev_close:
+    if (relay->started == true) {
+        rte_eth_dev_stop(port);
+        relay->started = false;
+    }
     rte_eth_dev_close(port);
 out:
     return err;
@@ -643,7 +652,7 @@ netdev_dpdk_vdpa_config_impl(struct netdev_dpdk_vdpa_relay *relay,
     relay->port_id_vm = netdev_dpdk_vdpa_port_from_name(relay->vhost_name);
     if (relay->port_id_vm < 0) {
         VLOG_ERR("No port id was found for vm %s", relay->vhost_name);
-        err = -1;
+        err = ENODEV;
         goto err_clear_vdev;
     }
 
@@ -656,7 +665,7 @@ netdev_dpdk_vdpa_config_impl(struct netdev_dpdk_vdpa_relay *relay,
     relay->port_id_vf = netdev_dpdk_vdpa_port_from_name(relay->vf_pci);
     if (relay->port_id_vf < 0) {
         VLOG_ERR("No port id was found for vf %s", relay->vf_pci);
-        err = -1;
+        err = ENODEV;
         goto err_clear_vf;
     }
 
@@ -756,6 +765,7 @@ destruct_vf:
 
 out:
     netdev_dpdk_vdpa_clear_relay(relay);
+    netdev_dpdk_vdpa_free_relay_strings(relay);
 }
 
 int
