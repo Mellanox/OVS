@@ -1786,6 +1786,7 @@ get_packet_reg_field(struct dp_packet *packet, uint8_t reg_field_id,
                      uint32_t *val)
 {
     struct reg_field *reg_field;
+    uint32_t mark = 0;
     uint32_t meta;
 
     if (reg_field_id >= REG_FIELD_NUM) {
@@ -1805,8 +1806,9 @@ get_packet_reg_field(struct dp_packet *packet, uint8_t reg_field_id,
     meta &= reg_field->mask;
 
     if (meta == 0) {
-        VLOG_ERR_RL(&rl, "port %d: packet reg field id %d is 0",
-                    packet->md.in_port.odp_port, reg_field_id);
+        dp_packet_has_flow_mark(packet, &mark);
+        VLOG_ERR_RL(&rl, "port %d, recirc=%d: packet reg field id %d is 0, mark=%d",
+                    packet->md.in_port.odp_port, packet->md.recirc_id, reg_field_id, mark);
         return -1;
     }
 
@@ -3481,7 +3483,6 @@ netdev_offload_dpdk_hw_miss_packet_recover(struct netdev *netdev,
                 pkt_metadata_init(&packet->md, flow_miss_ctx.vport);
                 if (vport_netdev->netdev_class->pop_header) {
                     vport_netdev->netdev_class->pop_header(packet);
-                    dp_packet_reset_offload(packet);
                     packet->md.in_port.odp_port = flow_miss_ctx.vport;
                 } else {
                     VLOG_ERR("vport nedtdev=%s with no pop_header method",
@@ -3505,6 +3506,7 @@ netdev_offload_dpdk_hw_miss_packet_recover(struct netdev *netdev,
         packet->md.ct_mark = ct_miss_ctx.mark;
         packet->md.ct_label = ct_miss_ctx.label;
     }
+    dp_packet_reset_offload(packet);
 
     return 0;
 }
