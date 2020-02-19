@@ -26,10 +26,8 @@ endif
 %:
 	dh $@ --with autoreconf,python3 --parallel
 
-# use --as-needed only if supported by dh-autoreconf (to simplify backporting)
-DH_AS_NEEDED=$(shell dpkg --compare-versions $$(dpkg --status dh-autoreconf | grep Version | cut -d' ' -f2) ge 6 && echo --as-needed)
 override_dh_autoreconf:
-	dh_autoreconf $(DH_AS_NEEDED)
+	dh_autoreconf --as-needed
 
 override_dh_auto_configure:
 	dh_auto_configure -- --enable-ssl --enable-shared $(DATAPATH_CONFIGURE_OPTS)
