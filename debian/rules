@@ -15,7 +15,7 @@ PACKAGE=openvswitch
 PACKAGE_DKMS=openvswitch-datapath-dkms
 include /usr/share/dpkg/pkg-info.mk
 
-PYTHON = $(shell if [ -x /usr/bin/python2 ]; then echo python2; else python; fi)
+HAS_PYTHON2_DEB = $(shell if [ "`dpkg-query -W -f '${Version}\n' python2`" ]; then echo 1; else echo 0; fi)
 
 ifneq (,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
 PARALLEL = -j$(patsubst parallel=%,%,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
@@ -95,7 +95,7 @@ override_dh_usrlocal:
 override_dh_installman:
 	dh_installman --language=C
 
-ifeq ($(PYTHON),python2)
+ifeq ($(HAS_PYTHON2_DEB),1)
 override_dh_gencontrol:
 	dh_gencontrol
 	sed -i '/^Depends:/s/python\([ ,]\)/python2\1/' debian/*/DEBIAN/control
