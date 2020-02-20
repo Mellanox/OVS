@@ -15,7 +15,7 @@ PACKAGE=openvswitch
 PACKAGE_DKMS=openvswitch-datapath-dkms
 include /usr/share/dpkg/pkg-info.mk
 
-HAS_PYTHON2_DEB = $(shell if [ "`dpkg-query -W -f '${Version}\n' python2 2>/dev/null`" ]; then echo 1; else echo 0; fi)
+HAS_PYTHON2_DEB = $(shell if [ "`dpkg-query -W -f '$${Version}\n' python2 2>/dev/null`" ]; then echo 1; else echo 0; fi)
 
 ifneq (,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
 PARALLEL = -j$(patsubst parallel=%,%,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
