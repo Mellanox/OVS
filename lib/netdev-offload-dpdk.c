@@ -2474,7 +2474,7 @@ parse_set_actions(struct flow_actions *actions,
 
             add_set_flow_action(ipv4_src, RTE_FLOW_ACTION_TYPE_SET_IPV4_SRC);
             add_set_flow_action(ipv4_dst, RTE_FLOW_ACTION_TYPE_SET_IPV4_DST);
-            add_set_flow_action(ipv4_ttl, RTE_FLOW_ACTION_TYPE_SET_TTL);
+            //add_set_flow_action(ipv4_ttl, RTE_FLOW_ACTION_TYPE_SET_TTL);
 
             if (mask && !is_all_zeros(mask, sizeof *mask)) {
                 VLOG_DBG_RL(&rl, "Unsupported IPv4 set action");
@@ -2511,7 +2511,7 @@ parse_set_actions(struct flow_actions *actions,
 
             add_set_flow_action(ipv6_src, RTE_FLOW_ACTION_TYPE_SET_IPV6_SRC);
             add_set_flow_action(ipv6_dst, RTE_FLOW_ACTION_TYPE_SET_IPV6_DST);
-            add_set_flow_action(ipv6_hlimit, RTE_FLOW_ACTION_TYPE_SET_TTL);
+            //add_set_flow_action(ipv6_hlimit, RTE_FLOW_ACTION_TYPE_SET_TTL);
 
             if (mask && !is_all_zeros(mask, sizeof *mask)) {
                 VLOG_DBG_RL(&rl, "Unsupported IPv6 set action");
