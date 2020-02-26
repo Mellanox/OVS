@@ -478,9 +478,55 @@ dp_netdev_append_ct_offload(struct ct_flow_offload_item *offload)
 }
 
 static void
+dp_netdev_fill_ct_match(struct match *match,
+                        struct ct_flow_offload_item *offload)
+{
+    memset(match, 0, sizeof *match);
+    if (offload->key.dl_type == htons(ETH_TYPE_IP)) {
+        /* Fill in ipv4 5-tuples */
+        match->flow.nw_src = offload->key.src.addr.ipv4;
+        match->flow.nw_dst = offload->key.dst.addr.ipv4;
+        match->wc.masks.nw_src = OVS_BE32_MAX;
+        match->wc.masks.nw_dst = OVS_BE32_MAX;
+    } else {
+        /* Fill in ipv6 5-tuples */
+        memcpy(&match->flow.ipv6_src,
+               &offload->key.src.addr.ipv6,
+               sizeof match->flow.ipv6_src);
+        memcpy(&match->flow.ipv6_dst,
+               &offload->key.dst.addr.ipv6,
+               sizeof match->flow.ipv6_dst);
+        memset(&match->wc.masks.ipv6_src, 0xFF,
+                sizeof match->wc.masks.ipv6_src);
+        memset(&match->wc.masks.ipv6_dst, 0xFF,
+                sizeof match->wc.masks.ipv6_dst);
+    }
+    match->flow.dl_type = offload->key.dl_type;
+    match->flow.nw_proto = offload->key.nw_proto;
+    match->wc.masks.dl_type = OVS_BE16_MAX;
+    match->wc.masks.nw_proto = UINT8_MAX;
+    if (match->flow.nw_proto == IPPROTO_TCP) {
+        match->wc.masks.tcp_flags = htons(TCP_RST | TCP_FIN);
+    }
+    match->flow.tp_src = offload->key.src.port;
+    match->flow.tp_dst = offload->key.dst.port;
+    match->wc.masks.tp_src = OVS_BE16_MAX;
+    match->wc.masks.tp_dst = OVS_BE16_MAX;
+    match->flow.ct_zone = offload->key.zone;
+    match->wc.masks.ct_zone = UINT16_MAX;
+    match->flow.in_port.odp_port = offload->odp_port;
+    match->wc.masks.in_port.odp_port = u32_to_odp(UINT32_MAX);
+}
+
+static void
 dp_netdev_ct_offload_add_item(struct ct_flow_offload_item *offload)
 {
+    struct match match;
+
     offload->op = DP_NETDEV_FLOW_OFFLOAD_OP_ADD;
+    dp_netdev_fill_ct_match(&match, offload);
+    dp_netdev_get_mega_ufid((const struct match *)&match, &offload->ufid);
+
     dp_netdev_append_ct_offload(offload);
 }
 
@@ -500,7 +546,7 @@ dp_netdev_ct_offload_active(struct ct_flow_offload_item *offload,
 
     if (!dpif_netdev_get_flow_offload_status(offload->class_type,
                                              offload->mutex, offload->odp_port,
-                                             (const ovs_u128*)offload->ufid,
+                                             (const ovs_u128 *) &offload->ufid,
                                              &stats, &attrs)) {
         return false;
     }
@@ -2530,47 +2576,6 @@ err_free:
 }
 
 static void
-dp_netdev_fill_ct_match(struct match *match,
-                        struct ct_flow_offload_item *offload)
-{
-    memset(match, 0, sizeof *match);
-    if (offload->key.dl_type == htons(ETH_TYPE_IP)) {
-        /* Fill in ipv4 5-tuples */
-        match->flow.nw_src = offload->key.src.addr.ipv4;
-        match->flow.nw_dst = offload->key.dst.addr.ipv4;
-        match->wc.masks.nw_src = OVS_BE32_MAX;
-        match->wc.masks.nw_dst = OVS_BE32_MAX;
-    } else {
-        /* Fill in ipv6 5-tuples */
-        memcpy(&match->flow.ipv6_src,
-               &offload->key.src.addr.ipv6,
-               sizeof match->flow.ipv6_src);
-        memcpy(&match->flow.ipv6_dst,
-               &offload->key.dst.addr.ipv6,
-               sizeof match->flow.ipv6_dst);
-        memset(&match->wc.masks.ipv6_src, 0xFF,
-                sizeof match->wc.masks.ipv6_src);
-        memset(&match->wc.masks.ipv6_dst, 0xFF,
-                sizeof match->wc.masks.ipv6_dst);
-    }
-    match->flow.dl_type = offload->key.dl_type;
-    match->flow.nw_proto = offload->key.nw_proto;
-    match->wc.masks.dl_type = OVS_BE16_MAX;
-    match->wc.masks.nw_proto = UINT8_MAX;
-    if (match->flow.nw_proto == IPPROTO_TCP) {
-        match->wc.masks.tcp_flags = htons(TCP_RST | TCP_FIN);
-    }
-    match->flow.tp_src = offload->key.src.port;
-    match->flow.tp_dst = offload->key.dst.port;
-    match->wc.masks.tp_src = OVS_BE16_MAX;
-    match->wc.masks.tp_dst = OVS_BE16_MAX;
-    match->flow.ct_zone = offload->key.zone;
-    match->wc.masks.ct_zone = UINT16_MAX;
-    match->flow.in_port.odp_port = offload->odp_port;
-    match->wc.masks.in_port.odp_port = u32_to_odp(UINT32_MAX);
-}
-
-static void
 dp_netdev_create_ct_actions(struct ofpbuf *buf,
                             struct ct_flow_offload_item *offload)
 {
@@ -2697,8 +2702,6 @@ dp_netdev_ct_offload_add(struct dp_offload_item *offload_item)
     dp_netdev_create_ct_actions(&buf, &offload);
     actions = ofpbuf_at_assert(&buf, 0, sizeof(struct nlattr));
 
-    dp_netdev_get_mega_ufid((const struct match *)&match, offload.ufid);
-
     ovs_mutex_lock(offload_item->port_mutex);
     if (OVS_UNLIKELY(!VLOG_DROP_DBG((&upcall_rl)))) {
         struct ds ds = DS_EMPTY_INITIALIZER;
@@ -2717,7 +2720,7 @@ dp_netdev_ct_offload_add(struct dp_offload_item *offload_item)
         odp_flow_key_from_mask(&odp_parms, &mask_buf);
 
         ds_put_cstr(&ds, "ct_add: ");
-        odp_format_ufid(offload.ufid, &ds);
+        odp_format_ufid(&offload.ufid, &ds);
         ds_put_cstr(&ds, " ");
         odp_flow_format(key_buf.data, key_buf.size,
                         mask_buf.data, mask_buf.size,
@@ -2732,8 +2735,8 @@ dp_netdev_ct_offload_add(struct dp_offload_item *offload_item)
 
         ds_destroy(&ds);
     }
-    ret = netdev_flow_put(port, &match, actions, buf.size, offload.ufid, &info,
-                          NULL);
+    ret = netdev_flow_put(port, &match, actions, buf.size, &offload.ufid,
+                          &info, NULL);
     /* A memory barrier that makes sure that the lines will be executed by
      * order, and offload.dont_free won't be changed before offload.status is
      * updated.
@@ -2762,7 +2765,7 @@ dp_netdev_ct_offload_del(struct dp_offload_item *offload_item)
     }
 
     ovs_mutex_lock(offload_item->port_mutex);
-    ret = netdev_flow_del(port, offload.ufid, NULL);
+    ret = netdev_flow_del(port, &offload.ufid, NULL);
     ovs_mutex_unlock(offload_item->port_mutex);
     netdev_close(port);
 
@@ -2819,7 +2822,7 @@ dp_netdev_flow_offload_main(void *data OVS_UNUSED)
                     &offload_item->ct_offload_item;
 
             flow_type = "ct";
-            ufid = ct_offload->ufid;
+            ufid = &ct_offload->ufid;
             switch (ct_offload->op) {
             case DP_NETDEV_FLOW_OFFLOAD_OP_ADD:
                 op = "add";

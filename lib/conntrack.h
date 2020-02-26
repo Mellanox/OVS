@@ -113,7 +113,7 @@ struct nat_action_info_t {
 
 struct ct_flow_offload_item {
     int  op;
-    ovs_u128 *ufid;
+    ovs_u128 ufid;
     struct ovs_mutex *mutex;
     const char *class_type;
 

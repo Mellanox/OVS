@@ -297,7 +297,7 @@ conntrack_offload_fill_item_common(struct ct_flow_offload_item *item,
                                    struct conn *conn,
                                    int dir)
 {
-    item->ufid = &conn->offloads.port_info[dir].ufid;
+    item->ufid = conn->offloads.port_info[dir].ufid;
     item->odp_port = conn->offloads.port_info[dir].port;
     item->mutex = conn->offloads.port_info[dir].port_mutex;
     item->class_type = conn->offloads.port_info[dir].class_type;
@@ -1513,8 +1513,9 @@ conntrack_offload_add_conn(struct conntrack *ct,
                            uint32_t mark,
                            ovs_u128 label)
 {
-    struct ct_flow_offload_item item;
+    int dir = ct_get_packet_dir(packet->md.reply);
     struct conn *conn = packet->md.conn;
+    struct ct_flow_offload_item item;
 
     /* CT doesn't handle alg */
     if (conn->alg || conn->alg_related || !ct->offload_class ||
@@ -1528,6 +1529,7 @@ conntrack_offload_add_conn(struct conntrack *ct,
         conntrack_offload_prepare_add(&item, conn, packet, mark, label,
                                       port_mutex, class_type);
         ct->offload_class->conn_add(&item);
+        conn->offloads.port_info[dir].ufid = item.ufid;
         conn->offloads.flags |= packet->md.reply ? CT_OFFLOAD_REP :
                                                    CT_OFFLOAD_INIT;
 
