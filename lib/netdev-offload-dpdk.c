@@ -48,7 +48,7 @@ static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(600, 600);
  *    'netdev' is forbidden.
  *
  * For current implementation all above restrictions could be fulfilled by
- * taking the datapath 'port_mutex' in lib/dpif-netdev.c.  */
+ * taking the datapath 'port_rwlock' in lib/dpif-netdev.c.  */
 
 struct act_resources {
     uint32_t next_table_id;
