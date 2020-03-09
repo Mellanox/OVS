@@ -1178,7 +1178,7 @@ dump_flow_pattern(struct ds *s, struct ds *_s1,
         const struct rte_flow_item_vxlan *vxlan_mask = item->mask;
 
         ds_put_cstr(s, "rte flow vxlan pattern:\n");
-        ds_put_cstr(s, "vxlan ");
+        ds_put_cstr(s1, "vxlan ");
         if (vxlan_spec) {
             ds_put_format(s, "  Spec: flags=0x%x, vni=%d\n",
                           vxlan_spec->flags,
@@ -1197,7 +1197,7 @@ dump_flow_pattern(struct ds *s, struct ds *_s1,
         } else {
             ds_put_cstr(s, "  Mask = null\n");
         }
-        ds_put_cstr(s, "/ ");
+        ds_put_cstr(s1, "/ ");
     } else if (item->type == RTE_FLOW_ITEM_TYPE_TAG) {
         const struct rte_flow_item_tag *tag_spec = item->spec;
         const struct rte_flow_item_tag *tag_mask = item->mask;
@@ -1388,7 +1388,7 @@ dump_flow_action(struct ds *s, struct ds *s1,
         const struct rte_flow_item *items = vxlan_encap->definition;
 
         ds_put_cstr(s, "rte flow vxlan-encap action:\n");
-        ds_put_cstr(s, "vxlan_encap / ");
+        ds_put_cstr(s1, "vxlan_encap / ");
         while (items && items->type != RTE_FLOW_ITEM_TYPE_END) {
             dump_flow_pattern(s, NULL, items++);
         }
