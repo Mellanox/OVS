@@ -2506,7 +2506,8 @@ dp_netdev_flow_offload_put(struct dp_offload_item *offload_item)
     struct dp_netdev_flow *flow = offload->flow;
     odp_port_t in_port = flow->flow.in_port.odp_port;
     const char *dpif_type_str = offload_item->dpif_type_str;
-    bool modification = offload->op == DP_NETDEV_FLOW_OFFLOAD_OP_MOD;
+    bool modification = offload->op == DP_NETDEV_FLOW_OFFLOAD_OP_MOD
+                        && flow->mark != INVALID_FLOW_MARK;
     struct offload_info info;
     struct netdev *port;
     uint32_t mark;
@@ -2518,7 +2519,6 @@ dp_netdev_flow_offload_put(struct dp_offload_item *offload_item)
 
     if (modification) {
         mark = flow->mark;
-        ovs_assert(mark != INVALID_FLOW_MARK);
     } else {
         /*
          * If a mega flow has already been offloaded (from other PMD
