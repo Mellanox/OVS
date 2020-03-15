@@ -2934,7 +2934,8 @@ dp_netdev_create_ct_actions(struct ofpbuf *buf,
         *labels_mask = offload->label_mask;
     }
     nl_msg_put_u16(buf, OVS_CT_ATTR_ZONE, offload->key.zone);
-    helper = xasprintf("offload, ct_state(0x%"PRIx8")", offload->ct_state);
+    helper = xasprintf("offl,st(0x%"PRIx8"),id(0x%"PRIx32")",
+                       offload->ct_state, *offload->ctid_ptr);
     nl_msg_put_string(buf, OVS_CT_ATTR_HELPER, helper);
     free(helper);
     nl_msg_end_nested(buf, offset);
