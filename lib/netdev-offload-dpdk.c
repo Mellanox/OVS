@@ -1687,6 +1687,7 @@ struct act_vars {
     struct flow_tnl *tnl_key;
     struct flow_tnl tnl_mask;
     bool explicit_netdev;
+    uint32_t ctid;
 };
 
 static int
@@ -3055,12 +3056,12 @@ parse_ct_actions(struct flow_actions *actions,
         } else if (nl_attr_type(cta) == OVS_CT_ATTR_HELPER) {
             const char *helper = nl_attr_get(cta);
 
-            if (strncmp(helper, "offload", strlen("offload"))) {
+            if (strncmp(helper, "offl", strlen("offl"))) {
                 continue;
             }
 
-            if (!ovs_scan(helper, "offload, ct_state(0x%"SCNx8")",
-                          &ct_miss_ctx.state)) {
+            if (!ovs_scan(helper, "offl,st(0x%"SCNx8"),id(0x%"SCNx32")",
+                          &ct_miss_ctx.state, &act_vars->ctid)) {
                 VLOG_ERR("Invalid offload helper: '%s'", helper);
                 return -1;
             }
