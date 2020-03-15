@@ -592,7 +592,7 @@ put_zone_id(uint32_t zone_id)
 }
 
 #define MIN_TABLE_ID     1
-#define MAX_TABLE_ID     0xFFFF
+#define MAX_TABLE_ID     (UINT32_MAX - 1)
 
 static struct id_pool *table_id_pool = NULL;
 static uint32_t
@@ -658,7 +658,7 @@ put_table_id(uint32_t table_id)
 }
 
 #define MIN_CT_CTX_ID 1
-#define MAX_CT_CTX_ID reg_fields[REG_FIELD_CT_CTX].mask
+#define MAX_CT_CTX_ID (reg_fields[REG_FIELD_CT_CTX].mask - 1)
 
 static struct id_pool *ct_ctx_pool = NULL;
 
@@ -735,7 +735,7 @@ find_ct_miss_ctx(int ct_ctx_id, struct ct_miss_ctx *ctx)
 }
 
 #define MIN_TUNNEL_ID 1
-#define MAX_TUNNEL_ID reg_fields[REG_FIELD_TUN_INFO].mask
+#define MAX_TUNNEL_ID (reg_fields[REG_FIELD_TUN_INFO].mask - 1)
 
 static struct id_pool *tnl_id_pool = NULL;
 
