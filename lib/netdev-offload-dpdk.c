@@ -614,9 +614,33 @@ table_id_alloc(void *arg OVS_UNUSED)
 }
 
 static void
-table_id_free(void *arg OVS_UNUSED, uint32_t id)
+table_id_ufid(uint32_t table_id, ovs_u128 *ufid)
 {
+    struct uuid *uuid = (struct uuid *)ufid;
+
+    uuid_zero(uuid);
+    /* Flow UUIDs have reserved bits on to indicate a random UUID. See
+     * RFC 4122 section 4.4. Here they won't conflict as those bits are off.
+     */
+    uuid->parts[0] = table_id;
+}
+
+static int
+netdev_offload_dpdk_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
+                             struct dpif_flow_stats *stats);
+static void
+table_id_free(void *arg, uint32_t id)
+{
+    struct netdev *netdev;
+    ovs_u128 table_ufid;
+
     id_pool_free_id(table_id_pool, id);
+
+    if (arg) {
+        table_id_ufid(id, &table_ufid);
+        netdev = (struct netdev *)arg;
+        netdev_offload_dpdk_flow_del(netdev, &table_ufid, NULL);
+    }
 }
 
 static struct context_metadata table_id_md = {
@@ -653,9 +677,9 @@ get_table_id(odp_port_t vport, uint32_t recirc_id, enum table_type table_type,
 }
 
 static void
-put_table_id(uint32_t table_id)
+put_table_id(struct netdev *netdev, uint32_t table_id)
 {
-    put_context_data_by_id(&table_id_md, NULL, table_id);
+    put_context_data_by_id(&table_id_md, netdev, table_id);
 }
 
 #define MIN_CT_CTX_ID 1
@@ -919,17 +943,17 @@ disassociate_flow_id(uint32_t flow_id)
 static void
 put_action_resources(struct act_resources *act_resources)
 {
-    put_table_id(act_resources->self_table_id);
-    put_table_id(act_resources->next_table_id);
+    put_table_id(NULL, act_resources->self_table_id);
+    put_table_id(NULL, act_resources->next_table_id);
     put_flow_miss_ctx_id(act_resources->flow_miss_ctx_id);
     put_tnl_id(act_resources->tnl_id);
-    put_table_id(act_resources->ct_table_id);
-    put_table_id(act_resources->post_ct_table_id);
+    put_table_id(NULL, act_resources->ct_table_id);
+    put_table_id(NULL, act_resources->post_ct_table_id);
     if (act_resources->associated_flow_id) {
         disassociate_flow_id(act_resources->flow_id);
     }
     put_ct_ctx_id(act_resources->ct_miss_ctx_id);
-    put_table_id(act_resources->ct_nat_table_id);
+    put_table_id(NULL, act_resources->ct_nat_table_id);
     put_zone_id(act_resources->ct_match_zone_id);
     put_zone_id(act_resources->ct_action_zone_id);
 }
@@ -2886,7 +2910,7 @@ create_ct_conn(struct netdev *netdev,
         goto out;
     }
 
-    put_table_id(act_resources->self_table_id);
+    put_table_id(NULL, act_resources->self_table_id);
     act_resources->self_table_id = 0;
     if (get_table_id(act_vars->vport, 0, TABLE_TYPE_CT,
                      &act_resources->self_table_id)) {
