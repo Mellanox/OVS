@@ -593,7 +593,8 @@ put_zone_id(uint32_t zone_id)
 }
 
 #define MIN_TABLE_ID     1
-#define MAX_TABLE_ID     (UINT32_MAX - 1)
+#define MAX_TABLE_ID     (UINT32_MAX - 2)
+#define MISS_TABLE_ID    (UINT32_MAX - 1)
 
 static struct id_pool *table_id_pool = NULL;
 static uint32_t
@@ -2700,6 +2701,58 @@ add_jump_action(struct flow_actions *actions, uint32_t group)
 }
 
 static int
+create_offload_flow(struct netdev *netdev,
+                    struct rte_flow_attr *attr,
+                    const struct rte_flow_item *items,
+                    const struct rte_flow_action *actions,
+                    const ovs_u128 *ufid,
+                    struct act_resources *act_resources,
+                    struct act_vars *act_vars,
+                    struct flows_handle *flows);
+
+OVS_UNUSED
+static int
+add_miss_flow(struct netdev *netdev,
+              uint32_t table_id,
+              uint32_t mark_id)
+{
+    struct rte_flow_attr miss_attr = { .ingress = 1, .transfer = 1,
+                                       .priority = 1, };
+    struct rte_flow_item miss_items[] = {
+        { .type = RTE_FLOW_ITEM_TYPE_ETH, },
+        { .type = RTE_FLOW_ITEM_TYPE_END, } };
+    struct rte_flow_action_jump miss_jump = { .group = MISS_TABLE_ID, };
+    struct rte_flow_action_mark miss_mark;
+    const struct rte_flow_action miss_actions[] = {
+        { .type = RTE_FLOW_ACTION_TYPE_MARK, &miss_mark },
+        { .type = RTE_FLOW_ACTION_TYPE_JUMP, &miss_jump },
+        { .type = RTE_FLOW_ACTION_TYPE_END, } };
+    struct act_resources act_resources = { .flow_id = INVALID_FLOW_MARK };
+    struct act_vars act_vars = { .ct_mode = CT_MODE_NONE, };
+    struct flows_handle flows = { .items = NULL, .cnt = 0 };
+    struct ufid_to_rte_flow_data *rte_flow_data;
+    ovs_u128 ufid;
+    int ret;
+
+    table_id_ufid(table_id, &ufid);
+    rte_flow_data = ufid_to_rte_flow_data_find(&ufid);
+    if (rte_flow_data) {
+        return 0;
+    }
+
+    miss_attr.group = table_id;
+    miss_mark.id = mark_id;
+    ret = create_offload_flow(netdev, &miss_attr, miss_items, miss_actions,
+                              &ufid, NULL, &act_vars, &flows);
+    if (ret) {
+        return -1;
+    }
+
+    ufid_to_rte_flow_associate(&ufid, &flows, true, &act_resources);
+    return 0;
+}
+
+static int
 add_tnl_pop_action(struct flow_actions *actions,
                    const struct nlattr *nla,
                    struct act_resources *act_resources)
@@ -3215,7 +3268,6 @@ create_offload_flow(struct netdev *netdev,
                                                    ufid, act_resources,
                                                    act_vars, flows);
     } else {
-        attr->group = act_resources->self_table_id;
         ret = netdev_offload_dpdk_flow_create(netdev, attr, items, actions,
                                               &error, act_resources, act_vars,
                                               &flow_item);
