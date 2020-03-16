@@ -213,8 +213,8 @@ struct context_metadata {
     struct hmap i2d_hmap;
     struct hmap associated_i2d_hmap;
     bool has_associated_map;
-    uint32_t (*id_alloc)(void);
-    void (*id_free)(uint32_t id);
+    uint32_t (*id_alloc)(void *arg);
+    void (*id_free)(void *arg, uint32_t id);
     size_t data_size;
 };
 
@@ -230,6 +230,7 @@ struct context_data {
 static int
 get_context_data_id_by_data(struct context_metadata *md,
                             struct context_data *data_req,
+                            void *arg,
                             uint32_t *id)
 {
     struct context_data *data_cur;
@@ -261,7 +262,7 @@ get_context_data_id_by_data(struct context_metadata *md,
     }
     memcpy(data_cur->data, data_req->data, md->data_size);
     data_cur->refcnt = 1;
-    data_cur->id = md->id_alloc();
+    data_cur->id = md->id_alloc(arg);
     if (data_cur->id == 0) {
         goto err_id_alloc;
     }
@@ -317,7 +318,7 @@ get_context_data_by_id(struct context_metadata *md, uint32_t id, void *data)
 }
 
 static void
-put_context_data_by_id(struct context_metadata *md, uint32_t id)
+put_context_data_by_id(struct context_metadata *md, void *arg, uint32_t id)
 {
     struct context_data *data_cur;
     size_t ihash;
@@ -340,7 +341,7 @@ put_context_data_by_id(struct context_metadata *md, uint32_t id)
                 hmap_remove(&md->i2d_hmap, &data_cur->i2d_node);
                 hmap_remove(&md->d2i_hmap, &data_cur->d2i_node);
                 free(data_cur);
-                md->id_free(id);
+                md->id_free(arg, id);
             }
             return;
         }
@@ -551,7 +552,7 @@ dump_zone_id(struct ds *s, void *data)
 static struct id_pool *zone_id_pool = NULL;
 
 static uint32_t
-zone_id_alloc(void)
+zone_id_alloc(void *arg OVS_UNUSED)
 {
     uint32_t zone_id;
 
@@ -567,7 +568,7 @@ zone_id_alloc(void)
 }
 
 static void
-zone_id_free(uint32_t zone_id)
+zone_id_free(void *arg OVS_UNUSED, uint32_t zone_id)
 {
     id_pool_free_id(zone_id_pool, zone_id);
 }
@@ -590,13 +591,13 @@ get_zone_id(uint16_t ct_zone, uint32_t *ct_zone_id)
     };
 
     return get_context_data_id_by_data(&zone_id_md, &zone_id_context,
-                                       ct_zone_id);
+                                       NULL, ct_zone_id);
 }
 
 static void
 put_zone_id(uint32_t zone_id)
 {
-    put_context_data_by_id(&zone_id_md, zone_id);
+    put_context_data_by_id(&zone_id_md, NULL, zone_id);
 }
 
 #define MIN_TABLE_ID     1
@@ -604,7 +605,7 @@ put_zone_id(uint32_t zone_id)
 
 static struct id_pool *table_id_pool = NULL;
 static uint32_t
-table_id_alloc(void)
+table_id_alloc(void *arg OVS_UNUSED)
 {
     uint32_t id;
 
@@ -621,7 +622,7 @@ table_id_alloc(void)
 }
 
 static void
-table_id_free(uint32_t id)
+table_id_free(void *arg OVS_UNUSED, uint32_t id)
 {
     id_pool_free_id(table_id_pool, id);
 }
@@ -655,14 +656,14 @@ get_table_id(odp_port_t vport, uint32_t recirc_id, enum table_type table_type,
         return 0;
     }
 
-    return get_context_data_id_by_data(&table_id_md, &table_id_context,
+    return get_context_data_id_by_data(&table_id_md, &table_id_context, NULL,
                                        table_id);
 }
 
 static void
 put_table_id(uint32_t table_id)
 {
-    put_context_data_by_id(&table_id_md, table_id);
+    put_context_data_by_id(&table_id_md, NULL, table_id);
 }
 
 #define MIN_CT_CTX_ID 1
@@ -671,7 +672,7 @@ put_table_id(uint32_t table_id)
 static struct id_pool *ct_ctx_pool = NULL;
 
 static uint32_t
-ct_ctx_id_alloc(void)
+ct_ctx_id_alloc(void *arg OVS_UNUSED)
 {
     uint32_t id;
 
@@ -688,7 +689,7 @@ ct_ctx_id_alloc(void)
 }
 
 static void
-ct_ctx_id_free(uint32_t id)
+ct_ctx_id_free(void *arg OVS_UNUSED, uint32_t id)
 {
     id_pool_free_id(ct_ctx_pool, id);
 }
@@ -727,13 +728,14 @@ get_ct_ctx_id(struct ct_miss_ctx *ct_miss_ctx_data, uint32_t *ct_ctx_id)
         .data = ct_miss_ctx_data,
     };
 
-    return get_context_data_id_by_data(&ct_miss_ctx_md, &ct_ctx, ct_ctx_id);
+    return get_context_data_id_by_data(&ct_miss_ctx_md, &ct_ctx, NULL,
+                                       ct_ctx_id);
 }
 
 static void
 put_ct_ctx_id(uint32_t ct_ctx_id)
 {
-    put_context_data_by_id(&ct_miss_ctx_md, ct_ctx_id);
+    put_context_data_by_id(&ct_miss_ctx_md, NULL, ct_ctx_id);
 }
 
 static int
@@ -748,7 +750,7 @@ find_ct_miss_ctx(int ct_ctx_id, struct ct_miss_ctx *ctx)
 static struct id_pool *tnl_id_pool = NULL;
 
 static uint32_t
-tnl_id_alloc(void)
+tnl_id_alloc(void *arg OVS_UNUSED)
 {
     uint32_t id;
 
@@ -765,7 +767,7 @@ tnl_id_alloc(void)
 }
 
 static void
-tnl_id_free(uint32_t id)
+tnl_id_free(void *arg OVS_UNUSED, uint32_t id)
 {
     id_pool_free_id(tnl_id_pool, id);
 }
@@ -827,13 +829,13 @@ get_tnl_id(struct flow_tnl *tnl_key, struct flow_tnl *tnl_mask,
         *tnl_id = 0;
         return 0;
     }
-    return get_context_data_id_by_data(&tnl_md, &tnl_ctx, tnl_id);
+    return get_context_data_id_by_data(&tnl_md, &tnl_ctx, NULL, tnl_id);
 }
 
 static void
 put_tnl_id(uint32_t tnl_id)
 {
-    put_context_data_by_id(&tnl_md, tnl_id);
+    put_context_data_by_id(&tnl_md, NULL, tnl_id);
 }
 
 struct flow_miss_ctx {
@@ -854,6 +856,18 @@ dump_flow_ctx_id(struct ds *s, void *data)
     return s;
 }
 
+static uint32_t
+flow_miss_id_alloc(void *arg OVS_UNUSED)
+{
+    return netdev_offload_flow_mark_alloc();
+}
+
+static void
+flow_miss_id_free(void *arg OVS_UNUSED, uint32_t id)
+{
+    netdev_offload_flow_mark_free(id);
+}
+
 static struct context_metadata flow_miss_ctx_md = {
     .name = "flow_miss_ctx",
     .dump_context_data = dump_flow_ctx_id,
@@ -862,8 +876,8 @@ static struct context_metadata flow_miss_ctx_md = {
     .associated_i2d_hmap =
         HMAP_INITIALIZER(&flow_miss_ctx_md.associated_i2d_hmap),
     .has_associated_map = true,
-    .id_alloc = netdev_offload_flow_mark_alloc,
-    .id_free = netdev_offload_flow_mark_free,
+    .id_alloc = flow_miss_id_alloc,
+    .id_free = flow_miss_id_free,
     .data_size = sizeof(struct flow_miss_ctx),
 };
 
@@ -875,14 +889,14 @@ get_flow_miss_ctx_id(struct flow_miss_ctx *flow_ctx_data,
         .data = flow_ctx_data,
     };
 
-    return get_context_data_id_by_data(&flow_miss_ctx_md, &flow_ctx,
+    return get_context_data_id_by_data(&flow_miss_ctx_md, &flow_ctx, NULL,
                                        miss_ctx_id);
 }
 
 static void
 put_flow_miss_ctx_id(uint32_t flow_ctx_id)
 {
-    put_context_data_by_id(&flow_miss_ctx_md, flow_ctx_id);
+    put_context_data_by_id(&flow_miss_ctx_md, NULL, flow_ctx_id);
 }
 
 static int
