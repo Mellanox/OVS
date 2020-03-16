@@ -3065,7 +3065,7 @@ create_pre_post_ct(struct netdev *netdev,
     add_flow_action(&pre_ct_actions, RTE_FLOW_ACTION_TYPE_MARK, &pre_ct_mark);
     pre_ct_jump.group = act_resources->ct_table_id;
     add_flow_action(&pre_ct_actions, RTE_FLOW_ACTION_TYPE_JUMP, &pre_ct_jump);
-    add_flow_action(&pre_ct_actions, RTE_FLOW_ITEM_TYPE_END, NULL);
+    add_flow_action(&pre_ct_actions, RTE_FLOW_ACTION_TYPE_END, NULL);
     ret = create_rte_flow(netdev, attr, items, pre_ct_actions.actions, error,
                           fi, 0);
     if (ret) {
