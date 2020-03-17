@@ -941,10 +941,11 @@ disassociate_flow_id(uint32_t flow_id)
 }
 
 static void
-put_action_resources(struct act_resources *act_resources)
+put_action_resources(struct netdev *netdev,
+                     struct act_resources *act_resources)
 {
-    put_table_id(NULL, act_resources->self_table_id);
-    put_table_id(NULL, act_resources->next_table_id);
+    put_table_id(netdev, act_resources->self_table_id);
+    put_table_id(netdev, act_resources->next_table_id);
     put_flow_miss_ctx_id(act_resources->flow_miss_ctx_id);
     put_tnl_id(act_resources->tnl_id);
     put_table_id(NULL, act_resources->ct_table_id);
@@ -3391,7 +3392,7 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
 
 out:
     if (ret) {
-        put_action_resources(&act_resources);
+        put_action_resources(netdev, &act_resources);
     }
     free_flow_patterns(&patterns);
     return ret;
@@ -3440,7 +3441,7 @@ netdev_offload_dpdk_remove_flows(struct netdev *netdev,
     }
     data = ufid_to_rte_flow_data_find(ufid);
     if (data) {
-        put_action_resources(&data->act_resources);
+        put_action_resources(netdev, &data->act_resources);
         ufid_to_rte_flow_disassociate(data);
         ret = 0;
     } else {
