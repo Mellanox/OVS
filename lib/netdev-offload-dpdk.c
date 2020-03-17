@@ -2155,53 +2155,71 @@ parse_flow_match(struct netdev *netdev,
 
     /* ct-state */
     if (match->wc.masks.ct_state &&
-        !(match->wc.masks.ct_state & match->flow.ct_state & CS_NEW) &&
-        !add_pattern_match_reg_field(patterns, REG_FIELD_CT_STATE,
-                                     match->flow.ct_state,
-                                     match->wc.masks.ct_state)) {
-        consumed_masks->ct_state = 0;
+        !(match->wc.masks.ct_state & match->flow.ct_state & CS_NEW)) {
+        if ((!match->flow.recirc_id &&
+             !(match->wc.masks.ct_state & match->flow.ct_state)) ||
+            !add_pattern_match_reg_field(patterns, REG_FIELD_CT_STATE,
+                                         match->flow.ct_state,
+                                         match->wc.masks.ct_state)) {
+            consumed_masks->ct_state = 0;
+        }
     }
     /* ct-zone */
     if (match->wc.masks.ct_zone &&
-        !get_zone_id(match->flow.ct_zone,
-                     &act_resources->ct_match_zone_id) &&
-        !add_pattern_match_reg_field(patterns,
-                                     REG_FIELD_CT_ZONE,
-                                     act_resources->ct_match_zone_id,
-                                     reg_fields[REG_FIELD_CT_ZONE].mask)) {
+        (!get_zone_id(match->flow.ct_zone,
+                      &act_resources->ct_match_zone_id) &&
+         !add_pattern_match_reg_field(patterns,
+                                      REG_FIELD_CT_ZONE,
+                                      act_resources->ct_match_zone_id,
+                                      reg_fields[REG_FIELD_CT_ZONE].mask))) {
         consumed_masks->ct_zone = 0;
     }
     /* ct-mark */
-    if (match->wc.masks.ct_mark &&
-        !add_pattern_match_reg_field(patterns, REG_FIELD_CT_MARK,
-                                     match->flow.ct_mark,
-                                     match->wc.masks.ct_mark)) {
-        consumed_masks->ct_mark = 0;
+    if (match->wc.masks.ct_mark) {
+        if ((!match->flow.recirc_id &&
+             !(match->flow.ct_mark & match->wc.masks.ct_mark)) ||
+            !add_pattern_match_reg_field(patterns, REG_FIELD_CT_MARK,
+                                         match->flow.ct_mark,
+                                         match->wc.masks.ct_mark)) {
+            consumed_masks->ct_mark = 0;
+        }
     }
     /* ct-label */
-    if (match->wc.masks.ct_label.u32[0] &&
-        !add_pattern_match_reg_field(patterns, REG_FIELD_CT_LABEL0,
-                                     match->flow.ct_label.u32[0],
-                                     match->wc.masks.ct_label.u32[0])) {
-        consumed_masks->ct_label.u32[0] = 0;
+    if (match->wc.masks.ct_label.u32[0]) {
+        if ((!match->flow.recirc_id &&
+             !(match->flow.ct_label.u32[0] & match->wc.masks.ct_label.u32[0])) ||
+            !add_pattern_match_reg_field(patterns, REG_FIELD_CT_LABEL0,
+                                         match->flow.ct_label.u32[0],
+                                         match->wc.masks.ct_label.u32[0])) {
+            consumed_masks->ct_label.u32[0] = 0;
+        }
     }
-    if (match->wc.masks.ct_label.u32[1] &&
-        !add_pattern_match_reg_field(patterns, REG_FIELD_CT_LABEL1,
-                                     match->flow.ct_label.u32[1],
-                                     match->wc.masks.ct_label.u32[1])) {
-        consumed_masks->ct_label.u32[1] = 0;
+    if (match->wc.masks.ct_label.u32[1]) {
+        if ((!match->flow.recirc_id &&
+             !(match->flow.ct_label.u32[1] & match->wc.masks.ct_label.u32[1])) ||
+            !add_pattern_match_reg_field(patterns, REG_FIELD_CT_LABEL1,
+                                         match->flow.ct_label.u32[1],
+                                         match->wc.masks.ct_label.u32[1])) {
+            consumed_masks->ct_label.u32[1] = 0;
+        }
     }
-    if (match->wc.masks.ct_label.u32[2] &&
-        !add_pattern_match_reg_field(patterns, REG_FIELD_CT_LABEL2,
-                                     match->flow.ct_label.u32[2],
-                                     match->wc.masks.ct_label.u32[2])) {
-        consumed_masks->ct_label.u32[2] = 0;
+    if (match->wc.masks.ct_label.u32[2]) {
+        if ((!match->flow.recirc_id &&
+             !(match->flow.ct_label.u32[2] & match->wc.masks.ct_label.u32[2])) ||
+            !add_pattern_match_reg_field(patterns, REG_FIELD_CT_LABEL2,
+                                         match->flow.ct_label.u32[2],
+                                         match->wc.masks.ct_label.u32[2])) {
+            consumed_masks->ct_label.u32[2] = 0;
+        }
     }
-    if (match->wc.masks.ct_label.u32[3] &&
-        !add_pattern_match_reg_field(patterns, REG_FIELD_CT_LABEL3,
-                                     match->flow.ct_label.u32[3],
-                                     match->wc.masks.ct_label.u32[3])) {
-        consumed_masks->ct_label.u32[3] = 0;
+    if (match->wc.masks.ct_label.u32[3]) {
+        if ((!match->flow.recirc_id &&
+             !(match->flow.ct_label.u32[3] & match->wc.masks.ct_label.u32[3])) ||
+            !add_pattern_match_reg_field(patterns, REG_FIELD_CT_LABEL3,
+                                         match->flow.ct_label.u32[3],
+                                         match->wc.masks.ct_label.u32[3])) {
+            consumed_masks->ct_label.u32[3] = 0;
+        }
     }
 
     add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_END, NULL, NULL);
