@@ -3294,6 +3294,42 @@ netdev_offload_dpdk_create_tnl_flows(struct netdev *netdev,
 }
 
 static int
+create_offload_flow(struct netdev *netdev,
+                    struct rte_flow_attr *attr,
+                    const struct rte_flow_item *items,
+                    const struct rte_flow_action *actions,
+                    const ovs_u128 *ufid,
+                    struct act_resources *act_resources,
+                    struct act_vars *act_vars,
+                    struct flows_handle *flows)
+{
+    struct flow_item flow_item = { .devargs = NULL };
+    struct rte_flow_error error;
+    int ret;
+
+    if (netdev_vport_is_vport_class(netdev->netdev_class)) {
+        ret = netdev_offload_dpdk_create_tnl_flows(netdev, attr, items, actions,
+                                                   ufid, act_resources,
+                                                   act_vars, flows);
+    } else {
+        attr->group = act_resources->self_table_id;
+        ret = netdev_offload_dpdk_flow_create(netdev, attr, items, actions,
+                                              &error, act_resources, act_vars,
+                                              &flow_item);
+        if (ret) {
+            goto out;
+        }
+        VLOG_DBG_RL(&rl, "%s: installed flow %p/%p by ufid "UUID_FMT"\n",
+                    netdev_get_name(netdev), flow_item.rte_flow[0],
+                    flow_item.rte_flow[1],
+                    UUID_ARGS((struct uuid *)ufid));
+        add_flow_item(flows, &flow_item);
+    }
+out:
+    return ret;
+}
+
+static int
 netdev_offload_dpdk_actions(struct netdev *netdev,
                             struct flow_patterns *patterns,
                             struct nlattr *nl_actions,
@@ -3305,8 +3341,6 @@ netdev_offload_dpdk_actions(struct netdev *netdev,
 {
     struct rte_flow_attr flow_attr = { .ingress = 1, .transfer = 1 };
     struct flow_actions actions = { .actions = NULL, .cnt = 0 };
-    struct flow_item flow_item = { .devargs = NULL };
-    struct rte_flow_error error;
     int ret;
 
     ret = parse_flow_actions(netdev, &actions, nl_actions, actions_len,
@@ -3315,27 +3349,9 @@ netdev_offload_dpdk_actions(struct netdev *netdev,
         goto out;
     }
     flow_attr.group = act_resources->self_table_id;
-    if (netdev_vport_is_vport_class(netdev->netdev_class)) {
-        ret = netdev_offload_dpdk_create_tnl_flows(netdev, &flow_attr,
-                                                   patterns->items,
-                                                   actions.actions, ufid,
-                                                   act_resources, act_vars,
-                                                   flows);
-    } else {
-        ret = netdev_offload_dpdk_flow_create(netdev, &flow_attr,
-                                              patterns->items,
-                                              actions.actions, &error,
-                                              act_resources, act_vars,
-                                              &flow_item);
-        if (ret) {
-            goto out;
-        }
-        VLOG_DBG_RL(&rl, "%s: installed flow %p/%p by ufid "UUID_FMT"\n",
-                    netdev_get_name(netdev), flow_item.rte_flow[0],
-                    flow_item.rte_flow[1],
-                    UUID_ARGS((struct uuid *)ufid));
-        add_flow_item(flows, &flow_item);
-    }
+    ret = create_offload_flow(netdev, &flow_attr, patterns->items,
+                              actions.actions, ufid, act_resources,
+                              act_vars, flows);
 out:
     free_flow_actions(&actions, true);
     return ret;
