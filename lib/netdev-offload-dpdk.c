@@ -3245,14 +3245,14 @@ parse_flow_actions(struct netdev *netdev,
 
 static int
 netdev_offload_dpdk_create_tnl_flows(struct netdev *netdev,
-                                     struct flow_patterns *patterns,
-                                     struct flow_actions *actions,
+                                     struct rte_flow_attr *flow_attr,
+                                     const struct rte_flow_item *items,
+                                     const struct rte_flow_action *actions,
                                      const ovs_u128 *ufid,
                                      struct act_resources *act_resources,
                                      struct act_vars *act_vars,
                                      struct flows_handle *flows)
 {
-    struct rte_flow_attr flow_attr = { .ingress = 1, .transfer = 1 };
     struct flow_item flow_item = { .devargs = NULL };
     struct netdev_flow_dump **netdev_dumps;
     struct rte_flow_error error;
@@ -3262,15 +3262,13 @@ netdev_offload_dpdk_create_tnl_flows(struct netdev *netdev,
 
     netdev_dumps = netdev_ports_flow_dump_create(netdev->dpif_type,
                                                  &num_ports);
-    flow_attr.group = act_resources->self_table_id;
     for (i = 0; i < num_ports; i++) {
         if (!netdev_dpdk_is_uplink_port(netdev_dumps[i]->netdev)) {
             continue;
         }
         ret = netdev_offload_dpdk_flow_create(netdev_dumps[i]->netdev,
-                                              &flow_attr, patterns->items,
-                                              actions->actions, &error,
-                                              act_resources, act_vars,
+                                              flow_attr, items,actions,
+                                              &error, act_resources, act_vars,
                                               &flow_item);
         if (ret) {
             continue;
@@ -3316,12 +3314,14 @@ netdev_offload_dpdk_actions(struct netdev *netdev,
     if (ret) {
         goto out;
     }
+    flow_attr.group = act_resources->self_table_id;
     if (netdev_vport_is_vport_class(netdev->netdev_class)) {
-        ret = netdev_offload_dpdk_create_tnl_flows(netdev, patterns, &actions,
-                                                   ufid, act_resources,
-                                                   act_vars, flows);
+        ret = netdev_offload_dpdk_create_tnl_flows(netdev, &flow_attr,
+                                                   patterns->items,
+                                                   actions.actions, ufid,
+                                                   act_resources, act_vars,
+                                                   flows);
     } else {
-        flow_attr.group = act_resources->self_table_id;
         ret = netdev_offload_dpdk_flow_create(netdev, &flow_attr,
                                               patterns->items,
                                               actions.actions, &error,
