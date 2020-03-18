@@ -2783,16 +2783,6 @@ parse_clone_actions(struct netdev *netdev,
 }
 
 static void
-add_mark_action(struct flow_actions *actions,
-                uint32_t mark_id)
-{
-    struct rte_flow_action_mark *mark = xzalloc(sizeof *mark);
-
-    mark->id = mark_id;
-    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_MARK, mark);
-}
-
-static void
 add_jump_action(struct flow_actions *actions, uint32_t group)
 {
     struct rte_flow_action_jump *jump = xzalloc (sizeof *jump);
@@ -2811,7 +2801,6 @@ create_offload_flow(struct netdev *netdev,
                     struct act_vars *act_vars,
                     struct flows_handle *flows);
 
-OVS_UNUSED
 static int
 add_miss_flow(struct netdev *netdev,
               uint32_t table_id,
@@ -2854,7 +2843,8 @@ add_miss_flow(struct netdev *netdev,
 }
 
 static int
-add_tnl_pop_action(struct flow_actions *actions,
+add_tnl_pop_action(struct netdev *netdev,
+                   struct flow_actions *actions,
                    const struct nlattr *nla,
                    struct act_resources *act_resources)
 {
@@ -2868,9 +2858,12 @@ add_tnl_pop_action(struct flow_actions *actions,
     if (get_flow_miss_ctx_id(&miss_ctx, &act_resources->flow_miss_ctx_id)) {
         return -1;
     }
-    add_mark_action(actions, act_resources->flow_miss_ctx_id);
     if (get_table_id(port, 0, TABLE_TYPE_FLOW,
                      &act_resources->next_table_id)) {
+        return -1;
+    }
+    if (add_miss_flow(netdev, act_resources->next_table_id,
+                      act_resources->flow_miss_ctx_id)) {
         return -1;
     }
     add_jump_action(actions, act_resources->next_table_id);
@@ -2878,7 +2871,8 @@ add_tnl_pop_action(struct flow_actions *actions,
 }
 
 static int
-add_recirc_action(struct flow_actions *actions,
+add_recirc_action(struct netdev *netdev,
+                  struct flow_actions *actions,
                   const struct nlattr *nla,
                   struct act_resources *act_resources,
                   struct act_vars *act_vars)
@@ -2896,9 +2890,12 @@ add_recirc_action(struct flow_actions *actions,
     if (get_flow_miss_ctx_id(&miss_ctx, &act_resources->flow_miss_ctx_id)) {
         return -1;
     }
-    add_mark_action(actions, act_resources->flow_miss_ctx_id);
     if (get_table_id(act_vars->vport, miss_ctx.recirc_id, TABLE_TYPE_FLOW,
         &act_resources->next_table_id)) {
+        return -1;
+    }
+    if (add_miss_flow(netdev, act_resources->next_table_id,
+                      act_resources->flow_miss_ctx_id)) {
         return -1;
     }
     if (act_vars->vport != ODPP_NONE && act_vars->recirc_id == 0) {
@@ -3262,11 +3259,12 @@ parse_flow_actions(struct netdev *netdev,
                 return -1;
             }
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_TUNNEL_POP) {
-            if (add_tnl_pop_action(actions, nla, act_resources)) {
+            if (add_tnl_pop_action(netdev, actions, nla, act_resources)) {
                 return -1;
             }
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_RECIRC) {
-            if (add_recirc_action(actions, nla, act_resources, act_vars)) {
+            if (add_recirc_action(netdev, actions, nla, act_resources,
+                                  act_vars)) {
                 return -1;
             }
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_CT) {
