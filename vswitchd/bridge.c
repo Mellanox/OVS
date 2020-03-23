@@ -65,6 +65,7 @@
 #include "system-stats.h"
 #include "timeval.h"
 #include "tnl-ports.h"
+#include "userspace-tso.h"
 #include "util.h"
 #include "unixctl.h"
 #include "lib/vswitch-idl.h"
@@ -171,6 +172,7 @@ struct datapath {
     struct hmap ct_zones;       /* Map of 'struct ct_zone' elements, indexed
                                  * by 'zone'. */
     struct hmap_node node;      /* Node in 'all_datapaths' hmap. */
+    struct smap caps;           /* Capabilities. */
     unsigned int last_used;     /* The last idl_seqno that this 'datapath'
                                  * used in OVSDB. This number is used for
                                  * garbage collection. */
@@ -286,6 +288,7 @@ static void bridge_configure_ipfix(struct bridge *);
 static void bridge_configure_spanning_tree(struct bridge *);
 static void bridge_configure_tables(struct bridge *);
 static void bridge_configure_dp_desc(struct bridge *);
+static void bridge_configure_serial_desc(struct bridge *);
 static void bridge_configure_aa(struct bridge *);
 static void bridge_aa_refresh_queued(struct bridge *);
 static bool bridge_aa_need_refresh(struct bridge *);
@@ -514,8 +517,8 @@ bridge_init(const char *remote)
                              qos_unixctl_show_types, NULL);
     unixctl_command_register("qos/show", "interface", 1, 1,
                              qos_unixctl_show, NULL);
-    unixctl_command_register("bridge/dump-flows", "bridge", 1, 1,
-                             bridge_unixctl_dump_flows, NULL);
+    unixctl_command_register("bridge/dump-flows", "[--offload-stats] bridge",
+                             1, 2, bridge_unixctl_dump_flows, NULL);
     unixctl_command_register("bridge/reconnect", "[bridge]", 0, 1,
                              bridge_unixctl_reconnect, NULL);
     lacp_init();
@@ -529,11 +532,13 @@ bridge_init(const char *remote)
     ifaces_changed = seq_create();
     last_ifaces_changed = seq_read(ifaces_changed);
     ifnotifier = if_notifier_create(if_change_cb, NULL);
+    if_notifier_manual_set_cb(if_change_cb);
 }
 
 void
 bridge_exit(bool delete_datapath)
 {
+    if_notifier_manual_set_cb(NULL);
     if_notifier_destroy(ifnotifier);
     seq_destroy(ifaces_changed);
 
@@ -700,6 +705,7 @@ datapath_create(const char *type)
     dp->type = xstrdup(type);
     hmap_init(&dp->ct_zones);
     hmap_insert(&all_datapaths, &dp->node, hash_string(type, 0));
+    smap_init(&dp->caps);
     return dp;
 }
 
@@ -716,6 +722,7 @@ datapath_destroy(struct datapath *dp)
         hmap_remove(&all_datapaths, &dp->node);
         hmap_destroy(&dp->ct_zones);
         free(dp->type);
+        smap_destroy(&dp->caps);
         free(dp);
     }
 }
@@ -759,6 +766,23 @@ ct_zones_reconfigure(struct datapath *dp, struct ovsrec_datapath *dp_cfg)
 }
 
 static void
+dp_capability_reconfigure(struct datapath *dp,
+                          struct ovsrec_datapath *dp_cfg)
+{
+    struct smap_node *node;
+    struct smap cap;
+
+    smap_init(&cap);
+    ofproto_get_datapath_cap(dp->type, &cap);
+
+    SMAP_FOR_EACH (node, &cap) {
+        ovsrec_datapath_update_capabilities_setkey(dp_cfg, node->key,
+                                                   node->value);
+    }
+    smap_destroy(&cap);
+}
+
+static void
 datapath_reconfigure(const struct ovsrec_open_vswitch *cfg)
 {
     struct datapath *dp, *next;
@@ -771,6 +795,7 @@ datapath_reconfigure(const struct ovsrec_open_vswitch *cfg)
         dp = datapath_lookup(dp_name);
         if (!dp) {
             dp = datapath_create(dp_name);
+            dp_capability_reconfigure(dp, dp_cfg);
         }
         dp->last_used = idl_seqno;
         ct_zones_reconfigure(dp, dp_cfg);
@@ -915,6 +940,7 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
         bridge_configure_spanning_tree(br);
         bridge_configure_tables(br);
         bridge_configure_dp_desc(br);
+        bridge_configure_serial_desc(br);
         bridge_configure_aa(br);
     }
     free(managers);
@@ -2840,8 +2866,6 @@ port_refresh_rstp_status(struct port *port)
     struct ofproto *ofproto = port->bridge->ofproto;
     struct iface *iface;
     struct ofproto_port_rstp_status status;
-    const char *keys[4];
-    int64_t int_values[4];
     struct smap smap;
 
     if (port_is_synthetic(port)) {
@@ -2861,7 +2885,6 @@ port_refresh_rstp_status(struct port *port)
 
     if (!status.enabled) {
         ovsrec_port_set_rstp_status(port->cfg, NULL);
-        ovsrec_port_set_rstp_statistics(port->cfg, NULL, NULL, 0);
         return;
     }
     /* Set Status column. */
@@ -2882,6 +2905,36 @@ port_refresh_rstp_status(struct port *port)
 
     ovsrec_port_set_rstp_status(port->cfg, &smap);
     smap_destroy(&smap);
+}
+
+static void
+port_refresh_rstp_stats(struct port *port)
+{
+    struct ofproto *ofproto = port->bridge->ofproto;
+    struct iface *iface;
+    struct ofproto_port_rstp_status status;
+    const char *keys[4];
+    int64_t int_values[4];
+
+    if (port_is_synthetic(port)) {
+        return;
+    }
+
+    /* RSTP doesn't currently support bonds. */
+    if (!ovs_list_is_singleton(&port->ifaces)) {
+        ovsrec_port_set_rstp_statistics(port->cfg, NULL, NULL, 0);
+        return;
+    }
+
+    iface = CONTAINER_OF(ovs_list_front(&port->ifaces), struct iface, port_elem);
+    if (ofproto_port_get_rstp_status(ofproto, iface->ofp_port, &status)) {
+        return;
+    }
+
+    if (!status.enabled) {
+        ovsrec_port_set_rstp_statistics(port->cfg, NULL, NULL, 0);
+        return;
+    }
 
     /* Set Statistics column. */
     keys[0] = "rstp_tx_count";
@@ -3050,6 +3103,7 @@ run_stats_update(void)
                         iface_refresh_stats(iface);
                     }
                     port_refresh_stp_stats(port);
+                    port_refresh_rstp_stats(port);
                 }
                 HMAP_FOR_EACH (m, hmap_node, &br->mirrors) {
                     mirror_refresh_stats(m);
@@ -3234,6 +3288,7 @@ bridge_run(void)
     if (cfg) {
         netdev_set_flow_api_enabled(&cfg->other_config);
         dpdk_init(&cfg->other_config);
+        userspace_tso_init(&cfg->other_config);
     }
 
     /* Initialize the ofproto library.  This only needs to run once, but
@@ -3573,20 +3628,27 @@ bridge_lookup(const char *name)
 /* Handle requests for a listing of all flows known by the OpenFlow
  * stack, including those normally hidden. */
 static void
-bridge_unixctl_dump_flows(struct unixctl_conn *conn, int argc OVS_UNUSED,
+bridge_unixctl_dump_flows(struct unixctl_conn *conn, int argc,
                           const char *argv[], void *aux OVS_UNUSED)
 {
     struct bridge *br;
     struct ds results;
 
-    br = bridge_lookup(argv[1]);
+    br = bridge_lookup(argv[argc - 1]);
     if (!br) {
         unixctl_command_reply_error(conn, "Unknown bridge");
         return;
     }
 
+    bool offload_stats = false;
+    for (int i = 1; i < argc - 1; i++) {
+        if (!strcmp(argv[i], "--offload-stats")) {
+            offload_stats = true;
+        }
+    }
+
     ds_init(&results);
-    ofproto_get_all_flows(br->ofproto, &results);
+    ofproto_get_all_flows(br->ofproto, &results, offload_stats);
 
     unixctl_command_reply(conn, ds_cstr(&results));
     ds_destroy(&results);
@@ -4061,6 +4123,13 @@ bridge_configure_dp_desc(struct bridge *br)
 {
     ofproto_set_dp_desc(br->ofproto,
                         smap_get(&br->cfg->other_config, "dp-desc"));
+}
+
+static void
+bridge_configure_serial_desc(struct bridge *br)
+{
+    ofproto_set_serial_desc(br->ofproto,
+                        smap_get(&br->cfg->other_config, "dp-sn"));
 }
 
 static struct aa_mapping *

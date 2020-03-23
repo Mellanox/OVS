@@ -76,7 +76,7 @@ struct rule_dpif {
      *   - Do include packets and bytes from datapath flows which have not
      *   recently been processed by a revalidator. */
     struct ovs_mutex stats_mutex;
-    struct dpif_flow_stats stats OVS_GUARDED;
+    struct dpif_flow_detailed_stats stats OVS_GUARDED;
 
    /* In non-NULL, will point to a new rule (for which a reference is held) to
     * which all the stats updates should be forwarded. This exists only
@@ -107,7 +107,7 @@ struct rule_dpif *rule_dpif_lookup_from_table(struct ofproto_dpif *,
                                               struct xlate_cache *);
 
 void rule_dpif_credit_stats(struct rule_dpif *,
-                            const struct dpif_flow_stats *);
+                            const struct dpif_flow_stats *, bool);
 
 void rule_set_recirc_id(struct rule *, uint32_t id);
 
@@ -199,7 +199,11 @@ struct group_dpif *group_dpif_lookup(struct ofproto_dpif *,
                                                                             \
     /* True if the datapath supports OVS_CT_ATTR_TIMEOUT in                 \
      * OVS_ACTION_ATTR_CT action. */                                        \
-    DPIF_SUPPORT_FIELD(bool, ct_timeout, "Conntrack timeout policy")
+    DPIF_SUPPORT_FIELD(bool, ct_timeout, "Conntrack timeout policy")        \
+                                                                            \
+    /* True if the datapath supports explicit drop action. */               \
+    DPIF_SUPPORT_FIELD(bool, explicit_drop_action, "Explicit Drop action")
+
 
 /* Stores the various features which the corresponding backer supports. */
 struct dpif_backer_support {
@@ -338,6 +342,9 @@ struct ofproto_dpif {
     struct guarded_list ams;      /* Contains "struct ofproto_async_msgs"s. */
     struct seq *ams_seq;          /* For notifying 'ams' reception. */
     uint64_t ams_seqno;
+
+    bool is_controller_connected; /* True if any controller admitted this
+                                   * switch connection. */
 };
 
 struct ofproto_dpif *ofproto_dpif_lookup_by_name(const char *name);
@@ -381,5 +388,7 @@ bool ovs_native_tunneling_is_on(struct ofproto_dpif *);
 bool ofproto_dpif_ct_zone_timeout_policy_get_name(
     const struct dpif_backer *backer, uint16_t zone, uint16_t dl_type,
     uint8_t nw_proto, char **tp_name, bool *unwildcard);
+
+bool ovs_explicit_drop_action_supported(struct ofproto_dpif *);
 
 #endif /* ofproto-dpif.h */

@@ -351,6 +351,7 @@ void ofproto_set_threads(int n_handlers, int n_revalidators);
 void ofproto_type_set_config(const char *type,
                              const struct smap *other_config);
 void ofproto_set_dp_desc(struct ofproto *, const char *dp_desc);
+void ofproto_set_serial_desc(struct ofproto *p, const char *serial_desc);
 int ofproto_set_snoops(struct ofproto *, const struct sset *snoops);
 int ofproto_set_netflow(struct ofproto *,
                         const struct netflow_options *nf_options);
@@ -372,6 +373,8 @@ void ofproto_ct_set_zone_timeout_policy(const char *datapath_type,
                                         struct simap *timeout_policy);
 void ofproto_ct_del_zone_timeout_policy(const char *datapath_type,
                                         uint16_t zone);
+void ofproto_get_datapath_cap(const char *datapath_type,
+                              struct smap *dp_cap);
 
 /* Configuration of ports. */
 void ofproto_port_unregister(struct ofproto *, ofp_port_t ofp_port);
@@ -541,7 +544,7 @@ void ofproto_configure_table(struct ofproto *, int table_id,
 /* Configuration querying. */
 bool ofproto_has_snoops(const struct ofproto *);
 void ofproto_get_snoops(const struct ofproto *, struct sset *);
-void ofproto_get_all_flows(struct ofproto *p, struct ds *);
+void ofproto_get_all_flows(struct ofproto *p, struct ds *, bool);
 void ofproto_get_netflow_ids(const struct ofproto *,
                              uint8_t *engine_type, uint8_t *engine_id);
 

@@ -347,13 +347,13 @@ They do require proper DPDK variables (``DPDK_DIR`` and ``DPDK_BUILD``).
 Moreover you need to have root privileges to load the required modules and to bind
 the NIC to the DPDK-compatible driver.
 
-.. _DPDK supported NIC: http://dpdk.org/doc/nics
+.. _DPDK supported NIC: https://core.dpdk.org/supported/#nics
 
 All tests are skipped if no hugepages are configured. User must look into the DPDK
 manual to figure out how to `Configure hugepages`_.
 The phy test will skip if no compatible physical device is available.
 
-.. _Configure hugepages: http://doc.dpdk.org/guides/linux_gsg/sys_reqs.html
+.. _Configure hugepages: https://doc.dpdk.org/guides-19.11/linux_gsg/sys_reqs.html
 
 All the features documented under `Unit Tests`_ are available for the DPDK
 datapath testsuite.
@@ -380,6 +380,17 @@ The results of the testsuite are in ``tests/system-kmod-testsuite.dir``.
 
 All the features documented under `Unit Tests`_ are available for the kernel
 datapath testsuite.
+
+.. note::
+  Many of the kernel tests are dependent on the utilities present in the
+  iproute2 package, especially the 'ip' command.  If there are many
+  otherwise unexplained errors it may be necessary to update the iproute2
+  package utilities on the system.  It is beyond the scope of this
+  documentation to explain all that is necessary to build and install
+  an updated iproute2 utilities package.  The package is available from
+  the Linux kernel organization open source git repositories.
+
+  https://git.kernel.org/pub/scm/linux/kernel/git/shemminger/iproute2.git
 
 .. _testing-static-analysis:
 

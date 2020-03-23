@@ -111,6 +111,8 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/hmapx.h \
 	lib/id-pool.c \
 	lib/id-pool.h \
+	lib/if-notifier-manual.c \
+	lib/if-notifier.h \
 	lib/ipf.c \
 	lib/ipf.h \
 	lib/jhash.c \
@@ -144,6 +146,7 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/netdev-offload.h \
 	lib/netdev-offload-provider.h \
 	lib/netdev-provider.h \
+	lib/netdev-dpdk-vdpa.h \
 	lib/netdev-vport.c \
 	lib/netdev-vport.h \
 	lib/netdev-vport-private.h \
@@ -312,6 +315,8 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/unicode.h \
 	lib/unixctl.c \
 	lib/unixctl.h \
+	lib/userspace-tso.c \
+	lib/userspace-tso.h \
 	lib/util.c \
 	lib/util.h \
 	lib/uuid.c \
@@ -394,7 +399,6 @@ lib_libopenvswitch_la_SOURCES += \
 	lib/dpif-netlink-rtnl.c \
 	lib/dpif-netlink-rtnl.h \
 	lib/if-notifier.c \
-	lib/if-notifier.h \
 	lib/netdev-linux.c \
 	lib/netdev-linux.h \
 	lib/netdev-linux-private.h \
@@ -426,7 +430,8 @@ if DPDK_NETDEV
 lib_libopenvswitch_la_SOURCES += \
 	lib/dpdk.c \
 	lib/netdev-dpdk.c \
-	lib/netdev-offload-dpdk.c
+	lib/netdev-offload-dpdk.c \
+	lib/netdev-dpdk-vdpa.c
 else
 lib_libopenvswitch_la_SOURCES += \
 	lib/dpdk-stub.c

@@ -29,16 +29,18 @@
 #include <linux/filter.h>
 #include <linux/gen_stats.h>
 #include <linux/if_ether.h>
+#include <linux/if_packet.h>
 #include <linux/if_tun.h>
 #include <linux/types.h>
 #include <linux/ethtool.h>
 #include <linux/mii.h>
 #include <linux/rtnetlink.h>
 #include <linux/sockios.h>
+#include <linux/virtio_net.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <sys/utsname.h>
-#include <netpacket/packet.h>
 #include <net/if.h>
 #include <net/if_arp.h>
 #include <net/route.h>
@@ -65,6 +67,7 @@
 #include "openvswitch/ofpbuf.h"
 #include "openflow/openflow.h"
 #include "ovs-atomic.h"
+#include "ovs-numa.h"
 #include "packets.h"
 #include "openvswitch/poll-loop.h"
 #include "rtnetlink.h"
@@ -75,6 +78,7 @@
 #include "timer.h"
 #include "unaligned.h"
 #include "openvswitch/vlog.h"
+#include "userspace-tso.h"
 #include "util.h"
 
 VLOG_DEFINE_THIS_MODULE(netdev_linux);
@@ -236,6 +240,17 @@ enum {
     VALID_VPORT_STAT_ERROR  = 1 << 5,
     VALID_DRVINFO           = 1 << 6,
     VALID_FEATURES          = 1 << 7,
+    VALID_NUMA_ID           = 1 << 8,
+};
+
+/* Use one for the packet buffer and another for the aux buffer to receive
+ * TSO packets. */
+#define IOV_STD_SIZE 1
+#define IOV_TSO_SIZE 2
+
+enum {
+    IOV_PACKET = 0,
+    IOV_AUXBUF = 1,
 };
 
 struct linux_lag_slave {
@@ -501,6 +516,8 @@ static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 20);
  * changes in the device miimon status, so we can use atomic_count. */
 static atomic_count miimon_cnt = ATOMIC_COUNT_INIT(0);
 
+static int netdev_linux_parse_vnet_hdr(struct dp_packet *b);
+static void netdev_linux_prepend_vnet_hdr(struct dp_packet *b, int mtu);
 static int netdev_linux_do_ethtool(const char *name, struct ethtool_cmd *,
                                    int cmd, const char *cmd_name);
 static int get_flags(const struct netdev *, unsigned int *flags);
@@ -820,9 +837,9 @@ netdev_linux_update__(struct netdev_linux *dev,
 {
     if (rtnetlink_type_is_rtnlgrp_link(change->nlmsg_type)) {
         if (change->nlmsg_type == RTM_NEWLINK) {
-            /* Keep drv-info, and ip addresses. */
+            /* Keep drv-info, ip addresses, and NUMA id. */
             netdev_linux_changed(dev, change->ifi_flags,
-                                 VALID_DRVINFO | VALID_IN);
+                                 VALID_DRVINFO | VALID_IN | VALID_NUMA_ID);
 
             /* Update netdev from rtnl-change msg. */
             if (change->mtu) {
@@ -902,6 +919,15 @@ netdev_linux_common_construct(struct netdev *netdev_)
     /* The device could be in the same network namespace or in another one. */
     netnsid_unset(&netdev->netnsid);
     ovs_mutex_init(&netdev->mutex);
+
+    if (userspace_tso_enabled()) {
+        netdev_->ol_flags |= NETDEV_TX_OFFLOAD_TCP_TSO;
+        netdev_->ol_flags |= NETDEV_TX_OFFLOAD_TCP_CKSUM;
+        netdev_->ol_flags |= NETDEV_TX_OFFLOAD_UDP_CKSUM;
+        netdev_->ol_flags |= NETDEV_TX_OFFLOAD_SCTP_CKSUM;
+        netdev_->ol_flags |= NETDEV_TX_OFFLOAD_IPV4_CKSUM;
+    }
+
     return 0;
 }
 
@@ -961,6 +987,10 @@ netdev_linux_construct_tap(struct netdev *netdev_)
     /* Create tap device. */
     get_flags(&netdev->up, &netdev->ifi_flags);
     ifr.ifr_flags = IFF_TAP | IFF_NO_PI;
+    if (userspace_tso_enabled()) {
+        ifr.ifr_flags |= IFF_VNET_HDR;
+    }
+
     ovs_strzcpy(ifr.ifr_name, name, sizeof ifr.ifr_name);
     if (ioctl(netdev->tap_fd, TUNSETIFF, &ifr) == -1) {
         VLOG_WARN("%s: creating tap device failed: %s", name,
@@ -980,6 +1010,23 @@ netdev_linux_construct_tap(struct netdev *netdev_)
                   ovs_strerror(errno));
         error = errno;
         goto error_close;
+    }
+
+    if (userspace_tso_enabled()) {
+        /* Old kernels don't support TUNSETOFFLOAD. If TUNSETOFFLOAD is
+         * available, it will return EINVAL when a flag is unknown.
+         * Therefore, try enabling offload with no flags to check
+         * if TUNSETOFFLOAD support is available or not. */
+        if (ioctl(netdev->tap_fd, TUNSETOFFLOAD, 0) == 0 || errno != EINVAL) {
+            unsigned long oflags = TUN_F_CSUM | TUN_F_TSO4 | TUN_F_TSO6;
+
+            if (ioctl(netdev->tap_fd, TUNSETOFFLOAD, oflags) == -1) {
+                VLOG_WARN("%s: enabling tap offloading failed: %s", name,
+                          ovs_strerror(errno));
+                error = errno;
+                goto error_close;
+            }
+        }
     }
 
     netdev->present = true;
@@ -1069,6 +1116,15 @@ netdev_linux_rxq_construct(struct netdev_rxq *rxq_)
             goto error;
         }
 
+        if (userspace_tso_enabled()
+            && setsockopt(rx->fd, SOL_PACKET, PACKET_VNET_HDR, &val,
+                          sizeof val)) {
+            error = errno;
+            VLOG_ERR("%s: failed to enable vnet hdr in txq raw socket: %s",
+                     netdev_get_name(netdev_), ovs_strerror(errno));
+            goto error;
+        }
+
         /* Set non-blocking mode. */
         error = set_nonblocking(rx->fd);
         if (error) {
@@ -1119,9 +1175,14 @@ static void
 netdev_linux_rxq_destruct(struct netdev_rxq *rxq_)
 {
     struct netdev_rxq_linux *rx = netdev_rxq_linux_cast(rxq_);
+    int i;
 
     if (!rx->is_tap) {
         close(rx->fd);
+    }
+
+    for (i = 0; i < NETDEV_MAX_BURST; i++) {
+        dp_packet_delete(rx->aux_bufs[i]);
     }
 }
 
@@ -1151,90 +1212,245 @@ auxdata_has_vlan_tci(const struct tpacket_auxdata *aux)
     return aux->tp_vlan_tci || aux->tp_status & TP_STATUS_VLAN_VALID;
 }
 
+/*
+ * Receive packets from raw socket in batch process for better performance,
+ * it can receive NETDEV_MAX_BURST packets at most once, the received
+ * packets are added into *batch. The return value is 0 or errno.
+ *
+ * It also used recvmmsg to reduce multiple syscalls overhead;
+ */
 static int
-netdev_linux_rxq_recv_sock(int fd, struct dp_packet *buffer)
+netdev_linux_batch_rxq_recv_sock(struct netdev_rxq_linux *rx, int mtu,
+                                 struct dp_packet_batch *batch)
 {
-    size_t size;
+    int iovlen;
+    size_t std_len;
     ssize_t retval;
-    struct iovec iov;
+    int virtio_net_hdr_size;
+    struct iovec iovs[NETDEV_MAX_BURST][IOV_TSO_SIZE];
     struct cmsghdr *cmsg;
     union {
         struct cmsghdr cmsg;
         char buffer[CMSG_SPACE(sizeof(struct tpacket_auxdata))];
-    } cmsg_buffer;
-    struct msghdr msgh;
+    } cmsg_buffers[NETDEV_MAX_BURST];
+    struct mmsghdr mmsgs[NETDEV_MAX_BURST];
+    struct dp_packet *buffers[NETDEV_MAX_BURST];
+    int i;
 
-    /* Reserve headroom for a single VLAN tag */
-    dp_packet_reserve(buffer, VLAN_HEADER_LEN);
-    size = dp_packet_tailroom(buffer);
+    if (userspace_tso_enabled()) {
+        /* Use the buffer from the allocated packet below to receive MTU
+         * sized packets and an aux_buf for extra TSO data. */
+        iovlen = IOV_TSO_SIZE;
+        virtio_net_hdr_size = sizeof(struct virtio_net_hdr);
+    } else {
+        /* Use only the buffer from the allocated packet. */
+        iovlen = IOV_STD_SIZE;
+        virtio_net_hdr_size = 0;
+    }
 
-    iov.iov_base = dp_packet_data(buffer);
-    iov.iov_len = size;
-    msgh.msg_name = NULL;
-    msgh.msg_namelen = 0;
-    msgh.msg_iov = &iov;
-    msgh.msg_iovlen = 1;
-    msgh.msg_control = &cmsg_buffer;
-    msgh.msg_controllen = sizeof cmsg_buffer;
-    msgh.msg_flags = 0;
+    /* The length here needs to be accounted in the same way when the
+     * aux_buf is allocated so that it can be prepended to TSO buffer. */
+    std_len = virtio_net_hdr_size + VLAN_ETH_HEADER_LEN + mtu;
+    for (i = 0; i < NETDEV_MAX_BURST; i++) {
+         buffers[i] = dp_packet_new_with_headroom(std_len, DP_NETDEV_HEADROOM);
+         iovs[i][IOV_PACKET].iov_base = dp_packet_data(buffers[i]);
+         iovs[i][IOV_PACKET].iov_len = std_len;
+         if (iovlen == IOV_TSO_SIZE) {
+             iovs[i][IOV_AUXBUF].iov_base = dp_packet_data(rx->aux_bufs[i]);
+             iovs[i][IOV_AUXBUF].iov_len = dp_packet_tailroom(rx->aux_bufs[i]);
+         }
+
+         mmsgs[i].msg_hdr.msg_name = NULL;
+         mmsgs[i].msg_hdr.msg_namelen = 0;
+         mmsgs[i].msg_hdr.msg_iov = iovs[i];
+         mmsgs[i].msg_hdr.msg_iovlen = iovlen;
+         mmsgs[i].msg_hdr.msg_control = &cmsg_buffers[i];
+         mmsgs[i].msg_hdr.msg_controllen = sizeof cmsg_buffers[i];
+         mmsgs[i].msg_hdr.msg_flags = 0;
+    }
 
     do {
-        retval = recvmsg(fd, &msgh, MSG_TRUNC);
+        retval = recvmmsg(rx->fd, mmsgs, NETDEV_MAX_BURST, MSG_TRUNC, NULL);
     } while (retval < 0 && errno == EINTR);
 
     if (retval < 0) {
-        return errno;
-    } else if (retval > size) {
-        return EMSGSIZE;
+        retval = errno;
+        for (i = 0; i < NETDEV_MAX_BURST; i++) {
+            dp_packet_delete(buffers[i]);
+        }
+
+        return retval;
     }
 
-    dp_packet_set_size(buffer, dp_packet_size(buffer) + retval);
+    for (i = 0; i < retval; i++) {
+        struct dp_packet *pkt;
 
-    for (cmsg = CMSG_FIRSTHDR(&msgh); cmsg; cmsg = CMSG_NXTHDR(&msgh, cmsg)) {
-        const struct tpacket_auxdata *aux;
+        if (mmsgs[i].msg_len < ETH_HEADER_LEN) {
+            struct netdev *netdev_ = netdev_rxq_get_netdev(&rx->up);
+            struct netdev_linux *netdev = netdev_linux_cast(netdev_);
 
-        if (cmsg->cmsg_level != SOL_PACKET
-            || cmsg->cmsg_type != PACKET_AUXDATA
-            || cmsg->cmsg_len < CMSG_LEN(sizeof(struct tpacket_auxdata))) {
+            dp_packet_delete(buffers[i]);
+            netdev->rx_dropped += 1;
+            VLOG_WARN_RL(&rl, "%s: Dropped packet: less than ether hdr size",
+                         netdev_get_name(netdev_));
             continue;
         }
 
-        aux = ALIGNED_CAST(struct tpacket_auxdata *, CMSG_DATA(cmsg));
-        if (auxdata_has_vlan_tci(aux)) {
-            struct eth_header *eth;
-            bool double_tagged;
+        if (mmsgs[i].msg_len > std_len) {
+            /* Build a single linear TSO packet by prepending the data from
+             * std_len buffer to the aux_buf. */
+            pkt = rx->aux_bufs[i];
+            dp_packet_set_size(pkt, mmsgs[i].msg_len - std_len);
+            dp_packet_push(pkt, dp_packet_data(buffers[i]), std_len);
+            /* The headroom should be the same in buffers[i], pkt and
+             * DP_NETDEV_HEADROOM. */
+            dp_packet_resize(pkt, DP_NETDEV_HEADROOM, 0);
+            dp_packet_delete(buffers[i]);
+            rx->aux_bufs[i] = NULL;
+         } else {
+            dp_packet_set_size(buffers[i], mmsgs[i].msg_len);
+            pkt = buffers[i];
+         }
 
-            if (retval < ETH_HEADER_LEN) {
-                return EINVAL;
+        if (virtio_net_hdr_size && netdev_linux_parse_vnet_hdr(pkt)) {
+            struct netdev *netdev_ = netdev_rxq_get_netdev(&rx->up);
+            struct netdev_linux *netdev = netdev_linux_cast(netdev_);
+
+            /* Unexpected error situation: the virtio header is not present
+             * or corrupted. Drop the packet but continue in case next ones
+             * are correct. */
+            dp_packet_delete(pkt);
+            netdev->rx_dropped += 1;
+            VLOG_WARN_RL(&rl, "%s: Dropped packet: Invalid virtio net header",
+                         netdev_get_name(netdev_));
+            continue;
+        }
+
+        for (cmsg = CMSG_FIRSTHDR(&mmsgs[i].msg_hdr); cmsg;
+                 cmsg = CMSG_NXTHDR(&mmsgs[i].msg_hdr, cmsg)) {
+            const struct tpacket_auxdata *aux;
+
+            if (cmsg->cmsg_level != SOL_PACKET
+                || cmsg->cmsg_type != PACKET_AUXDATA
+                || cmsg->cmsg_len <
+                       CMSG_LEN(sizeof(struct tpacket_auxdata))) {
+                continue;
             }
 
-            eth = dp_packet_data(buffer);
-            double_tagged = eth->eth_type == htons(ETH_TYPE_VLAN_8021Q);
+            aux = ALIGNED_CAST(struct tpacket_auxdata *, CMSG_DATA(cmsg));
+            if (auxdata_has_vlan_tci(aux)) {
+                struct eth_header *eth;
+                bool double_tagged;
 
-            eth_push_vlan(buffer, auxdata_to_vlan_tpid(aux, double_tagged),
-                          htons(aux->tp_vlan_tci));
-            break;
+                eth = dp_packet_data(pkt);
+                double_tagged = eth->eth_type == htons(ETH_TYPE_VLAN_8021Q);
+
+                eth_push_vlan(pkt,
+                              auxdata_to_vlan_tpid(aux, double_tagged),
+                              htons(aux->tp_vlan_tci));
+                break;
+            }
         }
+        dp_packet_batch_add(batch, pkt);
+    }
+
+    /* Delete unused buffers. */
+    for (; i < NETDEV_MAX_BURST; i++) {
+        dp_packet_delete(buffers[i]);
     }
 
     return 0;
 }
 
+/*
+ * Receive packets from tap by batch process for better performance,
+ * it can receive NETDEV_MAX_BURST packets at most once, the received
+ * packets are added into *batch. The return value is 0 or errno.
+ */
 static int
-netdev_linux_rxq_recv_tap(int fd, struct dp_packet *buffer)
+netdev_linux_batch_rxq_recv_tap(struct netdev_rxq_linux *rx, int mtu,
+                                struct dp_packet_batch *batch)
 {
+    int virtio_net_hdr_size;
     ssize_t retval;
-    size_t size = dp_packet_tailroom(buffer);
+    size_t std_len;
+    int iovlen;
+    int i;
 
-    do {
-        retval = read(fd, dp_packet_data(buffer), size);
-    } while (retval < 0 && errno == EINTR);
+    if (userspace_tso_enabled()) {
+        /* Use the buffer from the allocated packet below to receive MTU
+         * sized packets and an aux_buf for extra TSO data. */
+        iovlen = IOV_TSO_SIZE;
+        virtio_net_hdr_size = sizeof(struct virtio_net_hdr);
+    } else {
+        /* Use only the buffer from the allocated packet. */
+        iovlen = IOV_STD_SIZE;
+        virtio_net_hdr_size = 0;
+    }
 
-    if (retval < 0) {
+    /* The length here needs to be accounted in the same way when the
+     * aux_buf is allocated so that it can be prepended to TSO buffer. */
+    std_len = virtio_net_hdr_size + VLAN_ETH_HEADER_LEN + mtu;
+    for (i = 0; i < NETDEV_MAX_BURST; i++) {
+        struct dp_packet *buffer;
+        struct dp_packet *pkt;
+        struct iovec iov[IOV_TSO_SIZE];
+
+        /* Assume Ethernet port. No need to set packet_type. */
+        buffer = dp_packet_new_with_headroom(std_len, DP_NETDEV_HEADROOM);
+        iov[IOV_PACKET].iov_base = dp_packet_data(buffer);
+        iov[IOV_PACKET].iov_len = std_len;
+        if (iovlen == IOV_TSO_SIZE) {
+            iov[IOV_AUXBUF].iov_base = dp_packet_data(rx->aux_bufs[i]);
+            iov[IOV_AUXBUF].iov_len = dp_packet_tailroom(rx->aux_bufs[i]);
+        }
+
+        do {
+            retval = readv(rx->fd, iov, iovlen);
+        } while (retval < 0 && errno == EINTR);
+
+        if (retval < 0) {
+            dp_packet_delete(buffer);
+            break;
+        }
+
+        if (retval > std_len) {
+            /* Build a single linear TSO packet by prepending the data from
+             * std_len buffer to the aux_buf. */
+            pkt = rx->aux_bufs[i];
+            dp_packet_set_size(pkt, retval - std_len);
+            dp_packet_push(pkt, dp_packet_data(buffer), std_len);
+            /* The headroom should be the same in buffers[i], pkt and
+             * DP_NETDEV_HEADROOM. */
+            dp_packet_resize(pkt, DP_NETDEV_HEADROOM, 0);
+            dp_packet_delete(buffer);
+            rx->aux_bufs[i] = NULL;
+        } else {
+            dp_packet_set_size(buffer, dp_packet_size(buffer) + retval);
+            pkt = buffer;
+        }
+
+        if (virtio_net_hdr_size && netdev_linux_parse_vnet_hdr(pkt)) {
+            struct netdev *netdev_ = netdev_rxq_get_netdev(&rx->up);
+            struct netdev_linux *netdev = netdev_linux_cast(netdev_);
+
+            /* Unexpected error situation: the virtio header is not present
+             * or corrupted. Drop the packet but continue in case next ones
+             * are correct. */
+            dp_packet_delete(pkt);
+            netdev->rx_dropped += 1;
+            VLOG_WARN_RL(&rl, "%s: Dropped packet: Invalid virtio net header",
+                         netdev_get_name(netdev_));
+            continue;
+        }
+
+        dp_packet_batch_add(batch, pkt);
+    }
+
+    if ((i == 0) && (retval < 0)) {
         return errno;
     }
 
-    dp_packet_set_size(buffer, dp_packet_size(buffer) + retval);
     return 0;
 }
 
@@ -1244,7 +1460,6 @@ netdev_linux_rxq_recv(struct netdev_rxq *rxq_, struct dp_packet_batch *batch,
 {
     struct netdev_rxq_linux *rx = netdev_rxq_linux_cast(rxq_);
     struct netdev *netdev = rx->up.netdev;
-    struct dp_packet *buffer;
     ssize_t retval;
     int mtu;
 
@@ -1252,21 +1467,33 @@ netdev_linux_rxq_recv(struct netdev_rxq *rxq_, struct dp_packet_batch *batch,
         mtu = ETH_PAYLOAD_MAX;
     }
 
-    /* Assume Ethernet port. No need to set packet_type. */
-    buffer = dp_packet_new_with_headroom(VLAN_ETH_HEADER_LEN + mtu,
-                                           DP_NETDEV_HEADROOM);
+    if (userspace_tso_enabled()) {
+        /* Allocate TSO packets. The packet has enough headroom to store
+         * a full non-TSO packet. When a TSO packet is received, the data
+         * from non-TSO buffer (std_len) is prepended to the TSO packet
+         * (aux_buf). */
+        size_t std_len = sizeof(struct virtio_net_hdr) + VLAN_ETH_HEADER_LEN
+                         + DP_NETDEV_HEADROOM + mtu;
+        size_t data_len = LINUX_RXQ_TSO_MAX_LEN - std_len;
+        for (int i = 0; i < NETDEV_MAX_BURST; i++) {
+            if (rx->aux_bufs[i]) {
+                continue;
+            }
+
+            rx->aux_bufs[i] = dp_packet_new_with_headroom(data_len, std_len);
+        }
+    }
+
+    dp_packet_batch_init(batch);
     retval = (rx->is_tap
-              ? netdev_linux_rxq_recv_tap(rx->fd, buffer)
-              : netdev_linux_rxq_recv_sock(rx->fd, buffer));
+              ? netdev_linux_batch_rxq_recv_tap(rx, mtu, batch)
+              : netdev_linux_batch_rxq_recv_sock(rx, mtu, batch));
 
     if (retval) {
         if (retval != EAGAIN && retval != EMSGSIZE) {
             VLOG_WARN_RL(&rl, "error receiving Ethernet packet on %s: %s",
                          netdev_rxq_get_name(rxq_), ovs_strerror(errno));
         }
-        dp_packet_delete(buffer);
-    } else {
-        dp_packet_batch_init_packet(batch, buffer);
     }
 
     if (qfill) {
@@ -1302,7 +1529,7 @@ netdev_linux_rxq_drain(struct netdev_rxq *rxq_)
 }
 
 static int
-netdev_linux_sock_batch_send(int sock, int ifindex,
+netdev_linux_sock_batch_send(int sock, int ifindex, bool tso, int mtu,
                              struct dp_packet_batch *batch)
 {
     const size_t size = dp_packet_batch_size(batch);
@@ -1316,6 +1543,10 @@ netdev_linux_sock_batch_send(int sock, int ifindex,
 
     struct dp_packet *packet;
     DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
+        if (tso) {
+            netdev_linux_prepend_vnet_hdr(packet, mtu);
+        }
+
         iov[i].iov_base = dp_packet_data(packet);
         iov[i].iov_len = dp_packet_size(packet);
         mmsg[i].msg_hdr = (struct msghdr) { .msg_name = &sll,
@@ -1348,7 +1579,7 @@ netdev_linux_sock_batch_send(int sock, int ifindex,
  * on other interface types because we attach a socket filter to the rx
  * socket. */
 static int
-netdev_linux_tap_batch_send(struct netdev *netdev_,
+netdev_linux_tap_batch_send(struct netdev *netdev_, bool tso, int mtu,
                             struct dp_packet_batch *batch)
 {
     struct netdev_linux *netdev = netdev_linux_cast(netdev_);
@@ -1365,10 +1596,15 @@ netdev_linux_tap_batch_send(struct netdev *netdev_,
     }
 
     DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
-        size_t size = dp_packet_size(packet);
+        size_t size;
         ssize_t retval;
         int error;
 
+        if (tso) {
+            netdev_linux_prepend_vnet_hdr(packet, mtu);
+        }
+
+        size = dp_packet_size(packet);
         do {
             retval = write(netdev->tap_fd, dp_packet_data(packet), size);
             error = retval < 0 ? errno : 0;
@@ -1391,6 +1627,71 @@ netdev_linux_tap_batch_send(struct netdev *netdev_,
     return 0;
 }
 
+static int
+netdev_linux_get_numa_id__(struct netdev_linux *netdev)
+    OVS_REQUIRES(netdev->mutex)
+{
+    char *numa_node_path;
+    const char *name;
+    int node_id;
+    FILE *stream;
+
+    if (netdev->cache_valid & VALID_NUMA_ID) {
+        return netdev->numa_id;
+    }
+
+    netdev->numa_id = 0;
+    netdev->cache_valid |= VALID_NUMA_ID;
+
+    if (ovs_numa_get_n_numas() < 2) {
+        /* No need to check on system with a single NUMA node. */
+        return 0;
+    }
+
+    name = netdev_get_name(&netdev->up);
+    if (strpbrk(name, "/\\")) {
+        VLOG_ERR_RL(&rl, "\"%s\" is not a valid name for a port. "
+                    "A valid name must not include '/' or '\\'."
+                    "Using numa_id 0", name);
+        return 0;
+    }
+
+    numa_node_path = xasprintf("/sys/class/net/%s/device/numa_node", name);
+
+    stream = fopen(numa_node_path, "r");
+    if (!stream) {
+        /* Virtual device does not have this info. */
+        VLOG_INFO_RL(&rl, "%s: Can't open '%s': %s, using numa_id 0",
+                     name, numa_node_path, ovs_strerror(errno));
+        free(numa_node_path);
+        return 0;
+    }
+
+    if (fscanf(stream, "%d", &node_id) != 1
+        || !ovs_numa_numa_id_is_valid(node_id))  {
+        VLOG_WARN_RL(&rl, "%s: Can't detect NUMA node, using numa_id 0", name);
+        node_id = 0;
+    }
+
+    netdev->numa_id = node_id;
+    fclose(stream);
+    free(numa_node_path);
+    return node_id;
+}
+
+static int OVS_UNUSED
+netdev_linux_get_numa_id(const struct netdev *netdev_)
+{
+    struct netdev_linux *netdev = netdev_linux_cast(netdev_);
+    int numa_id;
+
+    ovs_mutex_lock(&netdev->mutex);
+    numa_id = netdev_linux_get_numa_id__(netdev);
+    ovs_mutex_unlock(&netdev->mutex);
+
+    return numa_id;
+}
+
 /* Sends 'batch' on 'netdev'.  Returns 0 if successful, otherwise a positive
  * errno value.  Returns EAGAIN without blocking if the packet cannot be queued
  * immediately.  Returns EMSGSIZE if a partial packet was transmitted or if
@@ -1403,8 +1704,14 @@ netdev_linux_send(struct netdev *netdev_, int qid OVS_UNUSED,
                   struct dp_packet_batch *batch,
                   bool concurrent_txq OVS_UNUSED)
 {
+    bool tso = userspace_tso_enabled();
+    int mtu = ETH_PAYLOAD_MAX;
     int error = 0;
     int sock = 0;
+
+    if (tso) {
+        netdev_linux_get_mtu__(netdev_linux_cast(netdev_), &mtu);
+    }
 
     if (!is_tap_netdev(netdev_)) {
         if (netdev_linux_netnsid_is_remote(netdev_linux_cast(netdev_))) {
@@ -1424,9 +1731,9 @@ netdev_linux_send(struct netdev *netdev_, int qid OVS_UNUSED,
             goto free_batch;
         }
 
-        error = netdev_linux_sock_batch_send(sock, ifindex, batch);
+        error = netdev_linux_sock_batch_send(sock, ifindex, tso, mtu, batch);
     } else {
-        error = netdev_linux_tap_batch_send(netdev_, batch);
+        error = netdev_linux_tap_batch_send(netdev_, tso, mtu, batch);
     }
     if (error) {
         if (error == ENOBUFS) {
@@ -1592,6 +1899,15 @@ netdev_linux_set_mtu(struct netdev *netdev_, int mtu)
         error = EOPNOTSUPP;
         goto exit;
     }
+
+#ifdef HAVE_AF_XDP
+    if (netdev_get_class(netdev_) == &netdev_afxdp_class) {
+        error = netdev_afxdp_verify_mtu_size(netdev_, mtu);
+        if (error) {
+            goto exit;
+        }
+    }
+#endif
 
     if (netdev->cache_valid & VALID_MTU) {
         error = netdev->netdev_mtu_error;
@@ -1985,6 +2301,7 @@ netdev_tap_get_stats(const struct netdev *netdev_, struct netdev_stats *stats)
         stats->collisions          += dev_stats.collisions;
     }
     stats->tx_dropped += netdev->tx_dropped;
+    stats->rx_dropped += netdev->rx_dropped;
     ovs_mutex_unlock(&netdev->mutex);
 
     return error;
@@ -2347,7 +2664,9 @@ tc_add_matchall_policer(struct netdev *netdev, uint32_t kbits_rate,
 static int
 tc_del_matchall_policer(struct netdev *netdev)
 {
+    int prio = TC_RESERVED_PRIORITY_POLICE;
     uint32_t block_id = 0;
+    struct tcf_id id;
     int ifindex;
     int err;
 
@@ -2356,8 +2675,8 @@ tc_del_matchall_policer(struct netdev *netdev)
         return err;
     }
 
-    err = tc_del_filter(ifindex, TC_RESERVED_PRIORITY_POLICE, 1, block_id,
-                        TC_INGRESS);
+    id = tc_make_tcf_id(ifindex, block_id, prio, TC_INGRESS);
+    err = tc_del_filter(&id);
     if (err) {
         return err;
     }
@@ -3290,6 +3609,7 @@ const struct netdev_class netdev_afxdp_class = {
     NETDEV_LINUX_CLASS_COMMON,
     .type = "afxdp",
     .is_pmd = true,
+    .init = netdev_afxdp_init,
     .construct = netdev_afxdp_construct,
     .destruct = netdev_afxdp_destruct,
     .get_stats = netdev_afxdp_get_stats,
@@ -3298,7 +3618,7 @@ const struct netdev_class netdev_afxdp_class = {
     .set_config = netdev_afxdp_set_config,
     .get_config = netdev_afxdp_get_config,
     .reconfigure = netdev_afxdp_reconfigure,
-    .get_numa_id = netdev_afxdp_get_numa_id,
+    .get_numa_id = netdev_linux_get_numa_id,
     .send = netdev_afxdp_batch_send,
     .rxq_construct = netdev_afxdp_rxq_construct,
     .rxq_destruct = netdev_afxdp_rxq_destruct,
@@ -6160,6 +6480,17 @@ af_packet_sock(void)
             if (error) {
                 close(sock);
                 sock = -error;
+            } else if (userspace_tso_enabled()) {
+                int val = 1;
+                error = setsockopt(sock, SOL_PACKET, PACKET_VNET_HDR, &val,
+                                   sizeof val);
+                if (error) {
+                    error = errno;
+                    VLOG_ERR("failed to enable vnet hdr in raw socket: %s",
+                             ovs_strerror(errno));
+                    close(sock);
+                    sock = -error;
+                }
             }
         } else {
             sock = -errno;
@@ -6170,4 +6501,137 @@ af_packet_sock(void)
     }
 
     return sock;
+}
+
+static int
+netdev_linux_parse_l2(struct dp_packet *b, uint16_t *l4proto)
+{
+    struct eth_header *eth_hdr;
+    ovs_be16 eth_type;
+    int l2_len;
+
+    eth_hdr = dp_packet_at(b, 0, ETH_HEADER_LEN);
+    if (!eth_hdr) {
+        return -EINVAL;
+    }
+
+    l2_len = ETH_HEADER_LEN;
+    eth_type = eth_hdr->eth_type;
+    if (eth_type_vlan(eth_type)) {
+        struct vlan_header *vlan = dp_packet_at(b, l2_len, VLAN_HEADER_LEN);
+
+        if (!vlan) {
+            return -EINVAL;
+        }
+
+        eth_type = vlan->vlan_next_type;
+        l2_len += VLAN_HEADER_LEN;
+    }
+
+    if (eth_type == htons(ETH_TYPE_IP)) {
+        struct ip_header *ip_hdr = dp_packet_at(b, l2_len, IP_HEADER_LEN);
+
+        if (!ip_hdr) {
+            return -EINVAL;
+        }
+
+        *l4proto = ip_hdr->ip_proto;
+        dp_packet_hwol_set_tx_ipv4(b);
+    } else if (eth_type == htons(ETH_TYPE_IPV6)) {
+        struct ovs_16aligned_ip6_hdr *nh6;
+
+        nh6 = dp_packet_at(b, l2_len, IPV6_HEADER_LEN);
+        if (!nh6) {
+            return -EINVAL;
+        }
+
+        *l4proto = nh6->ip6_ctlun.ip6_un1.ip6_un1_nxt;
+        dp_packet_hwol_set_tx_ipv6(b);
+    }
+
+    return 0;
+}
+
+static int
+netdev_linux_parse_vnet_hdr(struct dp_packet *b)
+{
+    struct virtio_net_hdr *vnet = dp_packet_pull(b, sizeof *vnet);
+    uint16_t l4proto = 0;
+
+    if (OVS_UNLIKELY(!vnet)) {
+        return -EINVAL;
+    }
+
+    if (vnet->flags == 0 && vnet->gso_type == VIRTIO_NET_HDR_GSO_NONE) {
+        return 0;
+    }
+
+    if (netdev_linux_parse_l2(b, &l4proto)) {
+        return -EINVAL;
+    }
+
+    if (vnet->flags == VIRTIO_NET_HDR_F_NEEDS_CSUM) {
+        if (l4proto == IPPROTO_TCP) {
+            dp_packet_hwol_set_csum_tcp(b);
+        } else if (l4proto == IPPROTO_UDP) {
+            dp_packet_hwol_set_csum_udp(b);
+        } else if (l4proto == IPPROTO_SCTP) {
+            dp_packet_hwol_set_csum_sctp(b);
+        }
+    }
+
+    if (l4proto && vnet->gso_type != VIRTIO_NET_HDR_GSO_NONE) {
+        uint8_t allowed_mask = VIRTIO_NET_HDR_GSO_TCPV4
+                                | VIRTIO_NET_HDR_GSO_TCPV6
+                                | VIRTIO_NET_HDR_GSO_UDP;
+        uint8_t type = vnet->gso_type & allowed_mask;
+
+        if (type == VIRTIO_NET_HDR_GSO_TCPV4
+            || type == VIRTIO_NET_HDR_GSO_TCPV6) {
+            dp_packet_hwol_set_tcp_seg(b);
+        }
+    }
+
+    return 0;
+}
+
+static void
+netdev_linux_prepend_vnet_hdr(struct dp_packet *b, int mtu)
+{
+    struct virtio_net_hdr *vnet = dp_packet_push_zeros(b, sizeof *vnet);
+
+    if (dp_packet_hwol_is_tso(b)) {
+        uint16_t hdr_len = ((char *)dp_packet_l4(b) - (char *)dp_packet_eth(b))
+                            + TCP_HEADER_LEN;
+
+        vnet->hdr_len = (OVS_FORCE __virtio16)hdr_len;
+        vnet->gso_size = (OVS_FORCE __virtio16)(mtu - hdr_len);
+        if (dp_packet_hwol_is_ipv4(b)) {
+            vnet->gso_type = VIRTIO_NET_HDR_GSO_TCPV4;
+        } else {
+            vnet->gso_type = VIRTIO_NET_HDR_GSO_TCPV6;
+        }
+
+    } else {
+        vnet->flags = VIRTIO_NET_HDR_GSO_NONE;
+    }
+
+    if (dp_packet_hwol_l4_mask(b)) {
+        vnet->flags = VIRTIO_NET_HDR_F_NEEDS_CSUM;
+        vnet->csum_start = (OVS_FORCE __virtio16)((char *)dp_packet_l4(b)
+                                                  - (char *)dp_packet_eth(b));
+
+        if (dp_packet_hwol_l4_is_tcp(b)) {
+            vnet->csum_offset = (OVS_FORCE __virtio16) __builtin_offsetof(
+                                    struct tcp_header, tcp_csum);
+        } else if (dp_packet_hwol_l4_is_udp(b)) {
+            vnet->csum_offset = (OVS_FORCE __virtio16) __builtin_offsetof(
+                                    struct udp_header, udp_csum);
+        } else if (dp_packet_hwol_l4_is_sctp(b)) {
+            vnet->csum_offset = (OVS_FORCE __virtio16) __builtin_offsetof(
+                                    struct sctp_header, sctp_csum);
+        } else {
+            VLOG_WARN_RL(&rl, "Unsupported L4 protocol");
+        }
+    }
 }

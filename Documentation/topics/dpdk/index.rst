@@ -34,10 +34,9 @@ DPDK Support
    /topics/dpdk/bridge
    /topics/dpdk/phy
    /topics/dpdk/vhost-user
-   /topics/dpdk/ring
    /topics/dpdk/vdev
    /topics/dpdk/pmd
    /topics/dpdk/qos
-   /topics/dpdk/pdump
    /topics/dpdk/jumbo-frames
    /topics/dpdk/memory
+   /topics/dpdk/vdpa

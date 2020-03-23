@@ -141,6 +141,7 @@ odp_action_len(uint16_t type)
     case OVS_ACTION_ATTR_PUSH_NSH: return ATTR_LEN_VARIABLE;
     case OVS_ACTION_ATTR_POP_NSH: return 0;
     case OVS_ACTION_ATTR_CHECK_PKT_LEN: return ATTR_LEN_VARIABLE;
+    case OVS_ACTION_ATTR_DROP: return sizeof(uint32_t);
 
     case OVS_ACTION_ATTR_UNSPEC:
     case __OVS_ACTION_ATTR_MAX:
@@ -1237,6 +1238,9 @@ format_odp_action(struct ds *ds, const struct nlattr *a,
         break;
     case OVS_ACTION_ATTR_CHECK_PKT_LEN:
         format_odp_check_pkt_len_action(ds, a, portno_names);
+        break;
+    case OVS_ACTION_ATTR_DROP:
+        ds_put_cstr(ds, "drop");
         break;
     case OVS_ACTION_ATTR_UNSPEC:
     case __OVS_ACTION_ATTR_MAX:
@@ -2575,6 +2579,7 @@ odp_actions_from_string(const char *s, const struct simap *port_names,
     size_t old_size;
 
     if (!strcasecmp(s, "drop")) {
+        nl_msg_put_u32(actions, OVS_ACTION_ATTR_DROP, XLATE_OK);
         return 0;
     }
 
@@ -3602,8 +3607,8 @@ format_odp_tun_vxlan_opt(const struct nlattr *attr,
 
 static void
 format_odp_tun_erspan_opt(const struct nlattr *attr,
-                         const struct nlattr *mask_attr, struct ds *ds,
-                         bool verbose)
+                          const struct nlattr *mask_attr, struct ds *ds,
+                          bool verbose)
 {
     const struct erspan_metadata *opts, *mask;
     uint8_t ver, ver_ma, dir, dir_ma, hwid, hwid_ma;
@@ -6027,26 +6032,28 @@ odp_flow_key_from_flow__(const struct odp_flow_key_parms *parms,
     if (flow->ct_nw_proto) {
         if (parms->support.ct_orig_tuple
             && flow->dl_type == htons(ETH_TYPE_IP)) {
-            struct ovs_key_ct_tuple_ipv4 ct = {
-                data->ct_nw_src,
-                data->ct_nw_dst,
-                data->ct_tp_src,
-                data->ct_tp_dst,
-                data->ct_nw_proto,
-            };
-            nl_msg_put_unspec(buf, OVS_KEY_ATTR_CT_ORIG_TUPLE_IPV4, &ct,
-                              sizeof ct);
+            struct ovs_key_ct_tuple_ipv4 *ct;
+
+            /* 'struct ovs_key_ct_tuple_ipv4' has padding, clear it. */
+            ct = nl_msg_put_unspec_zero(buf, OVS_KEY_ATTR_CT_ORIG_TUPLE_IPV4,
+                                        sizeof *ct);
+            ct->ipv4_src = data->ct_nw_src;
+            ct->ipv4_dst = data->ct_nw_dst;
+            ct->src_port = data->ct_tp_src;
+            ct->dst_port = data->ct_tp_dst;
+            ct->ipv4_proto = data->ct_nw_proto;
         } else if (parms->support.ct_orig_tuple6
                    && flow->dl_type == htons(ETH_TYPE_IPV6)) {
-            struct ovs_key_ct_tuple_ipv6 ct = {
-                data->ct_ipv6_src,
-                data->ct_ipv6_dst,
-                data->ct_tp_src,
-                data->ct_tp_dst,
-                data->ct_nw_proto,
-            };
-            nl_msg_put_unspec(buf, OVS_KEY_ATTR_CT_ORIG_TUPLE_IPV6, &ct,
-                              sizeof ct);
+            struct ovs_key_ct_tuple_ipv6 *ct;
+
+            /* 'struct ovs_key_ct_tuple_ipv6' has padding, clear it. */
+            ct = nl_msg_put_unspec_zero(buf, OVS_KEY_ATTR_CT_ORIG_TUPLE_IPV6,
+                                        sizeof *ct);
+            ct->ipv6_src = data->ct_ipv6_src;
+            ct->ipv6_dst = data->ct_ipv6_dst;
+            ct->src_port = data->ct_tp_src;
+            ct->dst_port = data->ct_tp_dst;
+            ct->ipv6_proto = data->ct_nw_proto;
         }
     }
     if (parms->support.recirc) {
@@ -6206,23 +6213,24 @@ odp_flow_key_from_flow__(const struct odp_flow_key_parms *parms,
                 && (!export_mask || (data->tp_src == htons(0xff)
                                      && data->tp_dst == htons(0xff)))) {
                 struct ovs_key_nd *nd_key;
-                struct ovs_key_nd_extensions *nd_ext_key;
                 nd_key = nl_msg_put_unspec_uninit(buf, OVS_KEY_ATTR_ND,
                                                     sizeof *nd_key);
                 nd_key->nd_target = data->nd_target;
                 nd_key->nd_sll = data->arp_sha;
                 nd_key->nd_tll = data->arp_tha;
 
-                /* Add ND Extensions Attr only if reserved field
+                /* Add ND Extensions Attr only if supported and reserved field
                  * or options type is set. */
-                if (data->igmp_group_ip4 != 0 ||
-                    data->tcp_flags != 0) {
-                    nd_ext_key =
-                         nl_msg_put_unspec_uninit(buf,
+                if (parms->support.nd_ext) {
+                    struct ovs_key_nd_extensions *nd_ext_key;
+
+                    if (data->igmp_group_ip4 != 0 || data->tcp_flags != 0) {
+                        nd_ext_key = nl_msg_put_unspec_uninit(buf,
                                             OVS_KEY_ATTR_ND_EXTENSIONS,
                                             sizeof *nd_ext_key);
-                    nd_ext_key->nd_reserved = data->igmp_group_ip4;
-                    nd_ext_key->nd_options_type = ntohs(data->tcp_flags);
+                        nd_ext_key->nd_reserved = data->igmp_group_ip4;
+                        nd_ext_key->nd_options_type = ntohs(data->tcp_flags);
+                    }
                 }
             }
         }
@@ -6429,11 +6437,20 @@ odp_key_to_dp_packet(const struct nlattr *key, size_t key_len,
     }
 }
 
-uint32_t
-odp_flow_key_hash(const struct nlattr *key, size_t key_len)
+/* Places the hash of the 'key_len' bytes starting at 'key' into '*hash'.
+ * Generated value has format of random UUID. */
+void
+odp_flow_key_hash(const void *key, size_t key_len, ovs_u128 *hash)
 {
-    BUILD_ASSERT_DECL(!(NLA_ALIGNTO % sizeof(uint32_t)));
-    return hash_bytes32(ALIGNED_CAST(const uint32_t *, key), key_len, 0);
+    static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
+    static uint32_t secret;
+
+    if (ovsthread_once_start(&once)) {
+        secret = random_uint32();
+        ovsthread_once_done(&once);
+    }
+    hash_bytes128(key, key_len, secret, hash);
+    uuid_set_bits_v4((struct uuid *)hash);
 }
 
 static void

@@ -151,10 +151,10 @@ AC_DEFUN([OVS_CHECK_LINUX], [
     AC_MSG_RESULT([$kversion])
 
     if test "$version" -ge 5; then
-       if test "$version" = 5 && test "$patchlevel" -le 0; then
+       if test "$version" = 5 && test "$patchlevel" -le 5; then
           : # Linux 5.x
        else
-          AC_ERROR([Linux kernel in $KBUILD is version $kversion, but version newer than 5.0.x is not supported (please refer to the FAQ for advice)])
+          AC_ERROR([Linux kernel in $KBUILD is version $kversion, but version newer than 5.5.x is not supported (please refer to the FAQ for advice)])
        fi
     elif test "$version" = 4; then
        : # Linux 4.x
@@ -286,6 +286,8 @@ AC_DEFUN([OVS_CHECK_LINUX_AF_XDP], [
     AC_CHECK_FUNCS([pthread_spin_lock], [],
       [AC_MSG_ERROR([unable to find pthread_spin_lock for AF_XDP support])])
 
+    OVS_FIND_DEPENDENCY([numa_alloc_onnode], [numa], [libnuma])
+
     AC_DEFINE([HAVE_AF_XDP], [1],
               [Define to 1 if AF_XDP support is available and enabled.])
     LIBBPF_LDADD=" -lbpf -lelf"
@@ -357,23 +359,16 @@ AC_DEFUN([OVS_CHECK_DPDK], [
       AC_DEFINE([VHOST_NUMA], [1], [NUMA Aware vHost support detected in DPDK.])
     ], [], [[#include <rte_config.h>]])
 
-    AC_CHECK_DECL([RTE_LIBRTE_PMD_PCAP], [
-      OVS_FIND_DEPENDENCY([pcap_dump], [pcap], [libpcap])
-      AC_CHECK_DECL([RTE_LIBRTE_PDUMP], [
-        AC_DEFINE([DPDK_PDUMP], [1], [DPDK pdump enabled in OVS.])
-      ], [], [[#include <rte_config.h>]])
-    ], [], [[#include <rte_config.h>]])
-
     AC_CHECK_DECL([RTE_LIBRTE_MLX5_PMD], [dnl found
       OVS_FIND_DEPENDENCY([mnl_attr_put], [mnl], [libmnl])
-      AC_CHECK_DECL([RTE_LIBRTE_MLX5_DLOPEN_DEPS], [], [dnl not found
+      AC_CHECK_DECL([RTE_IBVERBS_LINK_DLOPEN], [], [dnl not found
         OVS_FIND_DEPENDENCY([mlx5dv_create_wq], [mlx5], [libmlx5])
         OVS_FIND_DEPENDENCY([verbs_init_cq], [ibverbs], [libibverbs])
       ], [[#include <rte_config.h>]])
     ], [], [[#include <rte_config.h>]])
 
     AC_CHECK_DECL([RTE_LIBRTE_MLX4_PMD], [dnl found
-      AC_CHECK_DECL([RTE_LIBRTE_MLX4_DLOPEN_DEPS], [], [dnl not found
+      AC_CHECK_DECL([RTE_IBVERBS_LINK_DLOPEN], [], [dnl not found
         OVS_FIND_DEPENDENCY([mlx4dv_init_obj], [mlx4], [libmlx4])
         OVS_FIND_DEPENDENCY([verbs_init_cq], [ibverbs], [libibverbs])
       ], [[#include <rte_config.h>]])
@@ -816,8 +811,6 @@ AC_DEFUN([OVS_CHECK_LINUX_COMPAT], [
   OVS_GREP_IFELSE([$KSRC/include/linux/skbuff.h], [skb_nfct])
   OVS_GREP_IFELSE([$KSRC/include/linux/skbuff.h], [skb_put_zero])
 
-  OVS_GREP_IFELSE([$KSRC/include/linux/types.h], [bool],
-                  [OVS_DEFINE([HAVE_BOOL_TYPE])])
   OVS_GREP_IFELSE([$KSRC/include/linux/types.h], [__wsum],
                   [OVS_DEFINE([HAVE_CSUM_TYPES])])
   OVS_GREP_IFELSE([$KSRC/include/uapi/linux/types.h], [__wsum],
@@ -1053,6 +1046,16 @@ AC_DEFUN([OVS_CHECK_LINUX_COMPAT], [
                   [OVS_DEFINE([HAVE_IP_GRE_CALC_HLEN])])
   OVS_GREP_IFELSE([$KSRC/include/linux/rbtree.h], [rb_link_node_rcu],
                   [OVS_DEFINE([HAVE_RBTREE_RB_LINK_NODE_RCU])])
+  OVS_GREP_IFELSE([$KSRC/include/net/dst_ops.h], [bool confirm_neigh],
+                  [OVS_DEFINE([HAVE_DST_OPS_CONFIRM_NEIGH])])
+  OVS_GREP_IFELSE([$KSRC/include/net/inet_frag.h], [fqdir],
+                  [OVS_DEFINE([HAVE_INET_FRAG_FQDIR])])
+  OVS_FIND_FIELD_IFELSE([$KSRC/include/net/genetlink.h], [genl_ops],
+                        [policy],
+                        [OVS_DEFINE([HAVE_GENL_OPS_POLICY])])
+  OVS_GREP_IFELSE([$KSRC/include/net/netlink.h],
+                  [nla_parse_deprecated_strict],
+                  [OVS_DEFINE([HAVE_NLA_PARSE_DEPRECATED_STRICT])])
 
   if cmp -s datapath/linux/kcompat.h.new \
             datapath/linux/kcompat.h >/dev/null 2>&1; then

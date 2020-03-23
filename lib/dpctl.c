@@ -818,20 +818,29 @@ format_dpif_flow(struct ds *ds, const struct dpif_flow *f, struct hmap *ports,
 
     dpif_flow_stats_format(&f->stats, ds);
     if (dpctl_p->verbosity && f->attrs.offloaded) {
-        ds_put_cstr(ds, ", offloaded:yes");
+        if (f->attrs.dp_layer && !strcmp(f->attrs.dp_layer, "ovs")) {
+            ds_put_cstr(ds, ", offloaded:partial");
+        } else {
+            ds_put_cstr(ds, ", offloaded:yes");
+        }
     }
     if (dpctl_p->verbosity && f->attrs.dp_layer) {
         ds_put_format(ds, ", dp:%s", f->attrs.dp_layer);
     }
     ds_put_cstr(ds, ", actions:");
     format_odp_actions(ds, f->actions, f->actions_len, ports);
+    if (dpctl_p->verbosity && f->attrs.dp_extra_info) {
+        ds_put_format(ds, ", dp-extra-info:%s", f->attrs.dp_extra_info);
+    }
 }
 
 struct dump_types {
     bool ovs;
     bool tc;
+    bool dpdk;
     bool offloaded;
     bool non_offloaded;
+    bool partially_offloaded;
 };
 
 static void
@@ -839,8 +848,10 @@ enable_all_dump_types(struct dump_types *dump_types)
 {
     dump_types->ovs = true;
     dump_types->tc = true;
+    dump_types->dpdk = true;
     dump_types->offloaded = true;
     dump_types->non_offloaded = true;
+    dump_types->partially_offloaded = true;
 }
 
 static int
@@ -865,10 +876,14 @@ populate_dump_types(char *types_list, struct dump_types *dump_types,
             dump_types->ovs = true;
         } else if (!strcmp(current_type, "tc")) {
             dump_types->tc = true;
+        } else if (!strcmp(current_type, "dpdk")) {
+            dump_types->dpdk = true;
         } else if (!strcmp(current_type, "offloaded")) {
             dump_types->offloaded = true;
         } else if (!strcmp(current_type, "non-offloaded")) {
             dump_types->non_offloaded = true;
+        } else if (!strcmp(current_type, "partially-offloaded")) {
+            dump_types->partially_offloaded = true;
         } else if (!strcmp(current_type, "all")) {
             enable_all_dump_types(dump_types);
         } else {
@@ -886,7 +901,9 @@ determine_dpif_flow_dump_types(struct dump_types *dump_types,
 {
     dpif_dump_types->ovs_flows = dump_types->ovs || dump_types->non_offloaded;
     dpif_dump_types->netdev_flows = dump_types->tc || dump_types->offloaded
-                                    || dump_types->non_offloaded;
+                                    || dump_types->non_offloaded
+                                    || dump_types->dpdk
+                                    || dump_types->partially_offloaded;
 }
 
 static bool
@@ -899,7 +916,15 @@ flow_passes_type_filter(const struct dpif_flow *f,
     if (dump_types->tc && !strcmp(f->attrs.dp_layer, "tc")) {
         return true;
     }
-    if (dump_types->offloaded && f->attrs.offloaded) {
+    if (dump_types->dpdk && !strcmp(f->attrs.dp_layer, "dpdk")) {
+        return true;
+    }
+    if (dump_types->offloaded && f->attrs.offloaded &&
+        strcmp(f->attrs.dp_layer, "ovs")) {
+        return true;
+    }
+    if (dump_types->partially_offloaded && f->attrs.offloaded &&
+        !strcmp(f->attrs.dp_layer, "ovs")) {
         return true;
     }
     if (dump_types->non_offloaded && !(f->attrs.offloaded)) {
@@ -1047,7 +1072,7 @@ dpctl_dump_flows(int argc, const char *argv[], struct dpctl_params *dpctl_p)
          * by printing a title line. */
         if (pmd_id != f.pmd_id) {
             if (f.pmd_id == NON_PMD_CORE_ID) {
-                ds_put_format(&ds, "flow-dump from non-dpdk interfaces:\n");
+                ds_put_format(&ds, "flow-dump from the main thread:\n");
             } else {
                 ds_put_format(&ds, "flow-dump from pmd on cpu core: %d\n",
                               f.pmd_id);

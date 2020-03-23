@@ -105,7 +105,8 @@ TESTSUITE_AT = \
 	tests/auto-attach.at \
 	tests/mcast-snooping.at \
 	tests/packet-type-aware.at \
-	tests/nsh.at
+	tests/nsh.at \
+	tests/drop-stats.at
 
 EXTRA_DIST += $(FUZZ_REGRESSION_TESTS)
 FUZZ_REGRESSION_TESTS = \
@@ -156,7 +157,8 @@ SYSTEM_USERSPACE_TESTSUITE_AT = \
 SYSTEM_AFXDP_TESTSUITE_AT = \
 	tests/system-userspace-macros.at \
 	tests/system-afxdp-testsuite.at \
-	tests/system-afxdp-macros.at
+	tests/system-afxdp-macros.at \
+	tests/system-afxdp.at
 
 SYSTEM_TESTSUITE_AT = \
 	tests/system-common-macros.at \
@@ -288,6 +290,12 @@ check-afxdp-valgrind: all $(valgrind_wrappers) $(check_DATA)
 	@echo '----------------------------------------------------------------------'
 	@echo 'Valgrind output can be found in tests/system-afxdp-testsuite.dir/*/valgrind.*'
 	@echo '----------------------------------------------------------------------'
+check-offloads-valgrind: all $(valgrind_wrappers) $(check_DATA)
+	$(SHELL) '$(SYSTEM_OFFLOADS_TESTSUITE)' -C tests VALGRIND='$(VALGRIND)' AUTOTEST_PATH='tests/valgrind:$(AUTOTEST_PATH)' -d $(TESTSUITEFLAGS) -j1
+	@echo
+	@echo '----------------------------------------------------------------------'
+	@echo 'Valgrind output can be found in tests/system-offloads-testsuite.dir/*/valgrind.*'
+	@echo '----------------------------------------------------------------------'
 check-helgrind: all $(valgrind_wrappers) $(check_DATA)
 	-$(SHELL) '$(TESTSUITE)' -C tests CHECK_VALGRIND=true VALGRIND='$(HELGRIND)' AUTOTEST_PATH='tests/valgrind:$(AUTOTEST_PATH)' -d $(TESTSUITEFLAGS)
 
@@ -405,13 +413,6 @@ tests/idltest.ovsidl: $(IDLTEST_IDL_FILES)
 	mv $@.tmp $@
 
 tests/idltest.c: tests/idltest.h
-
-if DPDK_NETDEV
-noinst_PROGRAMS += tests/test-dpdkr
-tests_test_dpdkr_SOURCES = \
-	tests/dpdk/ring_client.c
-tests_test_dpdkr_LDADD = lib/libopenvswitch.la $(LIBS)
-endif
 
 noinst_PROGRAMS += tests/ovstest
 tests_ovstest_SOURCES = \

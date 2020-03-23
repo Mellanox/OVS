@@ -110,6 +110,8 @@ static int dpif_netlink_dp_transact(const struct dpif_netlink_dp *request,
 static int dpif_netlink_dp_get(const struct dpif *,
                                struct dpif_netlink_dp *reply,
                                struct ofpbuf **bufp);
+static int
+dpif_netlink_set_features(struct dpif *dpif_, uint32_t new_features);
 
 struct dpif_netlink_flow {
     /* Generic Netlink header. */
@@ -153,7 +155,7 @@ static int dpif_netlink_flow_transact(struct dpif_netlink_flow *request,
                                       struct ofpbuf **bufp);
 static void dpif_netlink_flow_get_stats(const struct dpif_netlink_flow *,
                                         struct dpif_flow_stats *);
-static void dpif_netlink_flow_to_dpif_flow(struct dpif *, struct dpif_flow *,
+static void dpif_netlink_flow_to_dpif_flow(struct dpif_flow *,
                                            const struct dpif_netlink_flow *);
 
 /* One of the dpif channels between the kernel and userspace. */
@@ -193,6 +195,7 @@ struct dpif_handler {
 struct dpif_netlink {
     struct dpif dpif;
     int dp_ifindex;
+    uint32_t user_features;
 
     /* Upcall messages. */
     struct fat_rwlock upcall_lock;
@@ -334,15 +337,26 @@ dpif_netlink_open(const struct dpif_class *class OVS_UNUSED, const char *name,
 
     /* Create or look up datapath. */
     dpif_netlink_dp_init(&dp_request);
+    upcall_pid = 0;
+    dp_request.upcall_pid = &upcall_pid;
+    dp_request.name = name;
+
     if (create) {
         dp_request.cmd = OVS_DP_CMD_NEW;
-        upcall_pid = 0;
-        dp_request.upcall_pid = &upcall_pid;
     } else {
+        dp_request.cmd = OVS_DP_CMD_GET;
+
+        error = dpif_netlink_dp_transact(&dp_request, &dp, &buf);
+        if (error) {
+            return error;
+        }
+        dp_request.user_features = dp.user_features;
+        ofpbuf_delete(buf);
+
         /* Use OVS_DP_CMD_SET to report user features */
         dp_request.cmd = OVS_DP_CMD_SET;
     }
-    dp_request.name = name;
+
     dp_request.user_features |= OVS_DP_F_UNALIGNED;
     dp_request.user_features |= OVS_DP_F_VPORT_PIDS;
     error = dpif_netlink_dp_transact(&dp_request, &dp, &buf);
@@ -351,7 +365,9 @@ dpif_netlink_open(const struct dpif_class *class OVS_UNUSED, const char *name,
     }
 
     error = open_dpif(&dp, dpifp);
+    dpif_netlink_set_features(*dpifp, OVS_DP_F_TC_RECIRC_SHARING);
     ofpbuf_delete(buf);
+
     return error;
 }
 
@@ -368,6 +384,7 @@ open_dpif(const struct dpif_netlink_dp *dp, struct dpif **dpifp)
               dp->dp_ifindex, dp->dp_ifindex);
 
     dpif->dp_ifindex = dp->dp_ifindex;
+    dpif->user_features = dp->user_features;
     *dpifp = &dpif->dpif;
 
     return 0;
@@ -661,6 +678,31 @@ dpif_netlink_get_stats(const struct dpif *dpif_, struct dpif_dp_stats *stats)
         }
         ofpbuf_delete(buf);
     }
+    return error;
+}
+
+static int
+dpif_netlink_set_features(struct dpif *dpif_, uint32_t new_features)
+{
+    struct dpif_netlink *dpif = dpif_netlink_cast(dpif_);
+    struct dpif_netlink_dp request, reply;
+    struct ofpbuf *bufp;
+    int error;
+
+    dpif_netlink_dp_init(&request);
+    request.cmd = OVS_DP_CMD_SET;
+    request.dp_ifindex = dpif->dp_ifindex;
+    request.user_features = dpif->user_features | new_features;
+
+    error = dpif_netlink_dp_transact(&request, &reply, &bufp);
+    if (!error) {
+        dpif->user_features = reply.user_features;
+        ofpbuf_delete(bufp);
+        if (!(dpif->user_features & new_features)) {
+            return -EOPNOTSUPP;
+        }
+    }
+
     return error;
 }
 
@@ -1527,7 +1569,7 @@ dpif_netlink_flow_dump_thread_destroy(struct dpif_flow_dump_thread *thread_)
 }
 
 static void
-dpif_netlink_flow_to_dpif_flow(struct dpif *dpif, struct dpif_flow *dpif_flow,
+dpif_netlink_flow_to_dpif_flow(struct dpif_flow *dpif_flow,
                                const struct dpif_netlink_flow *datapath_flow)
 {
     dpif_flow->key = datapath_flow->key;
@@ -1542,12 +1584,13 @@ dpif_netlink_flow_to_dpif_flow(struct dpif *dpif, struct dpif_flow *dpif_flow,
         dpif_flow->ufid = datapath_flow->ufid;
     } else {
         ovs_assert(datapath_flow->key && datapath_flow->key_len);
-        dpif_flow_hash(dpif, datapath_flow->key, datapath_flow->key_len,
-                       &dpif_flow->ufid);
+        odp_flow_key_hash(datapath_flow->key, datapath_flow->key_len,
+                          &dpif_flow->ufid);
     }
     dpif_netlink_flow_get_stats(datapath_flow, &dpif_flow->stats);
     dpif_flow->attrs.offloaded = false;
     dpif_flow->attrs.dp_layer = "ovs";
+    dpif_flow->attrs.dp_extra_info = NULL;
 }
 
 /* The design is such that all threads are working together on the first dump
@@ -1600,6 +1643,11 @@ dpif_netlink_netdev_match_to_dpif_flow(struct match *match,
         .mask = &match->wc.masks,
         .support = {
             .max_vlan_headers = 2,
+            .recirc = true,
+            .ct_state = true,
+            .ct_zone = true,
+            .ct_mark = true,
+            .ct_label = true,
         },
     };
     size_t offset;
@@ -1716,8 +1764,7 @@ dpif_netlink_flow_dump_next(struct dpif_flow_dump_thread *thread_,
         if (dump->up.terse || datapath_flow.actions) {
             /* Common case: we don't want actions, or the flow includes
              * actions. */
-            dpif_netlink_flow_to_dpif_flow(&dpif->dpif, &flows[n_flows++],
-                                           &datapath_flow);
+            dpif_netlink_flow_to_dpif_flow(&flows[n_flows++], &datapath_flow);
         } else {
             /* Rare case: the flow does not include actions.  Retrieve this
              * individual flow again to get the actions. */
@@ -1735,8 +1782,7 @@ dpif_netlink_flow_dump_next(struct dpif_flow_dump_thread *thread_,
 
             /* Save this flow.  Then exit, because we only have one buffer to
              * handle this case. */
-            dpif_netlink_flow_to_dpif_flow(&dpif->dpif, &flows[n_flows++],
-                                           &datapath_flow);
+            dpif_netlink_flow_to_dpif_flow(&flows[n_flows++], &datapath_flow);
             break;
         }
     }
@@ -1776,6 +1822,10 @@ dpif_netlink_encode_execute(int dp_ifindex, const struct dpif_execute *d_exec,
     }
     if (d_exec->mtu) {
         nl_msg_put_u16(buf, OVS_PACKET_ATTR_MRU, d_exec->mtu);
+    }
+
+    if (d_exec->hash) {
+        nl_msg_put_u64(buf, OVS_PACKET_ATTR_HASH, d_exec->hash);
     }
 }
 
@@ -1925,8 +1975,7 @@ dpif_netlink_operate__(struct dpif_netlink *dpif,
 
                 op->error = dpif_netlink_flow_from_ofpbuf(&reply, txn->reply);
                 if (!op->error) {
-                    dpif_netlink_flow_to_dpif_flow(&dpif->dpif, get->flow,
-                                                   &reply);
+                    dpif_netlink_flow_to_dpif_flow(get->flow, &reply);
                 }
             }
             break;
@@ -2040,6 +2089,9 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
     info.dpif_class = dpif_class;
     info.tp_dst_port = dst_port;
     info.tunnel_csum_on = csum_on;
+    info.recirc_id_shared_with_tc = (dpif->user_features
+                                     & OVS_DP_F_TC_RECIRC_SHARING);
+    info.tc_modify_flow_deleted = false;
     err = netdev_flow_put(dev, &match,
                           CONST_CAST(struct nlattr *, put->actions),
                           put->actions_len,
@@ -2090,7 +2142,11 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
 out:
     if (err && err != EEXIST && (put->flags & DPIF_FP_MODIFY)) {
         /* Modified rule can't be offloaded, try and delete from HW */
-        int del_err = netdev_flow_del(dev, put->ufid, put->stats);
+        int del_err = 0;
+
+        if (!info.tc_modify_flow_deleted) {
+            del_err = netdev_flow_del(dev, put->ufid, put->stats);
+        }
 
         if (!del_err) {
             /* Delete from hw success, so old flow was offloaded.
@@ -2123,8 +2179,8 @@ try_send_to_netdev(struct dpif_netlink *dpif, struct dpif_op *op)
             break;
         }
 
-        log_flow_put_message(&dpif->dpif, &this_module, put, 0);
         err = parse_flow_put(dpif, put);
+        log_flow_put_message(&dpif->dpif, &this_module, put, 0);
         break;
     }
     case DPIF_OP_FLOW_DEL: {
@@ -2134,9 +2190,9 @@ try_send_to_netdev(struct dpif_netlink *dpif, struct dpif_op *op)
             break;
         }
 
-        log_flow_del_message(&dpif->dpif, &this_module, del, 0);
         err = netdev_ports_flow_del(dpif->dpif.dpif_class, del->ufid,
                                     del->stats);
+        log_flow_del_message(&dpif->dpif, &this_module, del, 0);
         break;
     }
     case DPIF_OP_FLOW_GET: {
@@ -2146,8 +2202,8 @@ try_send_to_netdev(struct dpif_netlink *dpif, struct dpif_op *op)
             break;
         }
 
-        log_flow_get_message(&dpif->dpif, &this_module, get, 0);
         err = parse_flow_get(dpif, get);
+        log_flow_get_message(&dpif->dpif, &this_module, get, 0);
         break;
     }
     case DPIF_OP_EXECUTE:
@@ -2448,8 +2504,8 @@ dpif_netlink_queue_to_priority(const struct dpif *dpif OVS_UNUSED,
 }
 
 static int
-parse_odp_packet(const struct dpif_netlink *dpif, struct ofpbuf *buf,
-                 struct dpif_upcall *upcall, int *dp_ifindex)
+parse_odp_packet(struct ofpbuf *buf, struct dpif_upcall *upcall,
+                 int *dp_ifindex)
 {
     static const struct nl_policy ovs_packet_policy[] = {
         /* Always present. */
@@ -2461,7 +2517,8 @@ parse_odp_packet(const struct dpif_netlink *dpif, struct ofpbuf *buf,
         [OVS_PACKET_ATTR_USERDATA] = { .type = NL_A_UNSPEC, .optional = true },
         [OVS_PACKET_ATTR_EGRESS_TUN_KEY] = { .type = NL_A_NESTED, .optional = true },
         [OVS_PACKET_ATTR_ACTIONS] = { .type = NL_A_NESTED, .optional = true },
-        [OVS_PACKET_ATTR_MRU] = { .type = NL_A_U16, .optional = true }
+        [OVS_PACKET_ATTR_MRU] = { .type = NL_A_U16, .optional = true },
+        [OVS_PACKET_ATTR_HASH] = { .type = NL_A_U64, .optional = true }
     };
 
     struct ofpbuf b = ofpbuf_const_initializer(buf->data, buf->size);
@@ -2489,11 +2546,12 @@ parse_odp_packet(const struct dpif_netlink *dpif, struct ofpbuf *buf,
     upcall->key = CONST_CAST(struct nlattr *,
                              nl_attr_get(a[OVS_PACKET_ATTR_KEY]));
     upcall->key_len = nl_attr_get_size(a[OVS_PACKET_ATTR_KEY]);
-    dpif_flow_hash(&dpif->dpif, upcall->key, upcall->key_len, &upcall->ufid);
+    odp_flow_key_hash(upcall->key, upcall->key_len, &upcall->ufid);
     upcall->userdata = a[OVS_PACKET_ATTR_USERDATA];
     upcall->out_tun_key = a[OVS_PACKET_ATTR_EGRESS_TUN_KEY];
     upcall->actions = a[OVS_PACKET_ATTR_ACTIONS];
     upcall->mru = a[OVS_PACKET_ATTR_MRU];
+    upcall->hash = a[OVS_PACKET_ATTR_HASH];
 
     /* Allow overwriting the netlink attribute header without reallocating. */
     dp_packet_use_stub(&upcall->packet,
@@ -2582,7 +2640,7 @@ dpif_netlink_recv_windows(struct dpif_netlink *dpif, uint32_t handler_id,
                 return error;
             }
 
-            error = parse_odp_packet(dpif, buf, upcall, &dp_ifindex);
+            error = parse_odp_packet(buf, upcall, &dp_ifindex);
             if (!error && dp_ifindex == dpif->dp_ifindex) {
                 return 0;
             } else if (error) {
@@ -2657,7 +2715,7 @@ dpif_netlink_recv__(struct dpif_netlink *dpif, uint32_t handler_id,
                 return error;
             }
 
-            error = parse_odp_packet(dpif, buf, upcall, &dp_ifindex);
+            error = parse_odp_packet(buf, upcall, &dp_ifindex);
             if (!error && dp_ifindex == dpif->dp_ifindex) {
                 return 0;
             } else if (error) {
@@ -3879,6 +3937,7 @@ const struct dpif_class dpif_netlink_class = {
     dpif_netlink_run,
     NULL,                       /* wait */
     dpif_netlink_get_stats,
+    dpif_netlink_set_features,
     dpif_netlink_port_add,
     dpif_netlink_port_del,
     NULL,                       /* port_set_config */
@@ -4196,6 +4255,9 @@ dpif_netlink_dp_from_ofpbuf(struct dpif_netlink_dp *dp, const struct ofpbuf *buf
         [OVS_DP_ATTR_MEGAFLOW_STATS] = {
                         NL_POLICY_FOR(struct ovs_dp_megaflow_stats),
                         .optional = true },
+        [OVS_DP_ATTR_USER_FEATURES] = {
+                        .type = NL_A_U32,
+                        .optional = true },
     };
 
     dpif_netlink_dp_init(dp);
@@ -4222,6 +4284,10 @@ dpif_netlink_dp_from_ofpbuf(struct dpif_netlink_dp *dp, const struct ofpbuf *buf
 
     if (a[OVS_DP_ATTR_MEGAFLOW_STATS]) {
         dp->megaflow_stats = nl_attr_get(a[OVS_DP_ATTR_MEGAFLOW_STATS]);
+    }
+
+    if (a[OVS_DP_ATTR_USER_FEATURES]) {
+        dp->user_features = nl_attr_get_u32(a[OVS_DP_ATTR_USER_FEATURES]);
     }
 
     return 0;

@@ -36,13 +36,12 @@ DOC_SOURCE = \
 	Documentation/topics/dpdk/bridge.rst \
 	Documentation/topics/dpdk/jumbo-frames.rst \
 	Documentation/topics/dpdk/memory.rst \
-	Documentation/topics/dpdk/pdump.rst \
 	Documentation/topics/dpdk/phy.rst \
 	Documentation/topics/dpdk/pmd.rst \
 	Documentation/topics/dpdk/qos.rst \
-	Documentation/topics/dpdk/ring.rst \
 	Documentation/topics/dpdk/vdev.rst \
 	Documentation/topics/dpdk/vhost-user.rst \
+	Documentation/topics/dpdk/vdpa.rst \
 	Documentation/topics/fuzzing/index.rst \
 	Documentation/topics/fuzzing/what-is-fuzzing.rst \
 	Documentation/topics/fuzzing/ovs-fuzzing-infrastructure.rst \
@@ -57,6 +56,7 @@ DOC_SOURCE = \
 	Documentation/topics/ovsdb-replication.rst \
 	Documentation/topics/porting.rst \
 	Documentation/topics/tracing.rst \
+	Documentation/topics/userspace-tso.rst \
 	Documentation/topics/windows.rst \
 	Documentation/howto/index.rst \
 	Documentation/howto/dpdk.rst \
@@ -153,6 +153,13 @@ endif
 
 # rST formatted manpages under Documentation/ref.
 RST_MANPAGES = \
+	ovs-appctl.8.rst \
+	ovs-ctl.8.rst \
+	ovs-l3ping.8.rst \
+	ovs-parse-backtrace.8.rst \
+	ovs-pki.8.rst \
+	ovs-tcpdump.8.rst \
+	ovs-tcpundump.1.rst \
 	ovs-test.8.rst \
 	ovs-vlan-test.8.rst \
 	ovsdb-server.7.rst \
