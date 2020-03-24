@@ -43,6 +43,7 @@
 #include "route-table.h"
 #include "simap.h"
 #include "smap.h"
+#include "sset.h"
 #include "socket-util.h"
 #include "unaligned.h"
 #include "unixctl.h"
@@ -120,34 +121,8 @@ netdev_vport_class_get_dpif_port(const struct netdev_class *class)
     return is_vport_class(class) ? vport_class_cast(class)->dpif_port : NULL;
 }
 
-const char *
-netdev_vport_get_dpif_port(const struct netdev *netdev,
-                           char namebuf[], size_t bufsize)
-{
-    const struct netdev_class *class = netdev_get_class(netdev);
-    const char *dpif_port = netdev_vport_class_get_dpif_port(class);
 
-    if (!dpif_port) {
-        return netdev_get_name(netdev);
-    }
 
-    if (netdev_vport_needs_dst_port(netdev)) {
-        const struct netdev_vport *vport = netdev_vport_cast(netdev);
-
-        /*
-         * Note: IFNAMSIZ is 16 bytes long. Implementations should choose
-         * a dpif port name that is short enough to fit including any
-         * port numbers but assert just in case.
-         */
-        BUILD_ASSERT(NETDEV_VPORT_NAME_BUFSIZE >= IFNAMSIZ);
-        ovs_assert(strlen(dpif_port) + 6 < IFNAMSIZ);
-        snprintf(namebuf, bufsize, "%s_%d", dpif_port,
-                 ntohs(vport->tnl_cfg.dst_port));
-        return namebuf;
-    } else {
-        return dpif_port;
-    }
-}
 
 /* Whenever the route-table change number is incremented,
  * netdev_vport_route_changed() should be called to update
@@ -1103,15 +1078,16 @@ netdev_vport_get_pt_mode(const struct netdev *netdev)
 }
 
 
-
+
 #ifdef __linux__
 static int
 netdev_vport_get_ifindex(const struct netdev *netdev_)
 {
-    char buf[NETDEV_VPORT_NAME_BUFSIZE];
-    const char *name = netdev_vport_get_dpif_port(netdev_, buf, sizeof(buf));
-
-    return linux_get_ifindex(name);
+    if (netdev_has_system_port(netdev_)) {
+        return linux_get_ifindex(netdev_get_name(netdev_));
+    } else {
+        return netdev_get_virtual_ifindex(netdev_);
+    }
 }
 
 #define NETDEV_VPORT_GET_IFINDEX netdev_vport_get_ifindex

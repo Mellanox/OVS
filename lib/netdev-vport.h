@@ -47,8 +47,5 @@ enum { NETDEV_VPORT_NAME_BUFSIZE = 16 };
 #else
 enum { NETDEV_VPORT_NAME_BUFSIZE = 256 };
 #endif
-const char *netdev_vport_get_dpif_port(const struct netdev *,
-                                       char namebuf[], size_t bufsize)
-    OVS_WARN_UNUSED_RESULT;
 
 #endif /* netdev-vport.h */

@@ -3098,16 +3098,7 @@ netdev_dpdk_set_policing(struct netdev* netdev, uint32_t policer_rate,
 static int
 netdev_dpdk_get_ifindex(const struct netdev *netdev)
 {
-    struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
-
-    ovs_mutex_lock(&dev->mutex);
-    /* Calculate hash from the netdev name. Ensure that ifindex is a 24-bit
-     * postive integer to meet RFC 2863 recommendations.
-     */
-    int ifindex = hash_string(netdev->name, 0) % 0xfffffe + 1;
-    ovs_mutex_unlock(&dev->mutex);
-
-    return ifindex;
+    return netdev_get_virtual_ifindex(netdev);
 }
 
 static int
@@ -4427,17 +4418,26 @@ netdev_dpdk_flow_api_supported(struct netdev *netdev)
     struct netdev_dpdk *dev;
     bool ret = false;
 
-    if (!is_dpdk_class(netdev->netdev_class)) {
+    if (netdev_has_system_port(netdev)) {
+        VLOG_DBG("%s: vport has backing system interface. Skipping DPDK flow API",
+                netdev_get_name(netdev));
         goto out;
     }
 
-    dev = netdev_dpdk_cast(netdev);
-    ovs_mutex_lock(&dev->mutex);
-    if (dev->type == DPDK_DEV_ETH) {
-        /* TODO: Check if we able to offload some minimal flow. */
+    if (netdev_vport_is_vport_class(netdev->netdev_class)
+        && !strcmp(netdev_get_type(netdev), "vxlan")) {
         ret = true;
     }
-    ovs_mutex_unlock(&dev->mutex);
+
+    if (is_dpdk_class(netdev->netdev_class)) {
+        dev = netdev_dpdk_cast(netdev);
+        ovs_mutex_lock(&dev->mutex);
+        if (dev->type == DPDK_DEV_ETH) {
+            /* TODO: Check if we able to offload some minimal flow. */
+            ret = true;
+        }
+        ovs_mutex_unlock(&dev->mutex);
+    }
 out:
     return ret;
 }
