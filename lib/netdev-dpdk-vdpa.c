@@ -39,6 +39,7 @@ VLOG_DEFINE_THIS_MODULE(netdev_dpdk_vdpa);
 #define NETDEV_DPDK_VDPA_INVALID_QUEUE_ID   0xFFFF
 #define NETDEV_DPDK_VDPA_STATS_MAX_STR_SIZE 64
 #define NETDEV_DPDK_VDPA_RX_DESC_DEFAULT    512
+#define NETDEV_DPDK_VDPA_PCI_STR_SIZE       sizeof("XXXX:XX:XX.X")
 
 enum netdev_dpdk_vdpa_port_type {
     NETDEV_DPDK_VDPA_PORT_TYPE_VM,
@@ -60,6 +61,12 @@ struct netdev_dpdk_vdpa_qpair {
     struct rte_mbuf *pkts[NETDEV_MAX_BURST * 2];
 };
 
+enum netdev_dpdk_vdpa_mode {
+    NETDEV_DPDK_VDPA_MODE_INIT,
+    NETDEV_DPDK_VDPA_MODE_HW,
+    NETDEV_DPDK_VDPA_MODE_SW,
+};
+
 struct netdev_dpdk_vdpa_relay {
     PADDED_MEMBERS(CACHE_LINE_SIZE,
         struct netdev_dpdk_vdpa_qpair qpair[NETDEV_DPDK_VDPA_MAX_QPAIRS * 2];
@@ -73,6 +80,7 @@ struct netdev_dpdk_vdpa_relay {
         char *vm_socket;
         char *vhost_name;
         bool started;
+        enum netdev_dpdk_vdpa_mode hw_mode;
         );
 };
 
