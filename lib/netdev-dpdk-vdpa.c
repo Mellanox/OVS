@@ -26,6 +26,7 @@
 #include <rte_atomic.h>
 #include <rte_byteorder.h>
 #include <rte_malloc.h>
+#include <rte_vdpa.h>
 
 #include "netdev-provider.h"
 #include "openvswitch/vlog.h"
@@ -40,6 +41,7 @@ VLOG_DEFINE_THIS_MODULE(netdev_dpdk_vdpa);
 #define NETDEV_DPDK_VDPA_STATS_MAX_STR_SIZE 64
 #define NETDEV_DPDK_VDPA_RX_DESC_DEFAULT    512
 #define NETDEV_DPDK_VDPA_PCI_STR_SIZE       sizeof("XXXX:XX:XX.X")
+#define NETDEV_DPDK_VDPA_ARGS_LEN           24
 
 enum netdev_dpdk_vdpa_port_type {
     NETDEV_DPDK_VDPA_PORT_TYPE_VM,
@@ -620,6 +622,100 @@ netdev_dpdk_vdpa_rxq_recv_impl(struct netdev_dpdk_vdpa_relay *relay,
         }
     }
     return fwd_rx;
+}
+
+static int
+netdev_dpdk_vdpa_new_device(int vid)
+{
+    VLOG_INFO("new device callback, vid %d", vid);
+    return 0;
+}
+
+static void
+netdev_dpdk_vdpa_destroy_device(int vid)
+{
+    VLOG_INFO("destroy device callback, vid %d", vid);
+    return;
+}
+
+static const struct vhost_device_ops netdev_dpdk_vdpa_sample_devops = {
+        .new_device = netdev_dpdk_vdpa_new_device,
+        .destroy_device = netdev_dpdk_vdpa_destroy_device,
+};
+
+OVS_UNUSED
+static int
+netdev_dpdk_vdpa_config_hw_impl(struct netdev_dpdk_vdpa_relay *relay,
+                                const char *vf_pci,
+                                const char *vhost_path)
+{
+    struct rte_vdpa_dev_addr addr;
+    char vdpa_args[NETDEV_DPDK_VDPA_ARGS_LEN];
+    int device_id;
+    int err = 0;
+
+    err = rte_pci_addr_parse(vf_pci, &addr.pci_addr);
+    if (err) {
+        VLOG_ERR("Failed to parse the given PCI address %s.\n", vdpa_args);
+        goto sw_mode;
+    }
+
+    ovs_strlcpy(vdpa_args, vf_pci, NETDEV_DPDK_VDPA_PCI_STR_SIZE + 1);
+    strcat(vdpa_args, ",class=vdpa");
+
+    err = rte_dev_probe(vdpa_args);
+    if (err) {
+        VLOG_ERR("Failed to probe for VDPA device %s, working in SW mode",
+                 vdpa_args);
+        goto sw_mode;
+    }
+
+    addr.type = PCI_ADDR;
+    device_id = rte_vdpa_find_device_id(&addr);
+    if (device_id < 0) {
+        VLOG_ERR("Unable to find vdpa device id, working in SW mode");
+        goto sw_mode;
+    }
+
+    err = rte_vhost_driver_register(vhost_path, RTE_VHOST_USER_CLIENT);
+    if (err) {
+        VLOG_ERR("rte_vhost_driver_register failed, working in SW mode");
+        goto sw_mode;
+    }
+
+    err = rte_vhost_driver_callback_register(vhost_path,
+            &netdev_dpdk_vdpa_sample_devops);
+    if (err) {
+        VLOG_ERR("rte_vhost_driver_callback_register failed,"
+                 "working in SW mode");
+        goto sw_mode;
+    }
+
+    err = rte_vhost_driver_attach_vdpa_device(vhost_path, device_id);
+    if (err) {
+        VLOG_ERR("Failed to attach vdpa device, working in SW mode");
+        goto sw_mode;
+    }
+
+    err = rte_vhost_driver_start(vhost_path);
+    if (err) {
+        VLOG_ERR("Failed to start vhost driver: %s, working in SW mode",
+                vhost_path);
+        goto detach_vdpa;
+    }
+    goto hw_mode;
+
+detach_vdpa:
+    if (rte_vhost_driver_detach_vdpa_device(vhost_path)) {
+        VLOG_ERR("Failed to detach vdpa device: %s", relay->vm_socket);
+    }
+sw_mode:
+    relay->hw_mode = NETDEV_DPDK_VDPA_MODE_SW;
+    goto out;
+hw_mode:
+    relay->hw_mode = NETDEV_DPDK_VDPA_MODE_HW;
+out:
+    return err;
 }
 
 int
