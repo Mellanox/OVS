@@ -610,6 +610,9 @@ netdev_dpdk_vdpa_rxq_recv_impl(struct netdev_dpdk_vdpa_relay *relay,
     uint32_t fwd_rx = 0;
     uint16_t q;
 
+    if (relay->hw_mode == NETDEV_DPDK_VDPA_MODE_HW) {
+        return 0;
+    }
     /* Apply the multi core distribution policy by receiving only from queues
      * that are associated with the current port representor's queue. */
     for (q = 0; q < (relay->num_queues * 2); q++) {
@@ -643,7 +646,6 @@ static const struct vhost_device_ops netdev_dpdk_vdpa_sample_devops = {
         .destroy_device = netdev_dpdk_vdpa_destroy_device,
 };
 
-OVS_UNUSED
 static int
 netdev_dpdk_vdpa_config_hw_impl(struct netdev_dpdk_vdpa_relay *relay,
                                 const char *vf_pci,
@@ -730,8 +732,15 @@ netdev_dpdk_vdpa_config_impl(struct netdev_dpdk_vdpa_relay *relay,
     int err = 0;
 
     /* if fwd_config already been done, don't run it again */
-    if (relay->vf_pci) {
+    if (relay->hw_mode != NETDEV_DPDK_VDPA_MODE_INIT) {
         goto out;
+    }
+    else {
+        relay->vm_socket = xstrdup(vm_socket);
+        err = netdev_dpdk_vdpa_config_hw_impl(relay, vf_pci, vm_socket);
+        if (relay->hw_mode == NETDEV_DPDK_VDPA_MODE_HW) {
+            goto out;
+        }
     }
 
     if (max_queues < 0) {
@@ -739,7 +748,6 @@ netdev_dpdk_vdpa_config_impl(struct netdev_dpdk_vdpa_relay *relay,
     }
 
     relay->vf_pci = xstrdup(vf_pci);
-    relay->vm_socket = xstrdup(vm_socket);
     relay->vhost_name = xasprintf("net_vhost%d",port_id);
     vhost_args = xasprintf("iface=%s,queues=%d,client=1",
                            relay->vm_socket, max_queues);
@@ -812,6 +820,10 @@ netdev_dpdk_vdpa_update_relay(struct netdev_dpdk_vdpa_relay *relay,
     uint16_t mtu;
     int err = 0;
 
+    if (relay->hw_mode == NETDEV_DPDK_VDPA_MODE_HW) {
+        return err;
+    }
+
     err = rte_eth_dev_get_mtu(relay->port_id_vf, &mtu);
     if (err < 0) {
         mtu = RTE_ETHER_MTU;
@@ -852,6 +864,20 @@ out:
 void
 netdev_dpdk_vdpa_destruct_impl(struct netdev_dpdk_vdpa_relay *relay)
 {
+    if (relay->hw_mode == NETDEV_DPDK_VDPA_MODE_HW) {
+        if (rte_vhost_driver_detach_vdpa_device(relay->vm_socket)) {
+            VLOG_ERR("Failed to detach vdpa device: %s", relay->vm_socket);
+        }
+
+        if (rte_vhost_driver_unregister(relay->vm_socket)) {
+            VLOG_ERR("Failed to unregister vhost driver for %s",
+                    relay->vm_socket);
+        }
+        relay->hw_mode = NETDEV_DPDK_VDPA_MODE_INIT;
+        netdev_dpdk_vdpa_free(relay->vm_socket);
+        return;
+    }
+
     if (!(rte_eth_dev_is_valid_port(relay->port_id_vm))) {
         goto destruct_vf;
     }
@@ -889,6 +915,10 @@ netdev_dpdk_vdpa_get_custom_stats_impl(struct netdev_dpdk_vdpa_relay *relay,
     };
     struct rte_eth_stats rte_stats;
     uint16_t i;
+
+    if (relay->hw_mode == NETDEV_DPDK_VDPA_MODE_HW) {
+        return 0;
+    }
 
     cstm_stats->size = VDPA_CUSTOM_STATS_TOTAL_SIZE;
     cstm_stats->counters = xcalloc(cstm_stats->size,
