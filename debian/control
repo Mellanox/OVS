@@ -15,8 +15,6 @@ Build-Depends: graphviz,
                procps,
                python3-all,
                python3-sphinx,
-               python3-twisted,
-               python3-zope.interface,
                libunbound-dev,
                libunwind-dev
 Standards-Version: 3.9.3
