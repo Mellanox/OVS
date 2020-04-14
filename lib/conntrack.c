@@ -472,11 +472,18 @@ conn_clean_cmn(struct conntrack *ct, struct conn *conn)
     }
 
     if (conn->offloads.dir_info[CT_DIR_INIT].dont_free ||
-        conn->offloads.dir_info[CT_DIR_REP].dont_free) {
+        conn->offloads.dir_info[CT_DIR_REP].dont_free ||
+        (conn->nat_conn &&
+         (conn->nat_conn->offloads.dir_info[CT_DIR_INIT].dont_free ||
+          conn->nat_conn->offloads.dir_info[CT_DIR_REP].dont_free))) {
         return -1;
     }
+
     if (netdev_is_flow_api_enabled()) {
         conntrack_offload_del_conn(ct, conn);
+        if (conn->nat_conn) {
+            conntrack_offload_del_conn(ct, conn->nat_conn);
+        }
     }
 
     uint32_t hash = conn_key_hash(&conn->key, ct->hash_basis);
@@ -1513,11 +1520,11 @@ conntrack_offload_prepare_add(struct ct_flow_offload_item *item,
 static void
 conntrack_offload_add_conn(struct conntrack *ct,
                            struct dp_packet *packet,
+                           struct conn *conn,
                            uint32_t mark,
                            ovs_u128 label)
 {
     int dir = ct_get_packet_dir(packet->md.reply);
-    struct conn *conn = packet->md.conn;
     struct ct_flow_offload_item item;
 
     /* CT doesn't handle alg */
@@ -1571,6 +1578,7 @@ conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
         struct conn *conn = packet->md.conn;
         mark = conn ? conn->mark : 0;
         label = conn ? conn->label : OVS_U128_ZERO;
+        ctx.conn = NULL;
         if (OVS_UNLIKELY(packet->md.ct_state == CS_INVALID)) {
             write_ct_md(packet, zone, NULL, NULL, NULL);
         } else if (conn && conn->key.zone == zone && !force
@@ -1586,10 +1594,11 @@ conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
                         setlabel, nat_action_info, tp_src, tp_dst, helper,
                         tp_id);
         }
-        if (netdev_is_flow_api_enabled() && packet->md.conn &&
-            !(packet->md.conn->offloads.flags & CT_OFFLOAD_SKIP) &&
-            (packet->md.ct_state & CS_ESTABLISHED)) {
-            conntrack_offload_add_conn(ct, packet, mark, label);
+        conn = packet->md.conn ? packet->md.conn : ctx.conn;
+        if (netdev_is_flow_api_enabled() &&
+            (packet->md.ct_state & CS_ESTABLISHED) &&
+            conn && !(conn->offloads.flags & CT_OFFLOAD_SKIP)) {
+            conntrack_offload_add_conn(ct, packet, conn, mark, label);
         }
     }
 
@@ -1670,10 +1679,18 @@ ct_sweep(struct conntrack *ct, long long now, size_t limit)
                  dir++) {
                 if (!conn_get_tm(conn, &tm) &&
                     conntrack_offload_fill_item_common(&item, conn, dir) &&
-                    ct->offload_class->conn_active(&item, now)) {
+                    ct->offload_class->conn_active(&item, now) &&
+                    !hw_updated) {
                     conn_protected_update_expiration(ct, conn, tm, now);
                     hw_updated = true;
-                    break;
+                }
+                if (conn->nat_conn && !conn_get_tm(conn->nat_conn, &tm) &&
+                    conntrack_offload_fill_item_common(&item, conn->nat_conn,
+                                                       dir) &&
+                    ct->offload_class->conn_active(&item, now) &&
+                    !hw_updated) {
+                    conn_protected_update_expiration(ct, conn, tm, now);
+                    hw_updated = true;
                 }
             }
             if (hw_updated) {
@@ -2683,6 +2700,13 @@ conn_to_ct_dpif_entry(const struct conn *conn, struct ct_dpif_entry *entry,
     }
     entry->offload_status_orig = conn->offloads.dir_info[CT_DIR_INIT].status;
     entry->offload_status_reply = conn->offloads.dir_info[CT_DIR_REP].status;
+    /* nat_conn has opposite directions. */
+    if (conn->nat_conn) {
+        entry->offload_status_orig |=
+            conn->nat_conn->offloads.dir_info[CT_DIR_REP].status;
+        entry->offload_status_reply |=
+            conn->nat_conn->offloads.dir_info[CT_DIR_INIT].status;
+    }
     ovs_mutex_unlock(&conn->lock);
 
     entry->timeout = (expiration > 0) ? expiration / 1000 : 0;
