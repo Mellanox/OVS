@@ -2932,13 +2932,7 @@ parse_ct_actions(struct flow_actions *actions,
     memset(&ct_miss_ctx, 0, sizeof ct_miss_ctx);
     act_vars->ct_mode = CT_MODE_CT;
     NL_ATTR_FOR_EACH_UNSAFE (cta, ctleft, ct_actions, ct_actions_len) {
-        if (nl_attr_type(cta) == OVS_CT_ATTR_COMMIT ||
-            nl_attr_type(cta) == OVS_CT_ATTR_FORCE_COMMIT) {
-            VLOG_DBG_RL(&rl,
-                        "Don't support ct-commit action, action type: %d",
-                        nl_attr_type(cta));
-            return -1;
-        } else if (nl_attr_type(cta) == OVS_CT_ATTR_ZONE) {
+        if (nl_attr_type(cta) == OVS_CT_ATTR_ZONE) {
             if (get_zone_id(nl_attr_get_u16(cta),
                             &act_resources->ct_action_zone_id) ||
                 add_action_set_reg_field(actions, REG_FIELD_CT_ZONE,
