@@ -304,7 +304,7 @@ do
 		continue
 	fi
 	author=$(git log --format="%aN" $cid| head -1 | sed -e 's/ /_/g')
-	if [ "X$base" != "X$cid" ]; then
+	if [ "X$base" == "X$cid" ]; then
 		break;
 	fi
 	changeID=
