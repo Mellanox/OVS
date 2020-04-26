@@ -1,0 +1,5 @@
+sep=;
+Change-Id=Iac3e3a33f383f988ffb827a7fb487c41707f5d59; subject=netdev-offload: Disallow offloading to unrelated tunneling vports.; feature=bp_2_13; upstream_status=in_progress; general=;
+Change-Id=I8acea2249370f045c00b6b0ae1e6cbad5917117e; subject=netdev-offload: Allow offloading to netdev without ifindex.; feature=bp_2_13; upstream_status=in_progress; general=;
+Change-Id=I960c6956bb6f4a9603692014c3cff7fd1a3a18ad; subject=netdev-offload: Use dpif type instead of class.; feature=bp_2_13; upstream_status=in_progress; general=;
+Change-Id=I2adb58c166ef5ac7e9701b4875ab7644a6fedef9; subject=netdev: Allow storing dpif type into netdev structure.; feature=bp_2_13; upstream_status=in_progress; general=;

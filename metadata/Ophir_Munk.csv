@@ -1,0 +1,7 @@
+sep=;
+Change-Id=Ie1eaa0c4bf6b885fbe0b2db45372a8b32ac65244; subject=netdev-offload-dpdk: Support offload for vxlan vport; feature=bp_2_13; upstream_status=in_progress; general=;
+Change-Id=Icea6a68e77b878c2e5978e1c14e17c0fecf418a4; subject=netdev-dpdk: Add flow_api support for netdev vxlan vports; feature=bp_2_13; upstream_status=in_progress; general=;
+Change-Id=Ib56ce59c51ccf19f5fc7e880027406a697f4cd90; subject=netdev-dpdk-offload: Infrastructure for multiple rte_flows per UFID; feature=bp_2_13; upstream_status=in_progress; general=;
+Change-Id=I6d08ae24c56ff88487922cf25503b3925f9d09b8; subject=netdev-dpdk: Introduce an API to query if a dpdk port is an uplink port; feature=bp_2_13; upstream_status=in_progress; general=;
+Change-Id=I53787b3f384d8f14e2baf4452610347c398cb92d; subject=dpif-netdev: Add HW miss packet state recover logic; feature=bp_2_13; upstream_status=in_progress; general=;
+Change-Id=I1087f577285ca41b20ea6ae7fb0e4292ff326079; subject=dpif-netdev: Make mark allocation public API; feature=bp_2_13; upstream_status=in_progress; general=;

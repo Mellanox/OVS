@@ -1,0 +1,3 @@
+sep=;
+Change-Id=I4b4a8c8b792d11aeb1954b17f69af783da884081; subject=rhel/openvswitch-fedora.spec.in: Use dpdk_datadir for DPDK .config location; feature=bp_2_13; upstream_status=in_progress; general=;
+Change-Id=I447ab6364503df313b490bc21bda2113efe6cd3c; subject=rhel/openvswitch-fedora.spec.in: Update scripts location in services according to prefix; feature=bp_2_13; upstream_status=in_progress; general=;
