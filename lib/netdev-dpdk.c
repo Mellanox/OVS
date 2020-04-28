@@ -26,12 +26,6 @@
 #include <sys/socket.h>
 #include <linux/if.h>
 
-/* Include rte_compat.h first to allow experimental API's needed for the
- * rte_meter.h rfc4115 functions. Once they are no longer marked as
- * experimental the #define and rte_compat.h include can be removed.
- */
-#define ALLOW_EXPERIMENTAL_API
-#include <rte_compat.h>
 #include <rte_bus_pci.h>
 #include <rte_config.h>
 #include <rte_cycles.h>
