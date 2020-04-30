@@ -901,30 +901,48 @@ netdev_dpdk_vdpa_get_custom_stats_impl(struct netdev_dpdk_vdpa_relay *relay,
                                        struct netdev_custom_stats *cstm_stats)
 {
     enum stats_vals {
-        VDPA_CUSTOM_STATS_VM_PACKETS,
-        VDPA_CUSTOM_STATS_VM_BYTES,
-        VDPA_CUSTOM_STATS_VF_PACKETS,
-        VDPA_CUSTOM_STATS_VF_BYTES,
+        VDPA_CUSTOM_STATS_VM_RX_PACKETS,
+        VDPA_CUSTOM_STATS_VM_RX_BYTES,
+        VDPA_CUSTOM_STATS_VM_TX_PACKETS,
+        VDPA_CUSTOM_STATS_VM_TX_BYTES,
+        VDPA_CUSTOM_STATS_VF_RX_PACKETS,
+        VDPA_CUSTOM_STATS_VF_RX_BYTES,
+        VDPA_CUSTOM_STATS_VF_RX_ERRS,
+        VDPA_CUSTOM_STATS_VF_RX_NOBUF,
+        VDPA_CUSTOM_STATS_VF_RX_MISS,
+        VDPA_CUSTOM_STATS_VF_TX_PACKETS,
+        VDPA_CUSTOM_STATS_VF_TX_BYTES,
+        VDPA_CUSTOM_STATS_VF_TX_ERRS,
         VDPA_CUSTOM_STATS_TOTAL_SIZE
     };
     const char *stats_names[] = {
-        [VDPA_CUSTOM_STATS_VM_PACKETS] = "VM packets",
-        [VDPA_CUSTOM_STATS_VM_BYTES] = "VM bytes",
-        [VDPA_CUSTOM_STATS_VF_PACKETS] = "VF packets",
-        [VDPA_CUSTOM_STATS_VF_BYTES] = "VF bytes"
+        [VDPA_CUSTOM_STATS_VM_RX_PACKETS] = "VM_rx_packets",
+        [VDPA_CUSTOM_STATS_VM_RX_BYTES] = "VM_rx_bytes",
+        [VDPA_CUSTOM_STATS_VM_TX_PACKETS] = "VM_tx_packets",
+        [VDPA_CUSTOM_STATS_VM_TX_BYTES] = "VM_tx_bytes",
+        [VDPA_CUSTOM_STATS_VF_RX_PACKETS] = "VF_rx_packets",
+        [VDPA_CUSTOM_STATS_VF_RX_BYTES] = "VF_rx_bytes",
+        [VDPA_CUSTOM_STATS_VF_RX_ERRS] = "VF_rx_errors",
+        [VDPA_CUSTOM_STATS_VF_RX_NOBUF] = "VF_rx_no_mbuf",
+        [VDPA_CUSTOM_STATS_VF_RX_MISS] = "VF_rx_miss",
+        [VDPA_CUSTOM_STATS_VF_TX_PACKETS] = "VF_tx_packets",
+        [VDPA_CUSTOM_STATS_VF_TX_BYTES] = "VF_tx_bytes",
+        [VDPA_CUSTOM_STATS_VF_TX_ERRS] = "VF_tx_errors"
     };
     struct rte_eth_stats rte_stats;
     uint16_t i;
+    uint16_t num_q = relay->num_queues;
+    uint16_t start = 0;
 
     if (relay->hw_mode == NETDEV_DPDK_VDPA_MODE_HW) {
         return 0;
     }
 
-    cstm_stats->size = VDPA_CUSTOM_STATS_TOTAL_SIZE;
+    cstm_stats->size = VDPA_CUSTOM_STATS_TOTAL_SIZE + 9 * num_q;
     cstm_stats->counters = xcalloc(cstm_stats->size,
                                    sizeof *cstm_stats->counters);
 
-    for (i = 0; i < cstm_stats->size; i++) {
+    for (i = 0; i < VDPA_CUSTOM_STATS_TOTAL_SIZE; i++) {
         ovs_strlcpy(cstm_stats->counters[i].name, stats_names[i],
                     NETDEV_CUSTOM_STATS_NAME_SIZE);
     }
@@ -935,9 +953,43 @@ netdev_dpdk_vdpa_get_custom_stats_impl(struct netdev_dpdk_vdpa_relay *relay,
                  relay->port_id_vm);
         return EPROTO;
     }
-    cstm_stats->counters[VDPA_CUSTOM_STATS_VM_PACKETS].value =
-            rte_stats.opackets;
-    cstm_stats->counters[VDPA_CUSTOM_STATS_VM_BYTES].value = rte_stats.obytes;
+    cstm_stats->counters[VDPA_CUSTOM_STATS_VM_RX_PACKETS].value =
+                                                    rte_stats.ipackets;
+    cstm_stats->counters[VDPA_CUSTOM_STATS_VM_RX_BYTES].value =
+                                                    rte_stats.ibytes;
+    cstm_stats->counters[VDPA_CUSTOM_STATS_VM_TX_PACKETS].value =
+                                                    rte_stats.opackets;
+    cstm_stats->counters[VDPA_CUSTOM_STATS_VM_TX_BYTES].value =
+                                                    rte_stats.obytes;
+
+    start = start + VDPA_CUSTOM_STATS_TOTAL_SIZE;
+    for (i = 0; i < num_q; i++) {
+         snprintf(cstm_stats->counters[i * 2 + start].name,
+                  NETDEV_CUSTOM_STATS_NAME_SIZE, "VM_rxq%u_pkts", i);
+         snprintf(cstm_stats->counters[i * 2 + 1 + start].name,
+                  NETDEV_CUSTOM_STATS_NAME_SIZE, "VM_rxq%u_bytes", i);
+
+         if (i < RTE_ETHDEV_QUEUE_STAT_CNTRS) {
+             cstm_stats->counters[i * 2 + start].value =
+                                              rte_stats.q_ipackets[i];
+             cstm_stats->counters[i * 2 + 1 + start].value =
+                                              rte_stats.q_ibytes[i];
+         }
+    }
+
+    start = start + 2 * num_q;
+    for (i = 0; i < num_q; i++) {
+         snprintf(cstm_stats->counters[i * 2 + start].name,
+                  NETDEV_CUSTOM_STATS_NAME_SIZE, "VM_txq%u_pkts", i);
+         snprintf(cstm_stats->counters[i * 2 + 1 + start].name,
+                  NETDEV_CUSTOM_STATS_NAME_SIZE, "VM_txq%u_bytes", i);
+         if (i < RTE_ETHDEV_QUEUE_STAT_CNTRS) {
+             cstm_stats->counters[i * 2 + start].value =
+                                              rte_stats.q_opackets[i];
+             cstm_stats->counters[i * 2 + 1 + start].value =
+                                              rte_stats.q_obytes[i];
+         }
+    }
 
     if (rte_eth_stats_get(relay->port_id_vf, &rte_stats)) {
         VLOG_ERR("rte_eth_stats_get failed."
@@ -945,9 +997,55 @@ netdev_dpdk_vdpa_get_custom_stats_impl(struct netdev_dpdk_vdpa_relay *relay,
                  relay->port_id_vf);
         return EPROTO;
     }
-    cstm_stats->counters[VDPA_CUSTOM_STATS_VF_PACKETS].value =
-            rte_stats.opackets;
-    cstm_stats->counters[VDPA_CUSTOM_STATS_VF_BYTES].value = rte_stats.obytes;
+    cstm_stats->counters[VDPA_CUSTOM_STATS_VF_RX_PACKETS].value =
+                                                    rte_stats.ipackets;
+    cstm_stats->counters[VDPA_CUSTOM_STATS_VF_RX_BYTES].value =
+                                                    rte_stats.ibytes;
+    cstm_stats->counters[VDPA_CUSTOM_STATS_VF_RX_ERRS].value =
+                                                    rte_stats.ierrors;
+    cstm_stats->counters[VDPA_CUSTOM_STATS_VF_RX_NOBUF].value =
+                                                    rte_stats.rx_nombuf;
+    cstm_stats->counters[VDPA_CUSTOM_STATS_VF_RX_MISS].value =
+                                                    rte_stats.imissed;
+    cstm_stats->counters[VDPA_CUSTOM_STATS_VF_TX_PACKETS].value =
+                                                    rte_stats.opackets;
+    cstm_stats->counters[VDPA_CUSTOM_STATS_VF_TX_BYTES].value =
+                                                    rte_stats.obytes;
+    cstm_stats->counters[VDPA_CUSTOM_STATS_VF_TX_ERRS].value =
+                                                    rte_stats.oerrors;
+
+    start = start + 2 * num_q;
+    for (i = 0; i < num_q; i++) {
+         snprintf(cstm_stats->counters[i * 3 + start].name,
+                  NETDEV_CUSTOM_STATS_NAME_SIZE, "VF_rxq%u_pkts", i);
+         snprintf(cstm_stats->counters[i * 3 + 1 + start].name,
+                  NETDEV_CUSTOM_STATS_NAME_SIZE, "VF_rxq%u_bytes", i);
+         snprintf(cstm_stats->counters[i * 3 + 2 + start].name,
+                  NETDEV_CUSTOM_STATS_NAME_SIZE, "VF_rxq%u_errors", i);
+
+         if (i < RTE_ETHDEV_QUEUE_STAT_CNTRS) {
+             cstm_stats->counters[i * 3 + start].value =
+                                              rte_stats.q_ipackets[i];
+             cstm_stats->counters[i * 3 + 1 + start].value =
+                                              rte_stats.q_ibytes[i];
+             cstm_stats->counters[i * 3 + 2 + start].value =
+                                              rte_stats.q_errors[i];
+         }
+    }
+
+    start = start + 3 * num_q;
+    for (i = 0; i < num_q; i++) {
+         snprintf(cstm_stats->counters[i * 2 + start].name,
+                  NETDEV_CUSTOM_STATS_NAME_SIZE, "VF_txq%u_pkts", i);
+         snprintf(cstm_stats->counters[i * 2 + 1 + start].name,
+                  NETDEV_CUSTOM_STATS_NAME_SIZE, "VF_txq%u_bytes", i);
+         if (i < RTE_ETHDEV_QUEUE_STAT_CNTRS) {
+             cstm_stats->counters[i * 2 + start].value =
+                                              rte_stats.q_opackets[i];
+             cstm_stats->counters[i * 2 + 1 + start].value =
+                                              rte_stats.q_obytes[i];
+         }
+    }
 
     return 0;
 }
