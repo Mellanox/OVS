@@ -71,6 +71,7 @@ struct offload_info {
      * it will be in the pkt meta data.
      */
     uint32_t flow_mark;
+    bool offloaded; /* true if flow is fully offloaded */
 };
 
 int netdev_flow_flush(struct netdev *);
@@ -88,6 +89,8 @@ int netdev_flow_get(struct netdev *, struct match *, struct nlattr **actions,
                     struct dpif_flow_attrs *, struct ofpbuf *wbuffer);
 int netdev_flow_del(struct netdev *, const ovs_u128 *,
                     struct dpif_flow_stats *);
+int netdev_flow_stats_get(struct netdev *, const ovs_u128 *,
+                          struct dpif_flow_stats *);
 int netdev_init_flow_api(struct netdev *);
 void netdev_uninit_flow_api(struct netdev *);
 uint32_t netdev_get_block_id(struct netdev *);
