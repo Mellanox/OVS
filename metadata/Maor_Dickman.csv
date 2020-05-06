@@ -4,3 +4,4 @@ Change-Id=I71b96e72246aa694d655f27d5c7d50007cd6de7c; subject=metadata: Initial M
 Change-Id=I38fe1964649b222d21a25822c42f088977204ee2; subject=makefile: fix make checks to ingore new mellanox scripts; feature=ofed_scripts; upstream_status=NA; general=;
 Change-Id=Ic0198ea966760df766fbd00e297b08df9a217af4; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I3d1edc82dac001c52f396cfcb1fdd6786e445da6; subject=add_metada: fix metadata script.; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ieeca82892c22d54e23c6255ca1f6819ae7d6c23d; subject=add_metada: fix metadata order; feature=ofed_scripts; upstream_status=ignore; general=;

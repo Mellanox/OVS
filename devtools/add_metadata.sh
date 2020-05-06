@@ -289,7 +289,7 @@ if [ "X$ref_db" != "X" ] && ! test -d "$ref_db"; then
 	exit 1
 fi
 
-commitIDs=$(git log --no-merges --format="%h" $filter)
+commitIDs=$(git log $base.. --no-merges --format="%h" $filter | tac)
 if [ -z "$commitIDs" ]; then
 	echo "-E- Failed to get list of commit IDs." >&2
 	exit 1
@@ -304,9 +304,6 @@ do
 		continue
 	fi
 	author=$(git log --format="%aN" $cid| head -1 | sed -e 's/ /_/g')
-	if [ "X$base" == "X$cid" ]; then
-		break;
-	fi
 	changeID=
 	subject=
 	feature=
