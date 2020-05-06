@@ -1048,9 +1048,13 @@ dump_flow_pattern(struct ds *s, struct ds *_s1,
         const struct rte_flow_item_vlan *vlan_mask = item->mask;
 
         ds_put_cstr(s, "rte flow vlan pattern:\n");
+        ds_put_cstr(s1, "vlan ");
         if (vlan_spec) {
             ds_put_format(s,
                           "  Spec: inner_type=0x%"PRIx16", tci=0x%"PRIx16"\n",
+                          ntohs(vlan_spec->inner_type), ntohs(vlan_spec->tci));
+            ds_put_format(s1,
+                          "inner_type spec 0x%"PRIx16" tci spec 0x%"PRIx16" ",
                           ntohs(vlan_spec->inner_type), ntohs(vlan_spec->tci));
         } else {
             ds_put_cstr(s, "  Spec = null\n");
@@ -1060,9 +1064,13 @@ dump_flow_pattern(struct ds *s, struct ds *_s1,
             ds_put_format(s,
                           "  Mask: inner_type=0x%"PRIx16", tci=0x%"PRIx16"\n",
                           ntohs(vlan_mask->inner_type), ntohs(vlan_mask->tci));
+            ds_put_format(s1,
+                          "inner_type mask 0x%"PRIx16" tci mask 0x%"PRIx16" ",
+                          ntohs(vlan_mask->inner_type), ntohs(vlan_mask->tci));
         } else {
             ds_put_cstr(s, "  Mask = null\n");
         }
+        ds_put_cstr(s1, "/ ");
     } else if (item->type == RTE_FLOW_ITEM_TYPE_IPV4) {
         const struct rte_flow_item_ipv4 *ipv4_spec = item->spec;
         const struct rte_flow_item_ipv4 *ipv4_mask = item->mask;
@@ -1151,9 +1159,14 @@ dump_flow_pattern(struct ds *s, struct ds *_s1,
         const struct rte_flow_item_sctp *sctp_mask = item->mask;
 
         ds_put_cstr(s, "rte flow sctp pattern:\n");
+        ds_put_cstr(s1, "sctp ");
         if (sctp_spec) {
             ds_put_format(s,
                           "  Spec: src_port=%"PRIu16", dst_port=%"PRIu16"\n",
+                          ntohs(sctp_spec->hdr.src_port),
+                          ntohs(sctp_spec->hdr.dst_port));
+            ds_put_format(s1,
+                          "src spec %"PRIu16" dst spec %"PRIu16" ",
                           ntohs(sctp_spec->hdr.src_port),
                           ntohs(sctp_spec->hdr.dst_port));
         } else {
@@ -1165,6 +1178,10 @@ dump_flow_pattern(struct ds *s, struct ds *_s1,
                           ", dst_port=0x%"PRIx16"\n",
                           ntohs(sctp_mask->hdr.src_port),
                           ntohs(sctp_mask->hdr.dst_port));
+            ds_put_format(s1,
+                          "src mask %"PRIu16" dst mask %"PRIu16" ",
+                          ntohs(sctp_mask->hdr.src_port),
+                          ntohs(sctp_mask->hdr.dst_port));
         } else {
             ds_put_cstr(s, "  Mask = null\n");
         }
@@ -1174,9 +1191,14 @@ dump_flow_pattern(struct ds *s, struct ds *_s1,
         const struct rte_flow_item_icmp *icmp_mask = item->mask;
 
         ds_put_cstr(s, "rte flow icmp pattern:\n");
+        ds_put_cstr(s1, "icmp ");
         if (icmp_spec) {
             ds_put_format(s,
                           "  Spec: icmp_type=%"PRIu8", icmp_code=%"PRIu8"\n",
+                          icmp_spec->hdr.icmp_type,
+                          icmp_spec->hdr.icmp_code);
+            ds_put_format(s1,
+                          "type spec %"PRIu8" code spec %"PRIu8" ",
                           icmp_spec->hdr.icmp_type,
                           icmp_spec->hdr.icmp_code);
         } else {
@@ -1186,11 +1208,16 @@ dump_flow_pattern(struct ds *s, struct ds *_s1,
             ds_put_format(s,
                           "  Mask: icmp_type=0x%"PRIx8
                           ", icmp_code=0x%"PRIx8"\n",
-                          icmp_spec->hdr.icmp_type,
-                          icmp_spec->hdr.icmp_code);
+                          icmp_mask->hdr.icmp_type,
+                          icmp_mask->hdr.icmp_code);
+            ds_put_format(s1,
+                          "type spec %"PRIu8" code mask %"PRIu8" ",
+                          icmp_mask->hdr.icmp_type,
+                          icmp_mask->hdr.icmp_code);
         } else {
             ds_put_cstr(s, "  Mask = null\n");
         }
+        ds_put_cstr(s1, "/ ");
     } else if (item->type == RTE_FLOW_ITEM_TYPE_TCP) {
         const struct rte_flow_item_tcp *tcp_spec = item->spec;
         const struct rte_flow_item_tcp *tcp_mask = item->mask;
@@ -1450,22 +1477,29 @@ dump_flow_action(struct ds *s, struct ds *s1,
                        ? "dst" : "src";
 
         ds_put_format(s, "rte flow set-ipv4-%s action:\n", dirstr);
+        ds_put_format(s1, "set_ipv4_%s ", dirstr);
         if (set_ipv4) {
             ds_put_format(s,
                           "  Set-ipv4-%s: "IP_FMT"\n", dirstr,
                           IP_ARGS(set_ipv4->ipv4_addr));
+            ds_put_format(s1, "ipv4_addr "IP_FMT" ",
+                          IP_ARGS(set_ipv4->ipv4_addr));
         } else {
             ds_put_format(s, "  Set-ipv4-%s = null\n", dirstr);
         }
+        ds_put_cstr(s1, "/ ");
     } else if (actions->type == RTE_FLOW_ACTION_TYPE_SET_TTL) {
         const struct rte_flow_action_set_ttl *set_ttl = actions->conf;
 
         ds_put_cstr(s, "rte flow set-ttl action:\n");
+        ds_put_cstr(s1, "set_ttl ");
         if (set_ttl) {
             ds_put_format(s, "  Set-ttl: %d\n", set_ttl->ttl_value);
+            ds_put_format(s1, "ttl_value %d ", set_ttl->ttl_value);
         } else {
             ds_put_cstr(s, "  Set-ttl = null\n");
         }
+        ds_put_cstr(s1, "/ ");
     } else if (actions->type == RTE_FLOW_ACTION_TYPE_SET_TP_SRC ||
                actions->type == RTE_FLOW_ACTION_TYPE_SET_TP_DST) {
         const struct rte_flow_action_set_tp *set_tp = actions->conf;
@@ -1473,12 +1507,15 @@ dump_flow_action(struct ds *s, struct ds *s1,
                        ? "dst" : "src";
 
         ds_put_format(s, "rte flow set-tcp/udp-port-%s action:\n", dirstr);
+        ds_put_format(s1, "set_tp_%s ", dirstr);
         if (set_tp) {
             ds_put_format(s, "  Set-%s-tcp/udp-port: %"PRIu16"\n", dirstr,
                           ntohs(set_tp->port));
+            ds_put_format(s1, "port %"PRIu16" ", ntohs(set_tp->port));
         } else {
             ds_put_format(s, "  Set-%s-tcp/udp-port = null\n", dirstr);
         }
+        ds_put_cstr(s1, "/ ");
     } else if (actions->type == RTE_FLOW_ACTION_TYPE_RAW_ENCAP) {
         const struct rte_flow_action_raw_encap *raw_encap = actions->conf;
 
@@ -1548,15 +1585,18 @@ dump_flow_action(struct ds *s, struct ds *s1,
                        ? "dst" : "src";
 
         ds_put_format(s, "rte flow set-ipv6-%s action:\n", dirstr);
+        ds_put_format(s1, "set_ipv6_%s ", dirstr);
         if (set_ipv6) {
             char addr_str[INET6_ADDRSTRLEN];
 
             ipv6_string_mapped(addr_str,
                                (struct in6_addr *)&set_ipv6->ipv6_addr);
             ds_put_format(s, "  Set-ipv6-%s: %s\n", dirstr, addr_str);
+            ds_put_format(s1, "ipv6_addr %s ", addr_str);
         } else {
             ds_put_format(s, "  Set-ipv6-%s = null\n", dirstr);
         }
+        ds_put_cstr(s1, "/ ");
     } else {
         ds_put_format(s, "unknown rte flow action (%d)\n", actions->type);
     }
