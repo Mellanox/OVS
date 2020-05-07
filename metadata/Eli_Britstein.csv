@@ -65,3 +65,17 @@ Change-Id=If4ed74870616db55a255eba926627d2d4e8c7e4a; subject=metadata: Update sc
 Change-Id=I336b2b408fa69afc12573d89367ac5275247f08a; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=Ie33ba26eba0707ee96af16221186aab0601a9dee; subject=netdev-dpdk: TBD REMOVE: Disable DEV_RX_OFFLOAD_KEEP_CRC; feature=bug_fixes; upstream_status=ignore; general=;
 Change-Id=I7ae04019a363e4627db83b442d72d9f1e91cd9f1; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ia24062157554d041ecf6656bd672d05faee7a3f4; subject=netdev-offload-dpdk-FIX: Fix pre-ct END action instead of END item; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Ie06474d2b79e2fbad1599012234ad2cf93444cbc; subject=netdev-offload-dpdk-FIX: Fix pool max values; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Id1f0e2898ec385da8164d57930ce6ef25534eeb1; subject=netdev-offload-dpdk: Don't match zeros on CT properties zero recirc_id; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Ib36d08e1e8cea109929a95789f84ea6f89d97c3b; subject=netdev-offload-dpdk: Introduce argument for ID mapping alloc/free; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I6bae09d2c924cc7d155fcbf6ad73e3409a4d0e1b; subject=netdev-offload-dpdk: Default miss flow on table id free; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I523ea2aea820222be57ef514064d6e01d5da044d; subject=netdev-offload-dpdk: Support table free; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I45d72392e142b212cf6fe08a8cd0e1e99904a0ce; subject=netdev-offload-dpdk-FIX: Change tnl_create parameter types; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I3e278154b0944d5ca71d2119063c5c8c51d06f50; subject=netdev-offload-dpdk-FIX: Introduce create_offload_flow helper; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I0ec0c3635086bbb6857624d48c77fce69aaf3fc2; subject=netdev-offload-dpdk: Helper to create a miss flow in a jumped table; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I2841da3db1c508533723ed92563f195ef557106f; subject=netdev-offload-dpdk: Create miss flows instead of miss marks; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I253e5feec543cef369095afb06f2fc05e01063b7; subject=netdev-offload-dpdk-FIX: Don't ignore CT commit action; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I8501770dc056da77a9edb34a8e4a431a36030871; subject=conntrack-FIX: Handle scenarios with nat_conn handle; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I29fe903213c2f6ef15923a38881992ab20a25162; subject=netdev-offload-dpdk-FIX: enhance testpmd format logs; feature=dpdk; upstream_status=NA; general=;
+Change-Id=If3164ca5b079e857500e297c662c9afccd1950db; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
