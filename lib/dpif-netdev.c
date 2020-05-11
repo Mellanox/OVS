@@ -508,10 +508,13 @@ dp_netdev_fill_ct_match(struct match *match,
     if (match->flow.nw_proto == IPPROTO_TCP) {
         match->wc.masks.tcp_flags = htons(TCP_RST | TCP_FIN);
     }
-    match->flow.tp_src = offload->key.src.port;
-    match->flow.tp_dst = offload->key.dst.port;
-    match->wc.masks.tp_src = OVS_BE16_MAX;
-    match->wc.masks.tp_dst = OVS_BE16_MAX;
+    if (match->flow.nw_proto == IPPROTO_TCP ||
+        match->flow.nw_proto == IPPROTO_UDP) {
+        match->flow.tp_src = offload->key.src.port;
+        match->flow.tp_dst = offload->key.dst.port;
+        match->wc.masks.tp_src = OVS_BE16_MAX;
+        match->wc.masks.tp_dst = OVS_BE16_MAX;
+    }
     match->flow.ct_zone = offload->key.zone;
     match->wc.masks.ct_zone = UINT16_MAX;
     match->flow.in_port.odp_port = offload->odp_port;
