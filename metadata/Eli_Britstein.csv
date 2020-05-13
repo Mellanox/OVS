@@ -58,3 +58,8 @@ Change-Id=I3b3dea28067c366845ac6138b86921c3fef98b85; subject=netdev-offload-dpdk
 Change-Id=I7a9b23fdab307d11b848b17de420a1764b4973f3; subject=netdev-offload-dpdk: Support offload of clone tnl_push/output actions; feature=bp_2_13; upstream_status=in_progress; general=;
 Change-Id=Ic57059f327d14ad152e8298405ecf0cc583d806f; subject=netdev-offload-dpdk: Change log rate limit numbers; feature=bp_2_13; upstream_status=in_progress; general=;
 Change-Id=I7a0d046115f59e7f955d17f31d6169225a420b09; subject=dpif-netdev: Add mega ufid in flow add log; feature=bp_2_13; upstream_status=in_progress; general=;
+Change-Id=I72ef01c69dd345a4fb2757a6896c0858081a0e87; subject=netdev-dpdk: Comment out redefinition of ALLOW_EXPERIMENTAL_API; feature=bp_2_13; upstream_status=ignore; general=;
+Change-Id=I9e305bf549f5e57315427ec82d090c8fa98d5279; subject=dpif-netdev-FIX: CT connection matches ports only for UDP/TCP; feature=bug_fixes; upstream_status=ignore; general=;
+Change-Id=I7eb0da22b70dcc5dc411e65371353fea189d512a; subject=netdev-offload-dpdk: Support partial TCP/UDP port matching; feature=bug_fixes; upstream_status=in_progress; general=;
+Change-Id=If4ed74870616db55a255eba926627d2d4e8c7e4a; subject=metadata: Update scripts; feature=ofed_scripts; upstream_status=NA; general=;
+Change-Id=I336b2b408fa69afc12573d89367ac5275247f08a; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
