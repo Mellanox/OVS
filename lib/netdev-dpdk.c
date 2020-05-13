@@ -30,7 +30,8 @@
  * rte_meter.h rfc4115 functions. Once they are no longer marked as
  * experimental the #define and rte_compat.h include can be removed.
  */
-#define ALLOW_EXPERIMENTAL_API
+//#define ALLOW_EXPERIMENTAL_API
+//already defined in Makefile.am
 #include <rte_compat.h>
 #include <rte_bus_pci.h>
 #include <rte_config.h>
