@@ -68,6 +68,8 @@ struct act_resources {
     bool associated_flow_id;
     uint32_t ct_miss_ctx_id;
     uint32_t ct_nat_table_id;
+    uint32_t ct_match_zone_id;
+    uint32_t ct_action_zone_id;
 };
 
 #define NUM_RTE_FLOWS_PER_PORT 2
@@ -526,6 +528,69 @@ dump_table_id(struct ds *s, void *data)
     return s;
 }
 
+static struct ds *
+dump_zone_id(struct ds *s, void *data)
+{
+    uint16_t not_mapped_ct_zone = *(uint16_t *) data;
+
+    ds_put_format(s, "zone = %d", not_mapped_ct_zone);
+    return s;
+}
+
+#define MIN_ZONE_ID     1
+#define MAX_ZONE_ID     reg_fields[REG_FIELD_CT_ZONE].mask
+
+static struct id_pool *zone_id_pool = NULL;
+
+static uint32_t
+zone_id_alloc(void)
+{
+    uint32_t zone_id;
+
+    if (!zone_id_pool) {
+        /* if not yet initialized, do it here */
+        zone_id_pool = id_pool_create(MIN_ZONE_ID, MAX_ZONE_ID);
+    }
+
+    if (id_pool_alloc_id(zone_id_pool, &zone_id)) {
+        return zone_id;
+    }
+    return 0;
+}
+
+static void
+zone_id_free(uint32_t zone_id)
+{
+    id_pool_free_id(zone_id_pool, zone_id);
+}
+
+static struct context_metadata zone_id_md = {
+    .name = "zone_id",
+    .dump_context_data = dump_zone_id,
+    .d2i_hmap = HMAP_INITIALIZER(&zone_id_md.d2i_hmap),
+    .i2d_hmap = HMAP_INITIALIZER(&zone_id_md.i2d_hmap),
+    .id_alloc = zone_id_alloc,
+    .id_free = zone_id_free,
+    .data_size = sizeof(uint16_t),
+};
+
+static int
+get_zone_id(uint16_t ct_zone, uint32_t *ct_zone_id)
+{
+    struct context_data zone_id_context = {
+        .data = &ct_zone,
+    };
+
+    return get_context_data_id_by_data(&zone_id_md, &zone_id_context,
+                                       ct_zone_id);
+}
+
+static void
+put_zone_id(uint32_t zone_id)
+{
+    put_context_data_by_id(&zone_id_md, zone_id);
+}
+
 #define MIN_TABLE_ID     1
 #define MAX_TABLE_ID     (UINT32_MAX - 1)
 
@@ -851,6 +916,8 @@ put_action_resources(struct act_resources *act_resources)
     }
     put_ct_ctx_id(act_resources->ct_miss_ctx_id);
     put_table_id(act_resources->ct_nat_table_id);
+    put_zone_id(act_resources->ct_match_zone_id);
+    put_zone_id(act_resources->ct_action_zone_id);
 }
 
 /*
@@ -2096,9 +2163,12 @@ parse_flow_match(struct netdev *netdev,
     }
     /* ct-zone */
     if (match->wc.masks.ct_zone &&
-        !add_pattern_match_reg_field(patterns, REG_FIELD_CT_ZONE,
-                                     match->flow.ct_zone,
-                                     match->wc.masks.ct_zone)) {
+        !get_zone_id(match->flow.ct_zone,
+                     &act_resources->ct_match_zone_id) &&
+        !add_pattern_match_reg_field(patterns,
+                                     REG_FIELD_CT_ZONE,
+                                     act_resources->ct_match_zone_id,
+                                     reg_fields[REG_FIELD_CT_ZONE].mask)) {
         consumed_masks->ct_zone = 0;
     }
     /* ct-mark */
@@ -2655,8 +2725,15 @@ parse_ct_actions(struct flow_actions *actions,
     act_vars->ct_mode = CT_MODE_CT;
     NL_ATTR_FOR_EACH_UNSAFE (cta, ctleft, ct_actions, ct_actions_len) {
         if (nl_attr_type(cta) == OVS_CT_ATTR_ZONE) {
-            add_action_set_reg_field(actions, REG_FIELD_CT_ZONE,
-                                     nl_attr_get_u16(cta), 0xFFFF);
+            if (get_zone_id(nl_attr_get_u16(cta),
+                            &act_resources->ct_action_zone_id) ||
+                add_action_set_reg_field(actions, REG_FIELD_CT_ZONE,
+                                         act_resources->ct_action_zone_id,
+                                         reg_fields[REG_FIELD_CT_ZONE].mask)) {
+                VLOG_DBG_RL(&rl, "Could not create zone id");
+                return -1;
+            }
+
             ct_miss_ctx.zone = nl_attr_get_u16(cta);
         } else if (nl_attr_type(cta) == OVS_CT_ATTR_MARK) {
             const uint32_t *key = nl_attr_get(cta);
