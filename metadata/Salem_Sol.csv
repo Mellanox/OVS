@@ -1,0 +1,3 @@
+sep=;
+Change-Id=Ie819959bfbe5e0cd585a9d78eab37810e77d3932; subject=netdev-offload-dpdk: Introduce CT zone mapping; feature=bug_fixes; upstream_status=ignore; general=;
+Change-Id=I2276eed94b1f9ccdba6381eb9cb02ce7dcff6ca1; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
