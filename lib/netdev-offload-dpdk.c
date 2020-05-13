@@ -2111,12 +2111,6 @@ parse_flow_match(struct netdev *netdev,
         goto out;
     }
 
-    if ((match->wc.masks.tp_src && match->wc.masks.tp_src != OVS_BE16_MAX) ||
-        (match->wc.masks.tp_dst && match->wc.masks.tp_dst != OVS_BE16_MAX)) {
-        ret = -1;
-        goto out;
-    }
-
     if (proto == IPPROTO_TCP) {
         struct rte_flow_item_tcp *spec, *mask;
 
