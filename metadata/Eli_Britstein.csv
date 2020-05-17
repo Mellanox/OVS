@@ -63,3 +63,5 @@ Change-Id=I9e305bf549f5e57315427ec82d090c8fa98d5279; subject=dpif-netdev-FIX: CT
 Change-Id=I7eb0da22b70dcc5dc411e65371353fea189d512a; subject=netdev-offload-dpdk: Support partial TCP/UDP port matching; feature=bug_fixes; upstream_status=in_progress; general=;
 Change-Id=If4ed74870616db55a255eba926627d2d4e8c7e4a; subject=metadata: Update scripts; feature=ofed_scripts; upstream_status=NA; general=;
 Change-Id=I336b2b408fa69afc12573d89367ac5275247f08a; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ie33ba26eba0707ee96af16221186aab0601a9dee; subject=netdev-dpdk: TBD REMOVE: Disable DEV_RX_OFFLOAD_KEEP_CRC; feature=bug_fixes; upstream_status=ignore; general=;
+Change-Id=I7ae04019a363e4627db83b442d72d9f1e91cd9f1; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
