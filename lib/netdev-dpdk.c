@@ -1011,7 +1011,7 @@ dpdk_eth_dev_port_config(struct netdev_dpdk *dev, int n_rxq, int n_txq)
 
     if (!(dev->hw_ol_features & NETDEV_RX_HW_CRC_STRIP)
         && info.rx_offload_capa & DEV_RX_OFFLOAD_KEEP_CRC) {
-        conf.rxmode.offloads |= DEV_RX_OFFLOAD_KEEP_CRC;
+        //conf.rxmode.offloads |= DEV_RX_OFFLOAD_KEEP_CRC;
     }
 
     if (dev->hw_ol_features & NETDEV_TX_TSO_OFFLOAD) {
