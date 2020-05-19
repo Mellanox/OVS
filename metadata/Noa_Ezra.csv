@@ -26,3 +26,8 @@ Change-Id=I33664e48d74acd06745566ef848c7843b7ee3348; subject=conntrack: Move str
 Change-Id=I26bfc140d342115580440e7aba1913e1d7295b90; subject=netdev-dpdk: Add dpdkvdpa port; feature=bp_2_13; upstream_status=in_progress; general=;
 Change-Id=I3b5d2ce30627718bcbeca0f0934477adaaeede42; subject=netdev-dpdk-vdpa: Introduce dpdkvdpa netdev; feature=bp_2_13; upstream_status=in_progress; general=;
 Change-Id=If21efd347e20e4ee195f17f6602c0865b2b34993; subject=Updata metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I5441597505fd0f54065f0e80b4efa8477e633b56; subject=metadata: Update scripts; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ied62572dff89d7568934b5a319684f93a163ce31; subject=netdev-dpdk-vdpa: Add fields to netdev_dpdk_vdpa_relay struct; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Ia0f773b1697d40a65dcd0737afce7f3f63a60af9; subject=netdev-dpdk-vdpa: Introduce function to configure HW VDPA; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I2fe85bb828c06c24520461a71764620dede59b28; subject=netdev-dpdk-vdpa: Add HW VDPA support; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I3b46249d72b22079b97f43babc58afc7144afed0; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
