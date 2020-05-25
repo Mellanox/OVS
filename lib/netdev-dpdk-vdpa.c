@@ -672,7 +672,7 @@ netdev_dpdk_vdpa_config_hw_impl(struct netdev_dpdk_vdpa_relay *relay,
         goto sw_mode;
     }
 
-    addr.type = PCI_ADDR;
+    addr.type = VDPA_ADDR_PCI;
     device_id = rte_vdpa_find_device_id(&addr);
     if (device_id < 0) {
         VLOG_ERR("Unable to find vdpa device id, working in SW mode");
