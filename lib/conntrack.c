@@ -307,7 +307,8 @@ static void
 conntrack_offload_del_conn(struct conntrack *ct,
                            struct conn *conn)
 {
-    struct ct_flow_offload_item item;
+    struct ct_flow_offload_item item[CT_DIR_NUM];
+    struct conn *conn_dir;
     int dir;
 
     if (!ct->offload_class || !ct->offload_class->conn_del) {
@@ -315,11 +316,17 @@ conntrack_offload_del_conn(struct conntrack *ct,
     }
 
     for (dir = 0; dir < CT_DIR_NUM; dir ++) {
-        if (!conntrack_offload_fill_item_common(&item, conn, dir)) {
+        if (conn->nat_conn &&
+            conn->nat_conn->offloads.dir_info[dir].dp) {
+            conn_dir = conn->nat_conn;
+        } else {
+            conn_dir = conn;
+        }
+        if (!conntrack_offload_fill_item_common(&item[dir], conn_dir, dir)) {
             continue;
         }
-        ct->offload_class->conn_del(&item);
     }
+    ct->offload_class->conn_del(item);
 }
 
 /* Initializes the connection tracker 'ct'.  The caller is responsible for
@@ -1460,13 +1467,14 @@ conntrack_swap_conn_key(const struct conn_key *key,
 static void
 conntrack_offload_fill_item_add(struct ct_flow_offload_item *item,
                                 struct conn *conn,
-                                struct dp_packet *pkt,
+                                int dir,
                                 uint32_t mark,
                                 ovs_u128 label)
 {
-    int dir = ct_get_packet_dir(pkt->md.reply);
+    /* nat_conn has opposite directions. */
+    bool reply = !!conn->master_conn ^ dir;
 
-    if (pkt->md.reply) {
+    if (reply) {
         item->key = conn->rev_key;
         conntrack_swap_conn_key(&conn->key, &item->nat.key);
     } else {
@@ -1502,19 +1510,16 @@ conntrack_offload_fill_item_add(struct ct_flow_offload_item *item,
 }
 
 static void
-conntrack_offload_prepare_add(struct ct_flow_offload_item *item,
-                              struct conn *conn,
+conntrack_offload_prepare_add(struct conn *conn,
                               struct dp_packet *packet,
-                              uint32_t mark,
-                              ovs_u128 label,
                               void *dp)
 {
-    int dir = ct_get_packet_dir(packet->md.reply);
+    /* nat_conn has opposite directions. */
+    bool reply = !!conn->master_conn ^ packet->md.reply;
+    int dir = ct_get_packet_dir(reply);
 
     conn->offloads.dir_info[dir].port = packet->md.in_port.odp_port;
     conn->offloads.dir_info[dir].dp = dp;
-
-    conntrack_offload_fill_item_add(item, conn, packet, mark, label);
     conn->offloads.dir_info[dir].dont_free = true;
     conn->offloads.dir_info[dir].pkt_ct_state = packet->md.ct_state;
 }
@@ -1526,8 +1531,11 @@ conntrack_offload_add_conn(struct conntrack *ct,
                            uint32_t mark,
                            ovs_u128 label)
 {
-    int dir = ct_get_packet_dir(packet->md.reply);
-    struct ct_flow_offload_item item;
+    /* nat_conn has opposite directions. */
+    bool reply = !!conn->master_conn ^ packet->md.reply;
+    struct ct_flow_offload_item item[CT_DIR_NUM];
+    uint8_t flags;
+    int dir;
 
     /* CT doesn't handle alg */
     if (conn->alg || conn->alg_related || !ct->offload_class ||
@@ -1536,17 +1544,46 @@ conntrack_offload_add_conn(struct conntrack *ct,
         return;
     }
 
-    if ((packet->md.reply && !(conn->offloads.flags & CT_OFFLOAD_REP)) ||
-        (!packet->md.reply && !(conn->offloads.flags & CT_OFFLOAD_INIT))) {
-        conntrack_offload_prepare_add(&item, conn, packet, mark, label, ct->dp);
-        ct->offload_class->conn_add(&item);
-        conn->offloads.dir_info[dir].ufid = item.ufid;
-        conn->offloads.flags |= packet->md.reply ? CT_OFFLOAD_REP
-                                                 : CT_OFFLOAD_INIT;
+    if ((reply && !(conn->offloads.flags & CT_OFFLOAD_REP)) ||
+        (!reply && !(conn->offloads.flags & CT_OFFLOAD_INIT))) {
+        conntrack_offload_prepare_add(conn, packet, ct->dp);
+        conn->offloads.flags |= reply ? CT_OFFLOAD_REP : CT_OFFLOAD_INIT;
+        if (conn->master_conn) {
+            conn->master_conn->offloads.flags |= reply
+                ? CT_OFFLOAD_REP : CT_OFFLOAD_INIT;
+        }
     }
 
-    if ((conn->offloads.flags & CT_OFFLOAD_BOTH) == CT_OFFLOAD_BOTH) {
+    flags = conn->offloads.flags;
+    if (conn->nat_conn) {
+        flags |= conn->nat_conn->offloads.flags;
+    } else if (conn->master_conn) {
+        flags |= conn->master_conn->offloads.flags;
+    }
+    if ((flags & CT_OFFLOAD_BOTH) == CT_OFFLOAD_BOTH) {
+        ovs_u128 *ufid[CT_DIR_NUM];
+
+        for (dir = 0; dir < CT_DIR_NUM; dir ++) {
+            if (conn->nat_conn &&
+                conn->nat_conn->offloads.dir_info[dir].dp) {
+                conn = conn->nat_conn;
+            } else if (conn->master_conn &&
+                       conn->master_conn->offloads.dir_info[dir].dp) {
+                conn = conn->master_conn;
+            }
+            conntrack_offload_fill_item_add(&item[dir], conn, dir, mark,
+                                            label);
+            ufid[dir] = &conn->offloads.dir_info[dir].ufid;
+        }
+        ct->offload_class->conn_add(item);
+        *ufid[CT_DIR_INIT] = item[CT_DIR_INIT].ufid;
+        *ufid[CT_DIR_REP] = item[CT_DIR_REP].ufid;
         conn->offloads.flags |= CT_OFFLOAD_SKIP;
+        if (conn->nat_conn) {
+            conn->nat_conn->offloads.flags |= CT_OFFLOAD_SKIP;
+        } else if (conn->master_conn) {
+            conn->master_conn->offloads.flags |= CT_OFFLOAD_SKIP;
+        }
     }
 }
 
@@ -2702,12 +2739,11 @@ conn_to_ct_dpif_entry(const struct conn *conn, struct ct_dpif_entry *entry,
     }
     entry->offload_status_orig = conn->offloads.dir_info[CT_DIR_INIT].status;
     entry->offload_status_reply = conn->offloads.dir_info[CT_DIR_REP].status;
-    /* nat_conn has opposite directions. */
     if (conn->nat_conn) {
         entry->offload_status_orig |=
-            conn->nat_conn->offloads.dir_info[CT_DIR_REP].status;
-        entry->offload_status_reply |=
             conn->nat_conn->offloads.dir_info[CT_DIR_INIT].status;
+        entry->offload_status_reply |=
+            conn->nat_conn->offloads.dir_info[CT_DIR_REP].status;
     }
     ovs_mutex_unlock(&conn->lock);
 
