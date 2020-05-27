@@ -1085,6 +1085,7 @@ conn_not_found(struct conntrack *ct, struct dp_packet *pkt,
             nat_conn->nat_info = NULL;
             nat_conn->alg = NULL;
             nat_conn->nat_conn = NULL;
+            nat_conn->master_conn = nc;
             uint32_t nat_hash = conn_key_hash(&nat_conn->key, ct->hash_basis);
             cmap_insert(&ct->conns, &nat_conn->cm_node, nat_hash);
         }
