@@ -185,7 +185,7 @@ tcp_bypass_seq_chk(struct conntrack *ct, struct conn *conn, bool reply)
     int dir = ct_get_packet_dir(reply);
 
     if (!conntrack_get_tcp_seq_chk(ct) ||
-        conn->offloads.port_info[dir].status) {
+        conn->offloads.dir_info[dir].status) {
         COVERAGE_INC(conntrack_tcp_seq_chk_bypass);
         return true;
     }

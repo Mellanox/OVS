@@ -73,7 +73,7 @@ ct_get_packet_dir(bool reply)
     return reply ? CT_DIR_REP : CT_DIR_INIT;
 }
 
-struct ct_port_info {
+struct ct_dir_info {
     struct ovs_mutex *port_mutex;
     odp_port_t port;
     ovs_u128 ufid;
@@ -92,7 +92,7 @@ enum ct_offload_flag {
 
 struct ct_offloads {
     uint8_t flags;
-    struct ct_port_info port_info[CT_DIR_NUM];
+    struct ct_dir_info dir_info[CT_DIR_NUM];
 };
 
 struct conn {
