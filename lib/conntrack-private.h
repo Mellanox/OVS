@@ -98,6 +98,8 @@ struct conn {
     struct nat_action_info_t *nat_info;
     char *alg;
     struct conn *nat_conn; /* The NAT 'conn' context, if there is one. */
+    struct conn *master_conn; /* The master 'conn' context if this is a NAT
+                               * 'conn' */
 
     /* Mutable data. */
     struct ovs_mutex lock; /* Guards all mutable fields. */
