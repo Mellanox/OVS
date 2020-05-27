@@ -61,12 +61,6 @@ enum OVS_PACKED_ENUM ct_conn_type {
     CT_CONN_TYPE_UN_NAT,
 };
 
-enum ct_direction {
-    CT_DIR_INIT,
-    CT_DIR_REP,
-    CT_DIR_NUM,
-};
-
 static inline int
 ct_get_packet_dir(bool reply)
 {
