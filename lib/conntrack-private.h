@@ -74,6 +74,7 @@ struct ct_dir_info {
     const char *class_type;
     int status;
     bool dont_free;
+    uint8_t pkt_ct_state;
 };
 
 enum ct_offload_flag {
