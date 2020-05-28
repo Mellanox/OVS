@@ -1491,7 +1491,7 @@ conntrack_offload_fill_item_add(struct ct_flow_offload_item *item,
     }
 
     conntrack_offload_fill_item_common(item, conn, dir);
-    item->ct_state = pkt->md.ct_state;
+    item->ct_state = conn->offloads.dir_info[dir].pkt_ct_state;
     item->mark_key = conn->mark;
     item->mark_mask = mark ^ conn->mark;
     item->label_key = conn->label;
@@ -1516,6 +1516,7 @@ conntrack_offload_prepare_add(struct ct_flow_offload_item *item,
 
     conntrack_offload_fill_item_add(item, conn, packet, mark, label);
     conn->offloads.dir_info[dir].dont_free = true;
+    conn->offloads.dir_info[dir].pkt_ct_state = packet->md.ct_state;
 }
 
 static void
