@@ -489,6 +489,8 @@ int dpif_port_dump_done(struct dpif_port_dump *);
 int dpif_port_poll(const struct dpif *, char **devnamep);
 void dpif_port_poll_wait(const struct dpif *);
 
+struct dpif_offload_stats;
+
 /* Flow table operations. */
 
 struct dpif_flow_stats {
@@ -605,6 +607,8 @@ struct dpif_flow {
 };
 int dpif_flow_dump_next(struct dpif_flow_dump_thread *,
                         struct dpif_flow *flows, int max_flows);
+
+int dpif_get_offload_stats(struct dpif *dpif, struct dpif_offload_stats *);
 
 #define DPIF_FLOW_BUFSIZE 2048
 
