@@ -1102,6 +1102,31 @@ out_free:
 }
 
 static int
+dpctl_get_offload_stats(int argc, const char *argv[],
+                        struct dpctl_params *dpctl_p)
+{
+    struct dpif *dpif;
+    int error;
+
+    error = opt_dpif_open(argc, argv, dpctl_p, 2, &dpif);
+    if (!error) {
+        struct dpif_offload_stats offload_stats;
+
+        error = dpif_get_offload_stats(dpif, &offload_stats);
+        if (!error) {
+            dpctl_print(dpctl_p,
+                        "Connction tracking offloaded connections: %u\n",
+                        offload_stats.ct_connections);
+        } else {
+            dpctl_error(dpctl_p, error, "Offloaded statistics could not be retrieved");
+        }
+        dpif_close(dpif);
+    }
+
+    return error;
+}
+
+static int
 dpctl_put_flow(int argc, const char *argv[], enum dpif_flow_put_flags flags,
                struct dpctl_params *dpctl_p)
 {
@@ -2505,6 +2530,8 @@ static const struct dpctl_command all_commands[] = {
     { "show", "[dp...]", 0, INT_MAX, dpctl_show, DP_RO },
     { "dump-flows", "[dp] [filter=..] [type=..]",
       0, 3, dpctl_dump_flows, DP_RO },
+    { "get-offload-stats", "[dp]",
+      0, 1, dpctl_get_offload_stats, DP_RO },
     { "add-flow", "[dp] flow actions", 2, 3, dpctl_add_flow, DP_RW },
     { "mod-flow", "[dp] flow actions", 2, 3, dpctl_mod_flow, DP_RW },
     { "get-flow", "[dp] ufid", 1, 2, dpctl_get_flow, DP_RO },
