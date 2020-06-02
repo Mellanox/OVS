@@ -1,3 +1,5 @@
 sep=;
 Change-Id=Ie819959bfbe5e0cd585a9d78eab37810e77d3932; subject=netdev-offload-dpdk: Introduce CT zone mapping; feature=bug_fixes; upstream_status=ignore; general=;
 Change-Id=I2276eed94b1f9ccdba6381eb9cb02ce7dcff6ca1; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I3f3390209f18129959e0c11c1b7035a2f3e2c4b1; subject=netdev-offload-dpdk: fix put_table_id param; feature=dpdk; upstream_status=ignore; general=;
+Change-Id=I1eb53cf8d49c69b281f8ef04e82c504b14968d3c; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
