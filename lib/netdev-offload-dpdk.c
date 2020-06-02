@@ -945,7 +945,7 @@ static void
 put_action_resources(struct netdev *netdev,
                      struct act_resources *act_resources)
 {
-    put_table_id(netdev, act_resources->self_table_id);
+    put_table_id(NULL, act_resources->self_table_id);
     put_table_id(netdev, act_resources->next_table_id);
     put_flow_miss_ctx_id(act_resources->flow_miss_ctx_id);
     put_tnl_id(act_resources->tnl_id);
