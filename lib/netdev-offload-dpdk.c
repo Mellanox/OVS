@@ -3357,10 +3357,6 @@ parse_flow_actions(struct netdev *netdev,
         return -1;
     }
 
-    if (nl_actions_len == 0) {
-        add_flow_action(actions, RTE_FLOW_ACTION_TYPE_DROP, NULL);
-    }
-
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_END, NULL);
     return 0;
 }
