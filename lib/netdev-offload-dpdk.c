@@ -1637,6 +1637,7 @@ struct act_vars {
     uint32_t recirc_id;
     struct flow_tnl *tnl_key;
     struct flow_tnl tnl_mask;
+    bool explicit_netdev;
 };
 
 static int
@@ -2858,7 +2859,7 @@ add_miss_flow(struct netdev *netdev,
         { .type = RTE_FLOW_ACTION_TYPE_JUMP, &miss_jump },
         { .type = RTE_FLOW_ACTION_TYPE_END, } };
     struct act_resources act_resources = { .flow_id = INVALID_FLOW_MARK };
-    struct act_vars act_vars = { .ct_mode = CT_MODE_NONE, };
+    struct act_vars act_vars = { .explicit_netdev = true, };
     struct flows_handle flows = { .items = NULL, .cnt = 0 };
     struct ufid_to_rte_flow_data *rte_flow_data;
     ovs_u128 ufid;
@@ -3402,6 +3403,9 @@ create_offload_flow(struct netdev *netdev,
                                               &flow_item);
         if (ret) {
             goto out;
+        }
+        if (act_vars->explicit_netdev) {
+            flow_item.devargs = netdev_dpdk_get_port_devargs(netdev);
         }
         VLOG_DBG_RL(&rl, "%s: installed flow %p/%p by ufid "UUID_FMT"\n",
                     netdev_get_name(netdev), flow_item.rte_flow[0],
