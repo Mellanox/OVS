@@ -79,3 +79,6 @@ Change-Id=I253e5feec543cef369095afb06f2fc05e01063b7; subject=netdev-offload-dpdk
 Change-Id=I8501770dc056da77a9edb34a8e4a431a36030871; subject=conntrack-FIX: Handle scenarios with nat_conn handle; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I29fe903213c2f6ef15923a38881992ab20a25162; subject=netdev-offload-dpdk-FIX: enhance testpmd format logs; feature=dpdk; upstream_status=NA; general=;
 Change-Id=If3164ca5b079e857500e297c662c9afccd1950db; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I2cdee12a5172050b33b21fbdc13fca13a441efb7; subject=Revert "netdev-offload-dpdk: fix put_table_id param"; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I47b3baa1e66b88ca0cea285ba2673b9a9e540cd6; subject=netdev-offload-dpdk: Keep netdev explicitly for miss flow; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I0c55a211d6131e5f498b184611034577f64d9b99; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
