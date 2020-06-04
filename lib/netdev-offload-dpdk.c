@@ -312,6 +312,16 @@ get_context_data_by_id(struct context_metadata *md, uint32_t id, void *data)
 }
 
 static void
+context_release(struct context_metadata *md, void *arg, uint32_t id,
+                struct context_data *data_cur)
+{
+    hmap_remove(&md->i2d_hmap, &data_cur->i2d_node);
+    hmap_remove(&md->d2i_hmap, &data_cur->d2i_node);
+    free(data_cur);
+    md->id_free(arg, id);
+}
+
+static void
 put_context_data_by_id(struct context_metadata *md, void *arg, uint32_t id)
 {
     struct context_data *data_cur;
@@ -332,10 +342,7 @@ put_context_data_by_id(struct context_metadata *md, void *arg, uint32_t id)
                         data_cur->refcnt, data_cur->id);
             ds_destroy(&s);
             if (data_cur->refcnt == 0) {
-                hmap_remove(&md->i2d_hmap, &data_cur->i2d_node);
-                hmap_remove(&md->d2i_hmap, &data_cur->d2i_node);
-                free(data_cur);
-                md->id_free(arg, id);
+                context_release(md, arg, id, data_cur);
             }
             return;
         }
