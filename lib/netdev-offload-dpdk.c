@@ -319,6 +319,63 @@ context_release(struct context_metadata *md, void *arg, uint32_t id,
     hmap_remove(&md->d2i_hmap, &data_cur->d2i_node);
     free(data_cur);
     md->id_free(arg, id);
+    VLOG_DBG_RL(&rl, "%s: md=%s, id=%d", __func__, md->name, id);
+}
+
+static struct ovs_list context_release_list =
+    OVS_LIST_INITIALIZER(&context_release_list);
+
+struct context_release_item {
+    struct ovs_list node;
+    long long int timestamp;
+    struct context_metadata *md;
+    void *arg;
+    uint32_t id;
+    struct context_data *data;
+};
+
+static void
+context_delayed_release(struct context_metadata *md, void *arg, uint32_t id,
+                        struct context_data *data)
+{
+    struct context_release_item *item = xzalloc(sizeof *item);
+
+    item->md = md;
+    item->arg = arg;
+    item->id = id;
+    item->data= data;
+    item->timestamp = time_msec();
+    ovs_list_push_back(&context_release_list, &item->node);
+    VLOG_DBG_RL(&rl, "%s: md=%s, id=%d, timestamp=%llu", __func__,
+                item->md->name, item->id, item->timestamp);
+}
+
+#define DELAYED_RELEASE_TIMEOUT_MS 250
+/* In ofproto/ofproto-dpif-rid.c, function recirc_run. Timeout for expired
+ * flows is 250 msec. Set this timeout the same.
+ */
+
+static void
+do_context_delayed_release(void)
+{
+    struct context_release_item *item;
+    struct ovs_list *list;
+    long long int now;
+
+    now = time_msec();
+    while (!ovs_list_is_empty(&context_release_list)) {
+        list = ovs_list_front(&context_release_list);
+        item = CONTAINER_OF(list, struct context_release_item, node);
+        if (now < item->timestamp + DELAYED_RELEASE_TIMEOUT_MS) {
+            break;
+        }
+        VLOG_DBG_RL(&rl, "%s: md=%s, id=%d, timestamp=%llu, now=%llu",
+                    __func__, item->md->name, item->id, item->timestamp, now);
+        if (item->data->refcnt == 0) {
+            context_release(item->md, item->arg, item->id, item->data);
+        }
+        ovs_list_remove(list);
+    }
 }
 
 static void
@@ -342,7 +399,7 @@ put_context_data_by_id(struct context_metadata *md, void *arg, uint32_t id)
                         data_cur->refcnt, data_cur->id);
             ds_destroy(&s);
             if (data_cur->refcnt == 0) {
-                context_release(md, arg, id, data_cur);
+                context_delayed_release(md, arg, id, data_cur);
             }
             return;
         }
@@ -3754,6 +3811,8 @@ netdev_offload_dpdk_flow_put(struct netdev *netdev, struct match *match,
 {
     struct ufid_to_rte_flow_data *rte_flow_data;
     int ret;
+
+    do_context_delayed_release();
 
     /*
      * If an old rte_flow exists, it means it's a flow modification.
