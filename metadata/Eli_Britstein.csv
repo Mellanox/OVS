@@ -102,3 +102,7 @@ Change-Id=I206b64855bfdd913d0f492c9d6317744ad8e31c6; subject=netdev-offload-dpdk
 Change-Id=I8cfb17a62d9df0fdc73e075987161e5e7e0d4cb2; subject=Revert "netdev-offload-dpdk: Do not attempt to offload frags"; feature=dpdk; upstream_status=in_progress; general=;
 Change-Id=I6e4b8dd492e75e01c4f932a870091a426b185262; subject=netdev-offload-dpdk: Don't ignore frags as they are handled; feature=dpdk; upstream_status=in_progress; general=;
 Change-Id=I608487836f84570910a13c359535e4c8e74b9627; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I37d04b3a3c6ba7b5969f2a6d5e33f72d4a3101e8; subject=netdev-offload-dpdk: Refactor context release to a helper function; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I0b3fc0d54d7bff214036a537bfca1beb8403eb10; subject=netdev-offload-dpdk: Delayed context release; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I6afa5d9d28c2fc5f9d195f62f296dc6725892e91; subject=netdev-offload: Delayed release of mark IDs; feature=dpdk; upstream_status=in_progress; general=;
+Change-Id=Ida9b32eaf2998166ef79e67e3b864f69edf352b2; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
