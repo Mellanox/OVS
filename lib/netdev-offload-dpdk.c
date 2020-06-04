@@ -210,7 +210,10 @@ struct context_metadata {
     uint32_t (*id_alloc)(void *arg);
     void (*id_free)(void *arg, uint32_t id);
     size_t data_size;
+    bool delayed_release;
 };
+
+struct context_release_item;
 
 struct context_data {
     struct hmap_node d2i_node;
@@ -219,6 +222,7 @@ struct context_data {
     void *data;
     uint32_t id;
     uint32_t refcnt;
+    struct context_release_item *delayed_release_item;
 };
 
 static int
@@ -311,14 +315,109 @@ get_context_data_by_id(struct context_metadata *md, uint32_t id, void *data)
     return -1;
 }
 
+static struct ovs_list context_release_list =
+    OVS_LIST_INITIALIZER(&context_release_list);
+
+struct context_release_item {
+    struct ovs_list node;
+    long long int timestamp;
+    struct context_metadata *md;
+    void *arg;
+    uint32_t id;
+    struct context_data *data;
+    bool associated;
+};
+
 static void
-context_release(struct context_metadata *md, void *arg, uint32_t id,
-                struct context_data *data_cur)
+context_release(struct context_release_item *item)
 {
-    hmap_remove(&md->i2d_hmap, &data_cur->i2d_node);
-    hmap_remove(&md->d2i_hmap, &data_cur->d2i_node);
-    free(data_cur);
-    md->id_free(arg, id);
+    struct context_metadata *md = item->md;
+    struct context_data *data = item->data;
+    uint32_t id = item->id;
+    void *arg = item->arg;
+
+    VLOG_DBG_RL(&rl, "%s: md=%s, id=%d. associated=%d", __func__, md->name,
+                id, item->associated);
+    if (!item->associated) {
+        hmap_remove(&md->i2d_hmap, &data->i2d_node);
+        hmap_remove(&md->d2i_hmap, &data->d2i_node);
+        free(data);
+        md->id_free(arg, id);
+    } else {
+        hmap_remove(&md->associated_i2d_hmap,
+                    &data->associated_i2d_node);
+        free(data);
+    }
+}
+
+static void
+context_delayed_release(struct context_metadata *md, void *arg, uint32_t id,
+                        struct context_data *data, bool associated)
+{
+    struct context_release_item tmp_item, *item;
+
+    if (md->delayed_release) {
+        item = xzalloc(sizeof *item);
+    } else {
+        item = &tmp_item;
+    }
+
+    item->md = md;
+    item->arg = arg;
+    item->id = id;
+    item->data = data;
+    item->associated = associated;
+    if (!md->delayed_release) {
+        context_release(item);
+        return;
+    }
+    item->timestamp = time_msec();
+    /* If there is already a pending release for this item that has not been
+     * handled yet, drop it from the list and post the newly created item,
+     * with an updated timestamp.
+     */
+    if (data->delayed_release_item) {
+        ovs_list_remove(&data->delayed_release_item->node);
+        free(data->delayed_release_item);
+    }
+    /* Store the posted item in the data, so in case of re-release, the stored
+     * item is removed.
+     */
+    data->delayed_release_item = item;
+    ovs_list_push_back(&context_release_list, &item->node);
+    VLOG_DBG_RL(&rl, "%s: md=%s, id=%d, associated=%d, timestamp=%llu",
+                __func__, item->md->name, item->id, associated,
+                item->timestamp);
+}
+
+#define DELAYED_RELEASE_TIMEOUT_MS 250
+/* In ofproto/ofproto-dpif-rid.c, function recirc_run. Timeout for expired
+ * flows is 250 msec. Set this timeout the same.
+ */
+
+static void
+do_context_delayed_release(void)
+{
+    struct context_release_item *item;
+    struct ovs_list *list;
+    long long int now;
+
+    now = time_msec();
+    while (!ovs_list_is_empty(&context_release_list)) {
+        list = ovs_list_front(&context_release_list);
+        item = CONTAINER_OF(list, struct context_release_item, node);
+        if (now < item->timestamp + DELAYED_RELEASE_TIMEOUT_MS) {
+            break;
+        }
+        VLOG_DBG_RL(&rl, "%s: md=%s, id=%d, associated=%d, timestamp=%llu, "
+                    "now=%llu", __func__, item->md->name, item->id,
+                    item->associated, item->timestamp, now);
+        if (item->data->refcnt == 0 || item->associated) {
+            context_release(item);
+        }
+        ovs_list_remove(list);
+        free(item);
+    }
 }
 
 static void
@@ -342,7 +441,7 @@ put_context_data_by_id(struct context_metadata *md, void *arg, uint32_t id)
                         data_cur->refcnt, data_cur->id);
             ds_destroy(&s);
             if (data_cur->refcnt == 0) {
-                context_release(md, arg, id, data_cur);
+                context_delayed_release(md, arg, id, data_cur, false);
             }
             return;
         }
@@ -405,9 +504,7 @@ disassociate_id_data(struct context_metadata *md, uint32_t id)
                         ds_cstr(md->dump_context_data(&s, data_cur->data)),
                         data_cur->id);
             ds_destroy(&s);
-            hmap_remove(&md->associated_i2d_hmap,
-                        &data_cur->associated_i2d_node);
-            free(data_cur);
+            context_delayed_release(md, NULL, id, data_cur, true);
             return 0;
         }
     }
@@ -790,6 +887,7 @@ static struct context_metadata ct_miss_ctx_md = {
     .id_alloc = ct_ctx_id_alloc,
     .id_free = ct_ctx_id_free,
     .data_size = sizeof(struct ct_miss_ctx),
+    .delayed_release = true,
 };
 
 static int
@@ -950,6 +1048,7 @@ static struct context_metadata flow_miss_ctx_md = {
     .id_alloc = flow_miss_id_alloc,
     .id_free = flow_miss_id_free,
     .data_size = sizeof(struct flow_miss_ctx),
+    .delayed_release = true,
 };
 
 static int
@@ -3626,6 +3725,8 @@ netdev_offload_dpdk_flow_put(struct netdev *netdev, struct match *match,
 {
     struct ufid_to_rte_flow_data *rte_flow_data;
     int ret;
+
+    do_context_delayed_release();
 
     /*
      * If an old rte_flow exists, it means it's a flow modification.
