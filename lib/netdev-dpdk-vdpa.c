@@ -725,7 +725,8 @@ netdev_dpdk_vdpa_config_impl(struct netdev_dpdk_vdpa_relay *relay,
                              uint16_t port_id,
                              const char *vm_socket,
                              const char *vf_pci,
-                             int max_queues)
+                             int max_queues,
+                             bool hw_mode)
 {
     char *vhost_args;
     uint16_t q;
@@ -737,9 +738,13 @@ netdev_dpdk_vdpa_config_impl(struct netdev_dpdk_vdpa_relay *relay,
     }
     else {
         relay->vm_socket = xstrdup(vm_socket);
-        err = netdev_dpdk_vdpa_config_hw_impl(relay, vf_pci, vm_socket);
-        if (relay->hw_mode == NETDEV_DPDK_VDPA_MODE_HW) {
-            goto out;
+        if (hw_mode) {
+            err = netdev_dpdk_vdpa_config_hw_impl(relay, vf_pci, vm_socket);
+            if (relay->hw_mode == NETDEV_DPDK_VDPA_MODE_HW) {
+                goto out;
+            }
+        } else {
+            relay->hw_mode = NETDEV_DPDK_VDPA_MODE_SW;
         }
     }
 

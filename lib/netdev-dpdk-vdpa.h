@@ -45,7 +45,8 @@ netdev_dpdk_vdpa_config_impl(struct netdev_dpdk_vdpa_relay *relay,
                              uint16_t port_id,
                              const char *vm_socket,
                              const char *vf_pci,
-                             int max_queues);
+                             int max_queues,
+                             bool hw_mode);
 void
 netdev_dpdk_vdpa_destruct_impl(struct netdev_dpdk_vdpa_relay *relay);
 int
