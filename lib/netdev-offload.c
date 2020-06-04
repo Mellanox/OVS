@@ -298,6 +298,55 @@ netdev_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
 
 #define MAX_FLOW_MARK (UINT32_MAX - 1)
 
+static struct ovs_list mark_release_list =
+    OVS_LIST_INITIALIZER(&mark_release_list);
+
+struct mark_release_item {
+    struct ovs_list node;
+    long long int timestamp;
+    uint32_t mark;
+};
+
+static void
+mark_delayed_release(uint32_t mark)
+{
+    struct mark_release_item *item = xzalloc(sizeof *item);
+
+    item->mark = mark;
+    item->timestamp = time_msec();
+    ovs_list_push_back(&mark_release_list, &item->node);
+    VLOG_DBG("%s: mark=%d, timestamp=%llu", __func__, item->mark,
+             item->timestamp);
+}
+
+#define DELAYED_RELEASE_TIMEOUT_MS 1000
+/* This timeout is to reserve the flow mark ID for a while after the flow is
+ * deleted, so that ID will not be allocated to another flow while packets
+ * matching the deleted flow are still in HW queues. We assume this timeout
+ * is enough for such packets to already be processed.
+ */
+
+static void
+do_mark_delayed_release(void)
+{
+    struct mark_release_item *item;
+    struct ovs_list *list;
+    long long int now;
+
+    now = time_msec();
+    while (!ovs_list_is_empty(&mark_release_list)) {
+        list = ovs_list_front(&mark_release_list);
+        item = CONTAINER_OF(list, struct mark_release_item, node);
+        if (now < item->timestamp + DELAYED_RELEASE_TIMEOUT_MS) {
+            break;
+        }
+        VLOG_DBG("%s: mark=%d, timestamp=%llu, now=%llu", __func__, item->mark,
+                 item->timestamp, now);
+        id_pool_free_id(mark_pool, item->mark);
+        ovs_list_remove(list);
+    }
+}
+
 uint32_t
 netdev_offload_flow_mark_alloc(void)
 {
@@ -309,6 +358,7 @@ netdev_offload_flow_mark_alloc(void)
         mark_pool = id_pool_create(1, MAX_FLOW_MARK);
     }
 
+    do_mark_delayed_release();
     if (id_pool_alloc_id(mark_pool, &mark)) {
         ovs_mutex_unlock(&mark_pool_mutex);
         return mark;
@@ -322,7 +372,7 @@ void
 netdev_offload_flow_mark_free(uint32_t mark)
 {
     ovs_mutex_lock(&mark_pool_mutex);
-    id_pool_free_id(mark_pool, mark);
+    mark_delayed_release(mark);
     ovs_mutex_unlock(&mark_pool_mutex);
 }
 
