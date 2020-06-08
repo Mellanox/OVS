@@ -1,0 +1,3 @@
+sep=;
+Change-Id=Id2d8c7521280a50f7858b8e425b9534f2f406e24; subject=tc: Use skip_hw flag when probing tc features; feature=bug_fixes; upstream_status=NA; general=;
+Change-Id=Id47c271c599895a1beaebf07a53a8da759685ff7; subject=metadata: update; feature=ofed_scripts; upstream_status=ignore; general=;
