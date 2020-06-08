@@ -68,10 +68,9 @@ ct_get_packet_dir(bool reply)
 }
 
 struct ct_dir_info {
-    struct ovs_mutex *port_mutex;
     odp_port_t port;
     ovs_u128 ufid;
-    const char *class_type;
+    void *dp;
     int status;
     bool dont_free;
     uint8_t pkt_ct_state;

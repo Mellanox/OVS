@@ -120,8 +120,7 @@ enum ct_direction {
 struct ct_flow_offload_item {
     int  op;
     ovs_u128 ufid;
-    struct ovs_mutex *mutex;
-    const char *class_type;
+    void *dp;
 
     /* matches */
     odp_port_t odp_port;
@@ -166,8 +165,7 @@ int conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
                       const struct ovs_key_ct_labels *setlabel,
                       ovs_be16 tp_src, ovs_be16 tp_dst, const char *helper,
                       const struct nat_action_info_t *nat_action_info,
-                      long long now, struct ovs_mutex *port_mutex,
-                      const char *dp_class_type);
+                      long long now, void *dp);
 void conntrack_clear(struct dp_packet *packet);
 
 struct conntrack_dump {

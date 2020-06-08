@@ -299,8 +299,7 @@ conntrack_offload_fill_item_common(struct ct_flow_offload_item *item,
 {
     item->ufid = conn->offloads.dir_info[dir].ufid;
     item->odp_port = conn->offloads.dir_info[dir].port;
-    item->mutex = conn->offloads.dir_info[dir].port_mutex;
-    item->class_type = conn->offloads.dir_info[dir].class_type;
+    item->dp = conn->offloads.dir_info[dir].dp;
 
     return dir == CT_DIR_REP
            ? !!(conn->offloads.flags & CT_OFFLOAD_REP)
@@ -321,7 +320,7 @@ conntrack_offload_del_conn(struct conntrack *ct,
 
     for (dir = 0; dir < CT_DIR_NUM; dir ++) {
         if (conn->nat_conn &&
-            conn->nat_conn->offloads.dir_info[dir].class_type) {
+            conn->nat_conn->offloads.dir_info[dir].dp) {
             conn_dir = conn->nat_conn;
         } else {
             conn_dir = conn;
@@ -1501,16 +1500,14 @@ conntrack_offload_fill_item_add(struct ct_flow_offload_item *item,
 static void
 conntrack_offload_prepare_add(struct conn *conn,
                               struct dp_packet *packet,
-                              struct ovs_mutex *port_mutex,
-                              const char *class_type)
+                              void *dp)
 {
     /* nat_conn has opposite directions. */
     bool reply = !!conn->master_conn ^ packet->md.reply;
     int dir = ct_get_packet_dir(reply);
 
     conn->offloads.dir_info[dir].port = packet->md.in_port.odp_port;
-    conn->offloads.dir_info[dir].port_mutex = port_mutex;
-    conn->offloads.dir_info[dir].class_type = class_type;
+    conn->offloads.dir_info[dir].dp = dp;
     conn->offloads.dir_info[dir].dont_free = true;
     conn->offloads.dir_info[dir].pkt_ct_state = packet->md.ct_state;
 }
@@ -1519,8 +1516,7 @@ static void
 conntrack_offload_add_conn(struct conntrack *ct,
                            struct dp_packet *packet,
                            struct conn *conn,
-                           struct ovs_mutex *port_mutex,
-                           const char *class_type,
+                           void *dp,
                            uint32_t mark,
                            ovs_u128 label)
 {
@@ -1539,7 +1535,7 @@ conntrack_offload_add_conn(struct conntrack *ct,
 
     if ((reply && !(conn->offloads.flags & CT_OFFLOAD_REP)) ||
         (!reply && !(conn->offloads.flags & CT_OFFLOAD_INIT))) {
-        conntrack_offload_prepare_add(conn, packet, port_mutex, class_type);
+        conntrack_offload_prepare_add(conn, packet, dp);
         conn->offloads.flags |= reply ? CT_OFFLOAD_REP : CT_OFFLOAD_INIT;
         if (conn->master_conn) {
             conn->master_conn->offloads.flags |= reply
@@ -1558,10 +1554,10 @@ conntrack_offload_add_conn(struct conntrack *ct,
 
         for (dir = 0; dir < CT_DIR_NUM; dir ++) {
             if (conn->nat_conn &&
-                conn->nat_conn->offloads.dir_info[dir].class_type) {
+                conn->nat_conn->offloads.dir_info[dir].dp) {
                 conn = conn->nat_conn;
             } else if (conn->master_conn &&
-                       conn->master_conn->offloads.dir_info[dir].class_type) {
+                       conn->master_conn->offloads.dir_info[dir].dp) {
                 conn = conn->master_conn;
             }
             conntrack_offload_fill_item_add(&item[dir], conn, dir, mark,
@@ -1596,8 +1592,7 @@ conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
                   const struct ovs_key_ct_labels *setlabel,
                   ovs_be16 tp_src, ovs_be16 tp_dst, const char *helper,
                   const struct nat_action_info_t *nat_action_info,
-                  long long now, struct ovs_mutex *port_mutex,
-                  const char *dp_class_type)
+                  long long now, void *dp)
 {
     ipf_preprocess_conntrack(ct->ipf, pkt_batch, now, dl_type, zone,
                              ct->hash_basis);
@@ -1630,8 +1625,7 @@ conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
         if (netdev_is_flow_api_enabled() &&
             (packet->md.ct_state & CS_ESTABLISHED) &&
             conn && !(conn->offloads.flags & CT_OFFLOAD_SKIP)) {
-            conntrack_offload_add_conn(ct, packet, conn, port_mutex,
-                                       dp_class_type, mark, label);
+            conntrack_offload_add_conn(ct, packet, conn, dp, mark, label);
         }
     }
 
