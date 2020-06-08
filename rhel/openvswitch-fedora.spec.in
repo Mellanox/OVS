@@ -66,6 +66,9 @@
 %define _py2 python
 %endif
 
+%if 0%{?rhel} > 7
+%define _py2 python3
+%endif
 
 Name: openvswitch
 Summary: Open vSwitch
@@ -92,7 +95,9 @@ BuildRequires: groff graphviz
 BuildRequires: checkpolicy, selinux-policy-devel
 BuildRequires: /usr/bin/sphinx-build
 # make check dependencies
+%if %{_py2} != python3
 BuildRequires: %{_py2}-twisted%{?rhel:-core} %{_py2}-zope-interface %{_py2}-six
+%endif
 BuildRequires: procps-ng
 %if %{with libcapng}
 BuildRequires: libcap-ng libcap-ng-devel
@@ -212,7 +217,7 @@ This package provides IPsec tunneling support for OVS tunnels.
         --disable-static \
         --enable-shared \
         --with-pkidir=%{_sharedstatedir}/openvswitch/pki \
-%if 0%{?fedora} > 22 || %{with build_python3}
+%if 0%{?fedora} > 22 || %{with build_python3} || 0%{?rhel} > 7
         PYTHON3=%{__python3} \
         PYTHON=%{__python2}
 %else
