@@ -1744,7 +1744,7 @@ create_rte_flow(struct netdev *netdev,
 
 static void
 add_flow_pattern(struct flow_patterns *patterns, enum rte_flow_item_type type,
-                 const void *spec, const void *mask)
+                 const void *spec, const void *mask, const void *last)
 {
     int cnt = patterns->cnt;
 
@@ -1761,7 +1761,7 @@ add_flow_pattern(struct flow_patterns *patterns, enum rte_flow_item_type type,
     patterns->items[cnt].type = type;
     patterns->items[cnt].spec = spec;
     patterns->items[cnt].mask = mask;
-    patterns->items[cnt].last = NULL;
+    patterns->items[cnt].last = last;
     patterns->cnt++;
 }
 
@@ -1797,6 +1797,9 @@ free_flow_patterns(struct flow_patterns *patterns)
         }
         if (patterns->items[i].mask) {
             free(CONST_CAST(void *, patterns->items[i].mask));
+        }
+        if (patterns->items[i].last) {
+            free(CONST_CAST(void *, patterns->items[i].last));
         }
     }
     free(patterns->items);
@@ -1878,7 +1881,7 @@ parse_tnl_ip_match(struct flow_patterns *patterns,
         consumed_masks->tunnel.ip_src = 0;
         consumed_masks->tunnel.ip_dst = 0;
 
-        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV4, spec, mask);
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV4, spec, mask, NULL);
     } else if (!is_all_zeros(&match->wc.masks.tunnel.ipv6_src,
                              sizeof(struct in6_addr)) ||
                !is_all_zeros(&match->wc.masks.tunnel.ipv6_dst,
@@ -1914,7 +1917,7 @@ parse_tnl_ip_match(struct flow_patterns *patterns,
         memset(&consumed_masks->tunnel.ipv6_dst, 0,
                sizeof consumed_masks->tunnel.ipv6_dst);
 
-        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV6, spec, mask);
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV6, spec, mask, NULL);
     } else {
         VLOG_ERR_RL(&rl, "Tunnel L3 protocol is neither IPv4 nor IPv6");
         return -1;
@@ -1944,7 +1947,7 @@ parse_tnl_udp_match(struct flow_patterns *patterns,
     consumed_masks->tunnel.tp_src = 0;
     consumed_masks->tunnel.tp_dst = 0;
 
-    add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_UDP, spec, mask);
+    add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_UDP, spec, mask, NULL);
 }
 
 static int
@@ -1978,7 +1981,8 @@ parse_vxlan_match(struct flow_patterns *patterns,
     consumed_masks->tunnel.tun_id = 0;
     consumed_masks->tunnel.flags = 0;
 
-    add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_VXLAN, vx_spec, vx_mask);
+    add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_VXLAN, vx_spec, vx_mask,
+                     NULL);
     return 0;
 }
 
@@ -2049,7 +2053,8 @@ add_pattern_match_reg_field(struct flow_patterns *patterns,
         tag_mask->index = 0xFF;
         tag_mask->data = reg_mask;
 
-        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_TAG, tag_spec, tag_mask);
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_TAG, tag_spec, tag_mask,
+                         NULL);
         break;
     case REG_TYPE_META:
         meta_spec = xzalloc(sizeof *meta_spec);
@@ -2059,7 +2064,7 @@ add_pattern_match_reg_field(struct flow_patterns *patterns,
         meta_mask->data = reg_mask;
 
         add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_META, meta_spec,
-                         meta_mask);
+                         meta_mask, NULL);
         break;
     default:
         VLOG_ERR("unkonwn reg type (%d) for reg field %d", reg_field->type,
@@ -2193,7 +2198,7 @@ parse_flow_match(struct netdev *netdev,
         memset(&consumed_masks->dl_dst, 0, sizeof consumed_masks->dl_dst);
         memset(&consumed_masks->dl_src, 0, sizeof consumed_masks->dl_src);
 
-        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_ETH, spec, mask);
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_ETH, spec, mask, NULL);
     } else {
         /*
          * If user specifies a flow (like UDP flow) without L2 patterns,
@@ -2202,7 +2207,7 @@ parse_flow_match(struct netdev *netdev,
          * NIC (such as XL710) doesn't support that. Below is a workaround,
          * which simply matches any L2 pkts.
          */
-        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_ETH, NULL, NULL);
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_ETH, NULL, NULL, NULL);
     }
     consumed_masks->dl_type = 0;
 
@@ -2219,7 +2224,7 @@ parse_flow_match(struct netdev *netdev,
         /* Match any protocols. */
         mask->inner_type = 0;
 
-        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_VLAN, spec, mask);
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_VLAN, spec, mask, NULL);
     }
     memset(&consumed_masks->vlans[0], 0, sizeof consumed_masks->vlans[0]);
 
@@ -2248,7 +2253,7 @@ parse_flow_match(struct netdev *netdev,
         consumed_masks->nw_src = 0;
         consumed_masks->nw_dst = 0;
 
-        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV4, spec, mask);
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV4, spec, mask, NULL);
 
         /* Save proto for L4 protocol setup. */
         proto = spec->hdr.next_proto_id &
@@ -2295,7 +2300,7 @@ parse_flow_match(struct netdev *netdev,
         memset(&consumed_masks->ipv6_src, 0, sizeof consumed_masks->ipv6_src);
         memset(&consumed_masks->ipv6_dst, 0, sizeof consumed_masks->ipv6_dst);
 
-        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV6, spec, mask);
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV6, spec, mask, NULL);
 
         /* Save proto for L4 protocol setup */
         proto = spec->hdr.proto & mask->hdr.proto;
@@ -2332,7 +2337,7 @@ parse_flow_match(struct netdev *netdev,
         consumed_masks->tp_dst = 0;
         consumed_masks->tcp_flags = 0;
 
-        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_TCP, spec, mask);
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_TCP, spec, mask, NULL);
 
         /* proto == TCP and ITEM_TYPE_TCP, thus no need for proto match. */
         if (next_proto_mask) {
@@ -2353,7 +2358,7 @@ parse_flow_match(struct netdev *netdev,
         consumed_masks->tp_src = 0;
         consumed_masks->tp_dst = 0;
 
-        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_UDP, spec, mask);
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_UDP, spec, mask, NULL);
 
         /* proto == UDP and ITEM_TYPE_UDP, thus no need for proto match. */
         if (next_proto_mask) {
@@ -2374,7 +2379,7 @@ parse_flow_match(struct netdev *netdev,
         consumed_masks->tp_src = 0;
         consumed_masks->tp_dst = 0;
 
-        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_SCTP, spec, mask);
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_SCTP, spec, mask, NULL);
 
         /* proto == SCTP and ITEM_TYPE_SCTP, thus no need for proto match. */
         if (next_proto_mask) {
@@ -2395,7 +2400,7 @@ parse_flow_match(struct netdev *netdev,
         consumed_masks->tp_src = 0;
         consumed_masks->tp_dst = 0;
 
-        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_ICMP, spec, mask);
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_ICMP, spec, mask, NULL);
 
         /* proto == ICMP and ITEM_TYPE_ICMP, thus no need for proto match. */
         if (next_proto_mask) {
@@ -2456,7 +2461,7 @@ parse_flow_match(struct netdev *netdev,
                    0, sizeof consumed_masks->ct_label);
         }
     }
-    add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_END, NULL, NULL);
+    add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_END, NULL, NULL, NULL);
 
     if (!is_all_zeros(consumed_masks, sizeof *consumed_masks)) {
         VLOG_DBG_RL(&rl,
