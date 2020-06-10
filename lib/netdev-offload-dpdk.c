@@ -2349,8 +2349,6 @@ parse_flow_match(struct netdev *netdev,
                 mask->hdr.next_proto_id;
         next_proto_mask = &mask->hdr.next_proto_id;
     }
-    /* ignore mask match for now */
-    consumed_masks->nw_frag = 0;
 
     /* IP v6 */
     if (match->flow.dl_type == htons(ETH_TYPE_IPV6)) {
