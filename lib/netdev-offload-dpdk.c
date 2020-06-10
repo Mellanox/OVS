@@ -595,7 +595,7 @@ zone_id_alloc(void *arg OVS_UNUSED)
 {
     uint32_t zone_id;
 
-    if(!zone_id_pool) {
+    if (!zone_id_pool) {
         /* if not yet initialized, do it here */
         zone_id_pool = id_pool_create(MIN_ZONE_ID, MAX_ZONE_ID);
     }
