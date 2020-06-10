@@ -5,3 +5,5 @@ Change-Id=I3f3390209f18129959e0c11c1b7035a2f3e2c4b1; subject=netdev-offload-dpdk
 Change-Id=I1eb53cf8d49c69b281f8ef04e82c504b14968d3c; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I8e8cd63cee56547c27ef557cdfa77397a6cd7597; subject=netdev-offload-dpdk: introduce ct_label mapping; feature=dpdk; upstream_status=ignore; general=;
 Change-Id=Ic7f5875c619b98c62672bad2fb92dbf2534bdd3b; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ib8f6f2b00c3479e7a8a12042e066f9b52b19008c; subject=netdev-offload-dpdk: fixed styling; feature=bug_fixes; upstream_status=ignore; general=;
+Change-Id=I21d309d7a702625edfbd50fdd4142fed30ea9f19; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
