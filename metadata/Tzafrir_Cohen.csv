@@ -3,3 +3,5 @@ Change-Id=Iede579bf184a1375401b903fc6a9bc76b1717134; subject=debian: Convert "py
 Change-Id=Icbde681b1c90753da27537a8ccf70e66c638dbe1; subject=debian: We use debhelper 9; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=Ia5a778609e30094a0b63809a32f72e560a8eb9d2; subject=debian: Convert "python" to "python2" deps properly; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=Ib256abac8e92ff86848cb86414055cb5f06b6e4a; subject=debian: Convert "python" to "python2" deps; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I76f9561308d196797a3a68c2173efd386cc27e78; subject=debian: build dir and man pages; feature=ofed_scripts; upstream_status=NA; general=;
+Change-Id=I43f7b3437c49c8d177c8af94fee74922884a0077; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
