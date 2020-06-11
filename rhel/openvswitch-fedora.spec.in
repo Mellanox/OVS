@@ -28,9 +28,6 @@
 %bcond_without libcapng
 # To enable DPDK support, specify '--with dpdk' when building
 %bcond_with dpdk
-# Enable Python 3 by specifying '--with build_python3'.
-# This is enabled by default for versions of the distribution that
-# have Python 3 by default (Fedora > 22).
 %if %{with dpdk}
 %{!?dpdk_datadir:%define dpdk_datadir %{_datadir}}
 %endif
