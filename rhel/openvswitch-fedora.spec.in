@@ -32,6 +32,9 @@
 %{!?dpdk_datadir:%define dpdk_datadir %{_datadir}}
 %endif
 
+# Do a static build using '--with static'
+%bcond_with static
+
 # Enable Python 3 by specifying '--with build_python3'.
 # This is enabled by default for versions of the distribution that
 # have Python 3 by default (Fedora > 22).
@@ -216,8 +219,8 @@ This package provides IPsec tunneling support for OVS tunnels.
         --with-dpdk=$(dirname %{dpdk_datadir}/dpdk/*/.config) \
 %endif
         --enable-ssl \
-        --disable-static \
-        --enable-shared \
+        %{!?with_static:--enable-shared} \
+        %{!?with_static:--disable-static} \
         --with-pkidir=%{_sharedstatedir}/openvswitch/pki \
 %if %{do_build_python3}
         PYTHON3=%{__python3} \
@@ -494,7 +497,11 @@ fi
 %endif
 
 %files devel
+%if %{with static}
+%{_libdir}/lib*.a
+%else
 %{_libdir}/lib*.so
+%endif #!static
 %{_libdir}/pkgconfig/*.pc
 %{_includedir}/openvswitch/*
 %{_includedir}/openflow/*
@@ -553,7 +560,11 @@ fi
 %{_bindir}/ovs-testcontroller
 %{_bindir}/ovs-pki
 %{_bindir}/vtep-ctl
+%if %{with static}
+%{_libdir}/lib*.a
+%else
 %{_libdir}/lib*.so.*
+%endif #!static
 %{_sbindir}/ovs-bugtool
 %{_sbindir}/ovs-vswitchd
 %{_sbindir}/ovsdb-server
