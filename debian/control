@@ -1,6 +1,6 @@
 Source: openvswitch
 Section: net
-Priority: extra
+Priority: optional
 Maintainer: Open vSwitch developers <dev@openvswitch.org>
 Uploaders: Simon Horman <horms@debian.org>
 Build-Depends: graphviz,

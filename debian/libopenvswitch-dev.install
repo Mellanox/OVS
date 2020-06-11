@@ -9,7 +9,10 @@ usr/lib/*/libovsdb*.a
 usr/lib/*/libsflow*.a
 usr/lib/*/libvtep*.a
 usr/lib/*/pkgconfig
-include/*.h usr/include/openvswitch
+usr/include/openvswitch/*.h
+usr/include/openflow/*.h
+debian/build/include/*.h usr/include/openvswitch
+debian/build/include/openvswitch/*.h usr/include/openvswitch/openvswitch
 include/openflow/*.h usr/include/openvswitch/openflow
 include/openvswitch/*.h usr/include/openvswitch/openvswitch
 include/sparse/*.h usr/include/openvswitch/sparse

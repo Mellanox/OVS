@@ -1,1 +1,1 @@
-ipsec/ovs-monitor-ipsec usr/share/openvswitch/scripts
+usr/share/openvswitch/scripts/ovs-monitor-ipsec
