@@ -3041,6 +3041,32 @@ dp_netdev_ct_offload_del(struct dp_offload_item *offload_item, int dir)
     return ret;
 }
 
+#define MIN_CTID 1
+#define MAX_CTID (UINT32_MAX - 1)
+static struct id_pool *ctid_pool = NULL;
+
+static int
+dp_alloc_ctid(uint32_t *ctid)
+{
+    if (!ctid_pool) {
+        /* Haven't initiated yet, do it here */
+        ctid_pool = id_pool_create(MIN_CTID, MAX_CTID);
+    }
+    if (!ctid_pool) {
+        return -1;
+    }
+    if (!id_pool_alloc_id(ctid_pool, ctid)) {
+        return -1;
+    }
+    return 0;
+}
+
+static void
+dp_release_ctid(uint32_t ctid)
+{
+    id_pool_free_id(ctid_pool, ctid);
+}
+
 static void *
 dp_netdev_flow_offload_main(void *data OVS_UNUSED)
 {
@@ -3092,6 +3118,9 @@ dp_netdev_flow_offload_main(void *data OVS_UNUSED)
             int rets[CT_DIR_NUM];
             int dir;
 
+            if (ct_offload[CT_DIR_INIT].op == DP_NETDEV_FLOW_OFFLOAD_OP_ADD) {
+                dp_alloc_ctid(ct_offload->ctid_ptr);
+            }
             for (dir = 0; dir < CT_DIR_NUM; dir++) {
                 switch (ct_offload[dir].op) {
                 case DP_NETDEV_FLOW_OFFLOAD_OP_ADD:
@@ -3118,6 +3147,15 @@ dp_netdev_flow_offload_main(void *data OVS_UNUSED)
                 } else {
                     dp->offload_stats.ct_connections--;
                 }
+            }
+            if (ct_offload[CT_DIR_INIT].op == DP_NETDEV_FLOW_OFFLOAD_OP_ADD &&
+                rets[CT_DIR_INIT] && rets[CT_DIR_REP]) {
+                dp_release_ctid(*ct_offload->ctid_ptr);
+                *ct_offload->ctid_ptr = 0;
+            }
+            if (ct_offload[CT_DIR_INIT].op == DP_NETDEV_FLOW_OFFLOAD_OP_DEL &&
+                (!rets[CT_DIR_INIT] || !rets[CT_DIR_REP])) {
+                dp_release_ctid(ct_offload->ctid);
             }
         } else {
             OVS_NOT_REACHED();
