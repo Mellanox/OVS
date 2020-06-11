@@ -4,7 +4,10 @@ usr/lib/*/libovsdb*.so
 usr/lib/*/libsflow*.so
 usr/lib/*/libvtep*.so
 usr/lib/*/pkgconfig
-include/*.h usr/include/openvswitch
+usr/include/openvswitch/*.h
+usr/include/openflow/*.h
+debian/build/include/*.h usr/include/openvswitch
+debian/build/include/openvswitch/*.h usr/include/openvswitch/openvswitch
 include/openflow/*.h usr/include/openvswitch/openflow
 include/openvswitch/*.h usr/include/openvswitch/openvswitch
 include/sparse/*.h usr/include/openvswitch/sparse
