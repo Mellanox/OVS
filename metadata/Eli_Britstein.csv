@@ -96,3 +96,9 @@ Change-Id=I41241787cab0fd045f930f9fc4dd2a2ee8da7dfa; subject=dpif-netdev: CT ID 
 Change-Id=I4158706884f93fee2c4e1dbd25028e005cf1d9de; subject=netdev-offload-dpdk: Shared counter for all CT connection flows; feature=dpdk; upstream_status=in_progress; general=;
 Change-Id=I5e1404f9163098560c52f85f01c4af09db0280d2; subject=netdev-offload-dpdk: Fix vxlan drop offload; feature=dpdk; upstream_status=in_progress; general=;
 Change-Id=I12461c7ccc281e198156871007a53ff010be6cba; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I50476ed0dcc6ec7d6e615284a656a5cb2f3c1bf6; subject=netdev-offload-dpdk: Add last to patterns; feature=dpdk; upstream_status=in_progress; general=;
+Change-Id=Ic8b7c3563732cc9fdfb4dbc49159603aeaf24744; subject=netdev-offload-dpdk: Support IPv4 fragmentation types; feature=dpdk; upstream_status=in_progress; general=;
+Change-Id=I206b64855bfdd913d0f492c9d6317744ad8e31c6; subject=netdev-offload-dpdk: Support IPv6 fragmentation types; feature=dpdk; upstream_status=in_progress; general=;
+Change-Id=I8cfb17a62d9df0fdc73e075987161e5e7e0d4cb2; subject=Revert "netdev-offload-dpdk: Do not attempt to offload frags"; feature=dpdk; upstream_status=in_progress; general=;
+Change-Id=I6e4b8dd492e75e01c4f932a870091a426b185262; subject=netdev-offload-dpdk: Don't ignore frags as they are handled; feature=dpdk; upstream_status=in_progress; general=;
+Change-Id=I608487836f84570910a13c359535e4c8e74b9627; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
