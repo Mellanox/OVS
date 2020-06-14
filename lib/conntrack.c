@@ -326,6 +326,7 @@ conntrack_offload_del_conn(struct conntrack *ct,
         if (!conntrack_offload_fill_item_common(&item[dir], conn_dir, dir)) {
             continue;
         }
+        item[dir].ctid = conn_dir->offloads.ctid;
     }
     ct->offload_class->conn_del(item);
 }
@@ -1508,6 +1509,7 @@ conntrack_offload_fill_item_add(struct ct_flow_offload_item *item,
     item->label_mask.u64.lo = label.u64.lo ^ conn->label.u64.lo;
     item->dont_free = &conn->offloads.dir_info[dir].dont_free;
     item->status = &conn->offloads.dir_info[dir].status;
+    item->ctid_ptr = &conn->offloads.ctid;
 }
 
 static void

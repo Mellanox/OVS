@@ -86,6 +86,7 @@ enum ct_offload_flag {
 
 struct ct_offloads {
     uint8_t flags;
+    uint32_t ctid;
     struct ct_dir_info dir_info[CT_DIR_NUM];
 };
 
