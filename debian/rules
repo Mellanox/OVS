@@ -31,7 +31,7 @@ endif
 override_dh_autoreconf:
 	dh_autoreconf --as-needed
 
-WITH_DPDK=$(shell dirname /opt/mellanox/dpdk/share/dpdk/*/.config)
+WITH_DPDK ?= $(shell dirname /opt/mellanox/dpdk/share/dpdk/*/.config)
 
 BACKUP_PATH=debian/backup
 override_dh_auto_configure:
