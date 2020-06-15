@@ -3,6 +3,11 @@ usr/lib/*/libofproto*.so
 usr/lib/*/libovsdb*.so
 usr/lib/*/libsflow*.so
 usr/lib/*/libvtep*.so
+usr/lib/*/libopenvswitch*.a
+usr/lib/*/libofproto*.a
+usr/lib/*/libovsdb*.a
+usr/lib/*/libsflow*.a
+usr/lib/*/libvtep*.a
 usr/lib/*/pkgconfig
 usr/include/openvswitch/*.h
 usr/include/openflow/*.h
