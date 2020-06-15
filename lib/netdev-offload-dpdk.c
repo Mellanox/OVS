@@ -1343,6 +1343,7 @@ struct flow_miss_ctx {
     odp_port_t vport;
     uint32_t recirc_id;
     struct flow_tnl tnl;
+    uint8_t skip_actions;
 };
 
 static struct ds *
@@ -2178,6 +2179,8 @@ enum tnl_type {
 struct act_vars {
     enum ct_mode ct_mode;
     bool pre_ct_tuple_rewrite;
+    struct nlattr *pre_ct_actions;
+    uint8_t pre_ct_cnt;
     odp_port_t vport;
     uint32_t recirc_id;
     struct flow_tnl *tnl_key;
@@ -4436,7 +4439,8 @@ split_pre_post_ct_actions(const struct rte_flow_action *actions,
         if (actions->type == RTE_FLOW_ACTION_TYPE_VXLAN_DECAP ||
             actions->type == RTE_FLOW_ACTION_TYPE_SET_TAG ||
             actions->type == RTE_FLOW_ACTION_TYPE_SET_META ||
-            actions->type == RTE_FLOW_ACTION_TYPE_RAW_DECAP) {
+            actions->type == RTE_FLOW_ACTION_TYPE_RAW_DECAP ||
+            actions->type == RTE_FLOW_ACTION_TYPE_SAMPLE) {
             add_flow_action(pre_ct_actions, actions->type, actions->conf);
         } else {
             add_flow_action(post_ct_actions, actions->type, actions->conf);
@@ -4501,6 +4505,7 @@ create_pre_post_ct(struct netdev *netdev,
     } else {
         memset(&pre_ct_miss_ctx.tnl, 0, sizeof pre_ct_miss_ctx.tnl);
     }
+    pre_ct_miss_ctx.skip_actions = act_vars->pre_ct_cnt;
     if (!act_resources->associated_flow_id) {
         if (associate_flow_id(act_resources->flow_id, &pre_ct_miss_ctx)) {
             goto pre_ct_err;
@@ -4582,6 +4587,8 @@ parse_flow_actions(struct netdev *netdev,
             if (add_output_action(netdev, actions, nla)) {
                 return -1;
             }
+            act_vars->pre_ct_cnt++;
+            act_vars->pre_ct_actions = nla;
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_DROP) {
             free_flow_actions(actions, true);
             if (add_count_action(actions, act_vars, act_resources)) {
@@ -4627,6 +4634,12 @@ parse_flow_actions(struct netdev *netdev,
             const struct nlattr *ct_actions = nl_attr_get(nla);
             size_t ct_actions_len = nl_attr_get_size(nla);
 
+            /* Check that the mirror is the first action of the flow */
+            if (act_vars->pre_ct_actions &&
+                act_vars->pre_ct_actions != nl_actions) {
+                VLOG_DBG_RL(&rl, "Mirror should be the first action");
+                return -1;
+            }
             if (parse_ct_actions(actions, ct_actions, ct_actions_len,
                                  act_resources, act_vars)) {
                 return -1;
@@ -5072,7 +5085,7 @@ static int
 netdev_offload_dpdk_hw_miss_packet_recover(struct netdev *netdev,
                                            uint32_t flow_miss_ctx_id,
                                            struct dp_packet *packet,
-                                           uint8_t *skip_actions OVS_UNUSED)
+                                           uint8_t *skip_actions)
 {
     struct flow_miss_ctx flow_miss_ctx;
     struct ct_miss_ctx ct_miss_ctx;
@@ -5083,6 +5096,7 @@ netdev_offload_dpdk_hw_miss_packet_recover(struct netdev *netdev,
         return -1;
     }
 
+    *skip_actions = flow_miss_ctx.skip_actions;
     packet->md.recirc_id = flow_miss_ctx.recirc_id;
     if (flow_miss_ctx.vport != ODPP_NONE) {
         if (is_all_zeros(&flow_miss_ctx.tnl, sizeof flow_miss_ctx.tnl)) {
