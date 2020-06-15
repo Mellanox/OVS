@@ -67,6 +67,7 @@ TAGS
 cscope.*
 tags
 _debian
+/debian/build/
 odp-netlink.h
 odp-netlink-macros.h
 OvsDpInterface.h
