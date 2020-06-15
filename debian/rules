@@ -25,6 +25,14 @@ else
 PARALLEL =
 endif
 
+ifneq (,$(filter static,$(DEB_BUILD_OPTIONS)))
+BUILD_TYPE := --disable-shared --enable-static
+EXCLUDE := --exclude .so.* --exclude .so
+else
+BUILD_TYPE := --enable-shared --disable-static
+EXCLUDE := --exclude .a
+endif
+
 %:
 	dh $@ --builddirectory=$(BUILD_DIR) --with autoreconf,python3 --parallel
 
@@ -48,7 +56,7 @@ override_dh_auto_configure:
 		if [ -f "$$real" -a ! -f "$$new" ]; then mv "$$real" "$$new"; fi; \
 	done
 	dh_auto_configure -- --enable-ssl \
-		--enable-shared --disable-static \
+		$(BUILD_TYPE) \
 		--with-dpdk=$(WITH_DPDK) \
 		$(DATAPATH_CONFIGURE_OPTS)
 
@@ -85,13 +93,13 @@ override_dh_auto_build:
 	dh_auto_build
 
 override_dh_install-arch:
-	dh_install -a
+	dh_install -a $(EXCLUDE)
 	# openvswitch-switch
 	mkdir -p debian/openvswitch-switch/usr/share/openvswitch/switch
 	cp debian/openvswitch-switch.template debian/openvswitch-switch/usr/share/openvswitch/switch/default.template
 
 override_dh_install-indep:
-	dh_install -i
+	dh_install -i $(EXCLUDE)
 
 	# openvswitch-datapath-source
 	mkdir -p debian/openvswitch-datapath-source/usr/src/modules/openvswitch-datapath/debian
@@ -121,7 +129,7 @@ override_dh_install-indep:
 	rm -f debian/$(PACKAGE_DKMS)/usr/src/$(PACKAGE)-$(DEB_VERSION_UPSTREAM)/xenserver/LICENSE
 
 override_dh_missing:
-	dh_missing --fail-missing
+	dh_missing --fail-missing $(EXCLUDE)
 
 override_dh_shlibdebs:
 	dh_shlibdeps $@ -l$(WITH_DPDK)/lib
