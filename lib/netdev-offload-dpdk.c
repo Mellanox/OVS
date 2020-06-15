@@ -5072,7 +5072,8 @@ netdev_offload_dpdk_flow_flush(struct netdev *netdev)
 static int
 netdev_offload_dpdk_hw_miss_packet_recover(struct netdev *netdev,
                                            uint32_t flow_miss_ctx_id,
-                                           struct dp_packet *packet)
+                                           struct dp_packet *packet,
+                                           uint8_t *skip_actions OVS_UNUSED)
 {
     struct flow_miss_ctx flow_miss_ctx;
     struct ct_miss_ctx ct_miss_ctx;
