@@ -3,3 +3,5 @@ Change-Id=If1502a3d9c0adf91de70a66c118f4ef582f5bfcb; subject=rpm: remove incorre
 Change-Id=I6ec8fb62ce82d3776a7b0d5a6c4a054288ab7057; subject=rpm: remove doubled 'with dpdk' conditional; feature=static-build; upstream_status=NA; general=;
 Change-Id=Ifebf91aa9fa6a5a8db1868dbc4c9c95df14911a2; subject=rpm: add --with static option; feature=static-build; upstream_status=NA; general=;
 Change-Id=I2cb06d04ede42ff9408a46e151a2fd555770b860; subject=metadata: add static-build feature and changes; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Id740ecb0f9a6a5e3553df7a6ff703a3b7b5ce384; subject=ignore: debian build dir; feature=ofed_scripts; upstream_status=NA; general=;
+Change-Id=I513cd3f161b72d91d51ab25f3d50fe78f780e389; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
