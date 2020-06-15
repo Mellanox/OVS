@@ -10040,7 +10040,8 @@ dfc_processing(struct dp_netdev_pmd_thread *pmd,
             tcp_flags = parse_tcp_flags(packet);
             p = pmd_send_port_cache_lookup(pmd, port_no);
             if (p) {
-                netdev_hw_miss_packet_recover(p->port->netdev, mark, packet);
+                netdev_hw_miss_packet_recover(p->port->netdev, mark, packet,
+                                              NULL);
             }
             flow = mark_to_flow_find(pmd, mark);
             if (OVS_LIKELY(flow)) {
