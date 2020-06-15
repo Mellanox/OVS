@@ -70,6 +70,10 @@
 %define _py2 python3
 %endif
 
+%global do_build_python3 0%{?fedora} > 22 || 0%{?rhel} > 7 || %{with build_python3}
+%global has_python2      %{defined __python2}
+%global no_python2       %{undefined __python2}
+
 Name: openvswitch
 Summary: Open vSwitch
 Group: System Environment/Daemons
@@ -87,7 +91,7 @@ BuildRequires: gcc gcc-c++
 BuildRequires: autoconf automake libtool
 BuildRequires: systemd-units openssl openssl-devel
 BuildRequires: %{_py2}-devel
-%if 0%{?fedora} > 22 || %{with build_python3}
+%if %{do_build_python3}
 BuildRequires: python3-devel
 %endif
 BuildRequires: desktop-file-utils
@@ -95,9 +99,12 @@ BuildRequires: groff graphviz
 BuildRequires: checkpolicy, selinux-policy-devel
 BuildRequires: /usr/bin/sphinx-build
 # make check dependencies
-%if %{_py2} != python3
-BuildRequires: %{_py2}-twisted%{?rhel:-core} %{_py2}-zope-interface %{_py2}-six
+%if 0%{?rhel} >= 8
+BuildRequires: %{_py2}-twisted
+%else
+BuildRequires: %{_py2}-twisted%{?rhel:-core}
 %endif
+BuildRequires: %{_py2}-zope-interface %{_py2}-six
 BuildRequires: procps-ng
 %if %{with libcapng}
 BuildRequires: libcap-ng libcap-ng-devel
@@ -138,6 +145,7 @@ Requires: selinux-policy-targeted
 %description selinux-policy
 Tailored Open vSwitch SELinux policy
 
+%if %{_py2} != "python3"
 %package -n %{_py2}-openvswitch
 Summary: Open vSwitch python2 bindings
 License: ASL 2.0
@@ -147,8 +155,9 @@ Requires: %{_py2}-six
 %{?python_provide:%python_provide python2-openvswitch = %{version}-%{release}}
 %description -n %{_py2}-openvswitch
 Python bindings for the Open vSwitch database
+%endif
 
-%if 0%{?fedora} > 22 || %{with build_python3}
+%if %{do_build_python3}
 %package -n python3-openvswitch
 Summary: Open vSwitch python3 bindings
 License: ASL 2.0
@@ -217,11 +226,13 @@ This package provides IPsec tunneling support for OVS tunnels.
         --disable-static \
         --enable-shared \
         --with-pkidir=%{_sharedstatedir}/openvswitch/pki \
-%if 0%{?fedora} > 22 || %{with build_python3} || 0%{?rhel} > 7
+%if %{do_build_python3}
         PYTHON3=%{__python3} \
-        PYTHON=%{__python2}
+%if %{no_python2}
+        PYTHON=%{__python2} \
+%endif
 %else
-        PYTHON=%{__python}
+        PYTHON=%{__python} \
 %endif
 
 build-aux/dpdkstrip.py \
@@ -291,14 +302,21 @@ install -p -m 0755 rhel/etc_sysconfig_network-scripts_ifdown-ovs \
 install -p -m 0755 rhel/etc_sysconfig_network-scripts_ifup-ovs \
         $RPM_BUILD_ROOT/%{_sysconfdir}/sysconfig/network-scripts/ifup-ovs
 
+%if %{has_python2}
 install -d -m 0755 $RPM_BUILD_ROOT%{python2_sitelib}
 cp -a $RPM_BUILD_ROOT/%{_datadir}/openvswitch/python/* \
    $RPM_BUILD_ROOT%{python2_sitelib}
+%endif
 
-%if 0%{?fedora} > 22 || %{with build_python3}
+%if %{do_build_python3}
 install -d -m 0755 $RPM_BUILD_ROOT%{python3_sitelib}
+%if %{no_python2}
+cp -a $RPM_BUILD_ROOT/%{_datadir}/openvswitch/python/* \
+   $RPM_BUILD_ROOT%{python3_sitelib}
+%else
 cp -a $RPM_BUILD_ROOT/%{_datadir}/openvswitch/python/ovs \
    $RPM_BUILD_ROOT%{python3_sitelib}
+%endif
 %endif
 
 rm -rf $RPM_BUILD_ROOT/%{_datadir}/openvswitch/python/
@@ -453,10 +471,12 @@ fi
 %defattr(-,root,root)
 %{_datadir}/selinux/packages/%{name}/openvswitch-custom.pp
 
+%if %{has_python2}
 %files -n %{_py2}-openvswitch
 %{python2_sitelib}/ovs
+%endif
 
-%if 0%{?fedora} > 22 || %{with build_python3}
+%if %{do_build_python3}
 %files -n python3-openvswitch
 %{python3_sitelib}/ovs
 %endif
@@ -474,7 +494,11 @@ fi
 %{_mandir}/man1/ovs-pcap.1*
 %{_mandir}/man8/ovs-tcpdump.8*
 %{_mandir}/man1/ovs-tcpundump.1*
+%if %{has_python2}
 %{python2_sitelib}/ovstest
+%else
+%{python3_sitelib}/ovstest
+%endif
 
 %files devel
 %{_libdir}/lib*.so
