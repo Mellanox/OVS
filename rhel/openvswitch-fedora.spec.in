@@ -66,9 +66,9 @@
 %define _py2 python3
 %endif
 
-%global do_build_python3	0%{?fedora} > 22 || 0%{?rhel} > 7 || %{with build_python3}
-%global has_python2		%{defined __python2}
-%global no_python2		%{undefined __python2}
+%global do_build_python3 0%{?fedora} > 22 || 0%{?rhel} > 7 || %{with build_python3}
+%global has_python2      %{defined __python2}
+%global no_python2       %{undefined __python2}
 
 Name: openvswitch
 Summary: Open vSwitch
@@ -230,7 +230,7 @@ This package provides IPsec tunneling support for OVS tunnels.
 %else
         PYTHON=%{__python} \
 %endif
-	#
+        #
 
 build-aux/dpdkstrip.py \
 %if %{with dpdk}
