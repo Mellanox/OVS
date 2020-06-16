@@ -393,6 +393,10 @@ AC_DEFUN([OVS_CHECK_DPDK], [
       ], [[#include <rte_config.h>]])
     ], [], [[#include <rte_config.h>]])
 
+    AC_CHECK_DECL([RTE_LIBRTE_PMD_PCAP], [dnl found
+      OVS_FIND_DEPENDENCY([pcap_open_dead], [pcap], [libpcap])
+    ], [], [[#include <rte_config.h>]])
+
     # DPDK uses dlopen to load plugins.
     OVS_FIND_DEPENDENCY([dlopen], [dl], [libdl])
 
