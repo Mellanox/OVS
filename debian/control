@@ -16,7 +16,8 @@ Build-Depends: graphviz,
                procps,
                python3-all,
                libunbound-dev,
-               libunwind-dev
+               libunwind-dev,
+               libmnl-dev
 Standards-Version: 3.9.3
 Homepage: http://openvswitch.org/
 
