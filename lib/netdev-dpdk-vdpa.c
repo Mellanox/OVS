@@ -38,10 +38,11 @@ VLOG_DEFINE_THIS_MODULE(netdev_dpdk_vdpa);
 #define NETDEV_DPDK_VDPA_SIZEOF_MBUF        (sizeof(struct rte_mbuf *))
 #define NETDEV_DPDK_VDPA_MAX_QPAIRS         16
 #define NETDEV_DPDK_VDPA_INVALID_QUEUE_ID   0xFFFF
-#define NETDEV_DPDK_VDPA_STATS_MAX_STR_SIZE 64
+#define NETDEV_DPDK_VDPA_STATS_MAX_STR_SIZE 128
 #define NETDEV_DPDK_VDPA_RX_DESC_DEFAULT    512
 #define NETDEV_DPDK_VDPA_PCI_STR_SIZE       sizeof("XXXX:XX:XX.X")
 #define NETDEV_DPDK_VDPA_ARGS_LEN           24
+#define NETDEV_DPDK_VDPA_MAX_VDPA_PORTS     128
 
 enum netdev_dpdk_vdpa_port_type {
     NETDEV_DPDK_VDPA_PORT_TYPE_VM,
@@ -82,9 +83,18 @@ struct netdev_dpdk_vdpa_relay {
         char *vm_socket;
         char *vhost_name;
         bool started;
+        uint16_t dev_id;
         enum netdev_dpdk_vdpa_mode hw_mode;
         );
 };
+
+struct netdev_dpdk_vdpa_port {
+    char ifname[NETDEV_DPDK_VDPA_STATS_MAX_STR_SIZE];
+    int vid;
+    int did;
+};
+static struct netdev_dpdk_vdpa_port vports[NETDEV_DPDK_VDPA_MAX_VDPA_PORTS];
+static int devcnt = 0;
 
 static int
 netdev_dpdk_vdpa_port_from_name(const char *name)
@@ -630,7 +640,21 @@ netdev_dpdk_vdpa_rxq_recv_impl(struct netdev_dpdk_vdpa_relay *relay,
 static int
 netdev_dpdk_vdpa_new_device(int vid)
 {
-    VLOG_INFO("new device callback, vid %d", vid);
+    char ifname[NETDEV_DPDK_VDPA_STATS_MAX_STR_SIZE];
+    int i;
+
+    rte_vhost_get_ifname(vid, ifname, sizeof(ifname));
+    for (i = 0; i < NETDEV_DPDK_VDPA_MAX_VDPA_PORTS; i++) {
+        if (strncmp(ifname, vports[i].ifname,
+                    NETDEV_DPDK_VDPA_STATS_MAX_STR_SIZE) == 0) {
+            vports[i].vid = vid;
+            break;
+        }
+    }
+    if (i == NETDEV_DPDK_VDPA_MAX_VDPA_PORTS) {
+        return -1;
+    }
+
     return 0;
 }
 
@@ -656,6 +680,8 @@ netdev_dpdk_vdpa_config_hw_impl(struct netdev_dpdk_vdpa_relay *relay,
     int device_id;
     int err = 0;
 
+    ovs_strlcpy(vports[devcnt].ifname, vhost_path,
+                NETDEV_DPDK_VDPA_STATS_MAX_STR_SIZE);
     err = rte_pci_addr_parse(vf_pci, &addr.pci_addr);
     if (err) {
         VLOG_ERR("Failed to parse the given PCI address %s.\n", vdpa_args);
@@ -678,6 +704,7 @@ netdev_dpdk_vdpa_config_hw_impl(struct netdev_dpdk_vdpa_relay *relay,
         VLOG_ERR("Unable to find vdpa device id, working in SW mode");
         goto sw_mode;
     }
+    vports[devcnt].did = device_id;
 
     err = rte_vhost_driver_register(vhost_path, RTE_VHOST_USER_CLIENT);
     if (err) {
@@ -716,6 +743,8 @@ sw_mode:
     goto out;
 hw_mode:
     relay->hw_mode = NETDEV_DPDK_VDPA_MODE_HW;
+    relay->dev_id = device_id;
+    devcnt++;
 out:
     return err;
 }
@@ -901,11 +930,12 @@ out:
     netdev_dpdk_vdpa_free_relay_strings(relay);
 }
 
-int
-netdev_dpdk_vdpa_get_custom_stats_impl(struct netdev_dpdk_vdpa_relay *relay,
-                                       struct netdev_custom_stats *cstm_stats)
+static
+void netdev_dpdk_vdpa_get_sw_stats(struct netdev_dpdk_vdpa_relay *relay,
+                                   struct netdev_custom_stats *cstm_stats)
 {
     enum stats_vals {
+        VDPA_CUSTOM_STATS_HW_MODE,
         VDPA_CUSTOM_STATS_VM_RX_PACKETS,
         VDPA_CUSTOM_STATS_VM_RX_BYTES,
         VDPA_CUSTOM_STATS_VM_TX_PACKETS,
@@ -921,6 +951,7 @@ netdev_dpdk_vdpa_get_custom_stats_impl(struct netdev_dpdk_vdpa_relay *relay,
         VDPA_CUSTOM_STATS_TOTAL_SIZE
     };
     const char *stats_names[] = {
+        [VDPA_CUSTOM_STATS_HW_MODE] = "HW mode",
         [VDPA_CUSTOM_STATS_VM_RX_PACKETS] = "VM_rx_packets",
         [VDPA_CUSTOM_STATS_VM_RX_BYTES] = "VM_rx_bytes",
         [VDPA_CUSTOM_STATS_VM_TX_PACKETS] = "VM_tx_packets",
@@ -939,10 +970,6 @@ netdev_dpdk_vdpa_get_custom_stats_impl(struct netdev_dpdk_vdpa_relay *relay,
     uint16_t num_q = relay->num_queues;
     uint16_t start = 0;
 
-    if (relay->hw_mode == NETDEV_DPDK_VDPA_MODE_HW) {
-        return 0;
-    }
-
     cstm_stats->size = VDPA_CUSTOM_STATS_TOTAL_SIZE + 9 * num_q;
     cstm_stats->counters = xcalloc(cstm_stats->size,
                                    sizeof *cstm_stats->counters);
@@ -956,7 +983,7 @@ netdev_dpdk_vdpa_get_custom_stats_impl(struct netdev_dpdk_vdpa_relay *relay,
         VLOG_ERR("rte_eth_stats_get failed."
                  "Can't get ETH statistics for port id %u",
                  relay->port_id_vm);
-        return EPROTO;
+        return;
     }
     cstm_stats->counters[VDPA_CUSTOM_STATS_VM_RX_PACKETS].value =
                                                     rte_stats.ipackets;
@@ -1000,7 +1027,7 @@ netdev_dpdk_vdpa_get_custom_stats_impl(struct netdev_dpdk_vdpa_relay *relay,
         VLOG_ERR("rte_eth_stats_get failed."
                  "Can't get ETH statistics for port id %u",
                  relay->port_id_vf);
-        return EPROTO;
+        return;
     }
     cstm_stats->counters[VDPA_CUSTOM_STATS_VF_RX_PACKETS].value =
                                                     rte_stats.ipackets;
@@ -1052,6 +1079,133 @@ netdev_dpdk_vdpa_get_custom_stats_impl(struct netdev_dpdk_vdpa_relay *relay,
          }
     }
 
+    cstm_stats->counters[VDPA_CUSTOM_STATS_HW_MODE].value = 0;
+}
+
+static
+void netdev_dpdk_vdpa_get_hw_stats(struct netdev_dpdk_vdpa_relay *relay,
+                                   struct netdev_custom_stats *cstm_stats)
+{
+    enum stats_vals {
+        VDPA_CUSTOM_STATS_HW_MODE,
+        VDPA_CUSTOM_STATS_PACKETS,
+        VDPA_CUSTOM_STATS_ERRORS,
+        VDPA_CUSTOM_STATS_TOTAL_SIZE
+    };
+    const char *stats_names[] = {
+        [VDPA_CUSTOM_STATS_HW_MODE] = "HW mode",
+        [VDPA_CUSTOM_STATS_PACKETS] = "Packets",
+        [VDPA_CUSTOM_STATS_ERRORS] = "Errors"
+    };
+    struct rte_vdpa_device *vdev = rte_vdpa_get_device(relay->dev_id);
+    struct rte_vdpa_stat_name *vdpa_stats_names;
+    char name[NETDEV_CUSTOM_STATS_NAME_SIZE];
+    uint16_t q, num_q, i, counter, index;
+    struct rte_vdpa_stat *stats;
+    int stats_n;
+
+    if (!vdev) {
+        VLOG_ERR("Invalid device id %u", relay->dev_id);
+        return;
+    }
+
+    stats_n = rte_vdpa_get_stats_names(relay->dev_id, NULL, 0);
+    if (stats_n <= 0) {
+        VLOG_ERR("Failed to get names number of device %d.",
+                 (int)relay->dev_id);
+        return;
+    }
+
+    vdpa_stats_names = rte_zmalloc(NULL, sizeof(*vdpa_stats_names) * stats_n,
+                                   0);
+    if (!vdpa_stats_names) {
+        VLOG_ERR("Failed to allocate memory for stats names of device %d.",
+                 (int)relay->dev_id);
+        return;
+    }
+
+    i = rte_vdpa_get_stats_names(relay->dev_id, vdpa_stats_names, stats_n);
+    if (stats_n != i) {
+        VLOG_ERR("Failed to get names of device %d.",
+                 (int)relay->dev_id);
+        return;
+    }
+
+    stats = rte_zmalloc(NULL, sizeof(*stats) * stats_n, 0);
+    if (!stats) {
+        VLOG_ERR("Failed to allocate memory for stats of device %d.",
+                 (int)relay->dev_id);
+        return;
+    }
+
+    for (i = 0; i < NETDEV_DPDK_VDPA_MAX_VDPA_PORTS; i++) {
+        if (vports[i].did == relay->dev_id) {
+            break;
+        }
+    }
+    if (i == NETDEV_DPDK_VDPA_MAX_VDPA_PORTS) {
+        VLOG_ERR("Failed to find device %d", (int)relay->dev_id);
+        return;
+    }
+
+    num_q = rte_vhost_get_vring_num(vports[i].vid);
+    if (num_q == 0) {
+        VLOG_ERR("Failed to get num of actual virtqs for device %d.",
+                 (int)relay->dev_id);
+        return;
+    }
+
+    cstm_stats->size = 2 * num_q + 1;
+    cstm_stats->counters = xcalloc(cstm_stats->size,
+                                   sizeof *cstm_stats->counters);
+
+    for (q = 0; q < num_q; q++) {
+        if (rte_vdpa_get_stats(relay->dev_id, q, stats, stats_n) <= 0) {
+            VLOG_ERR("Failed to get vdpa queue statistics for device %d "
+                     "queue %d.", (int)relay->dev_id, q);
+            break;
+        }
+
+        for (i = 0; i < stats_n; ++i) {
+            counter = 0;
+            if (!strncmp(vdpa_stats_names[stats[i].id].name,
+                        "completed_descriptors", RTE_VDPA_STATS_NAME_SIZE))
+            {
+                index = VDPA_CUSTOM_STATS_PACKETS;
+                counter = q * 2 + 1;
+            } else if (!strncmp(vdpa_stats_names[stats[i].id].name,
+                    "completion errors", RTE_VDPA_STATS_NAME_SIZE))
+            {
+                index = VDPA_CUSTOM_STATS_ERRORS;
+                counter = q * 2 + 1 + 1;
+            }
+
+            if (counter > 0) {
+                snprintf(name, NETDEV_CUSTOM_STATS_NAME_SIZE, "%s queue_%u_%s",
+                         stats_names[index], (q / 2),
+                         ((q % 2 == 0) ? "rx" : "tx"));
+                ovs_strlcpy(cstm_stats->counters[counter].name, name,
+                       NETDEV_CUSTOM_STATS_NAME_SIZE);
+                cstm_stats->counters[counter].value = stats[i].value;
+            }
+        }
+    }
+
+    ovs_strlcpy(cstm_stats->counters[VDPA_CUSTOM_STATS_HW_MODE].name,
+                stats_names[VDPA_CUSTOM_STATS_HW_MODE],
+                NETDEV_CUSTOM_STATS_NAME_SIZE);
+    cstm_stats->counters[VDPA_CUSTOM_STATS_HW_MODE].value = 1;
+}
+
+int
+netdev_dpdk_vdpa_get_custom_stats_impl(struct netdev_dpdk_vdpa_relay *relay,
+                                       struct netdev_custom_stats *cstm_stats)
+{
+    if (relay->hw_mode == NETDEV_DPDK_VDPA_MODE_HW) {
+        netdev_dpdk_vdpa_get_hw_stats(relay, cstm_stats);
+    } else {
+        netdev_dpdk_vdpa_get_sw_stats(relay, cstm_stats);
+    }
     return 0;
 }
 
