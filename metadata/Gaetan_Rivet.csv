@@ -9,3 +9,7 @@ Change-Id=I503a746e410beb3332ee7b9273d76a21c02461c8; subject=debian: add missing
 Change-Id=I7160f2c2361a65b54bde5159cc3c245ec7322d88; subject=debian: allow overloading DPDK install dir; feature=static-build; upstream_status=ignore; general=;
 Change-Id=Iab7f58374a35a26e38e369ec3ca55fb79b3922b5; subject=debian: add static build option; feature=static-build; upstream_status=ignore; general=;
 Change-Id=I4f463f2bb2aa13459409b35b41737d128e35a656; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ic885541da88e2fc546de80f5d5e6b74569e0eb92; subject=debian: add missing libmnl-dev dependency; feature=static-build; upstream_status=ignore; general=;
+Change-Id=I9b393a0d467ab927247dd7d5dde3fe23b10f5847; subject=acinclude: add pcap dependency; feature=static-build; upstream_status=NA; general=;
+Change-Id=Ic4c0eee490d20a88b1342bab825bb72dd8e0da9f; subject=debian: fix openvswitch-test python3-twisted dependency; feature=static-build; upstream_status=ignore; general=;
+Change-Id=I3a5f7e20bab513e1c226a9bdff114cfe8f67686b; subject=Update metadata; feature=static-build; upstream_status=ignore; general=;
