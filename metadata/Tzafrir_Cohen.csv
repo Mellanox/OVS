@@ -5,3 +5,5 @@ Change-Id=Ia5a778609e30094a0b63809a32f72e560a8eb9d2; subject=debian: Convert "py
 Change-Id=Ib256abac8e92ff86848cb86414055cb5f06b6e4a; subject=debian: Convert "python" to "python2" deps; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I76f9561308d196797a3a68c2173efd386cc27e78; subject=debian: build dir and man pages; feature=ofed_scripts; upstream_status=NA; general=;
 Change-Id=I43f7b3437c49c8d177c8af94fee74922884a0077; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Id0026c6db1f0af739c0daac9528d96e90560eb6a; subject=spec: Fix RHEL8 python3 issues; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I51e37b9937201afb08fc70e75cb6ce8c8e21a31f; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
