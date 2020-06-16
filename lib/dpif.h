@@ -489,7 +489,9 @@ int dpif_port_dump_done(struct dpif_port_dump *);
 int dpif_port_poll(const struct dpif *, char **devnamep);
 void dpif_port_poll_wait(const struct dpif *);
 
-struct dpif_offload_stats;
+struct dpif_offload_stats {
+    uint32_t ct_connections;
+};
 
 /* Flow table operations. */
 
