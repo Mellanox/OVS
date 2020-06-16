@@ -326,6 +326,9 @@ struct dp_netdev {
     struct ovs_refcount ref_cnt;
     atomic_flag destroyed;
 
+    /* Counting offloaded statistics. */
+    struct dpif_offload_stats offload_stats;
+
     /* Ports.
      *
      * Any lookup into 'ports' or any access to the dp_netdev_ports found
@@ -1856,6 +1859,7 @@ create_dp_netdev(const char *name, const struct dpif_class *class,
     *CONST_CAST(const char **, &dp->name) = xstrdup(name);
     ovs_refcount_init(&dp->ref_cnt);
     atomic_flag_clear(&dp->destroyed);
+    memset(&dp->offload_stats, 0, sizeof dp->offload_stats);
 
     ovs_mutex_init_recursive(&dp->port_mutex);
     hmap_init(&dp->ports);
@@ -3083,6 +3087,8 @@ dp_netdev_flow_offload_main(void *data OVS_UNUSED)
         } else if (offload_item->type == DP_CT_OFFLOAD_ITEM) {
             struct ct_flow_offload_item *ct_offload =
                     offload_item->ct_offload_item;
+            struct dp_netdev *dp = ct_offload->dp;
+            int rets[CT_DIR_NUM];
             int dir;
 
             for (dir = 0; dir < CT_DIR_NUM; dir++) {
@@ -3098,10 +3104,19 @@ dp_netdev_flow_offload_main(void *data OVS_UNUSED)
                 default:
                     OVS_NOT_REACHED();
                 }
+                rets[dir] = ret;
                 VLOG_DBG("%s to %s ct(%s) flow "UUID_FMT,
                          ret == 0 ? "succeed" : "failed", op,
                          dir == CT_DIR_INIT ? "init" : "reply",
                          UUID_ARGS((struct uuid *)&ct_offload[dir].ufid));
+            }
+            if (!rets[CT_DIR_INIT] && !rets[CT_DIR_REP]) {
+                if (ct_offload[CT_DIR_INIT].op ==
+                    DP_NETDEV_FLOW_OFFLOAD_OP_ADD) {
+                    dp->offload_stats.ct_connections++;
+                } else {
+                    dp->offload_stats.ct_connections--;
+                }
             }
         } else {
             OVS_NOT_REACHED();
@@ -4438,6 +4453,15 @@ dpif_netdev_flow_dump_next(struct dpif_flow_dump_thread *thread_,
     }
 
     return n_flows;
+}
+
+static int
+dpif_netdev_get_offload_stats(struct dpif *dpif, struct dpif_offload_stats *offload_stats)
+{
+    struct dp_netdev *dp = get_dp_netdev(dpif);
+    offload_stats->ct_connections = dp->offload_stats.ct_connections;
+
+    return 0;
 }
 
 static int
@@ -8766,7 +8790,7 @@ const struct dpif_class dpif_netdev_class = {
     dpif_netdev_flow_dump_thread_create,
     dpif_netdev_flow_dump_thread_destroy,
     dpif_netdev_flow_dump_next,
-    NULL,                       /* get_offload_stats */
+    dpif_netdev_get_offload_stats,
     dpif_netdev_operate,
     NULL,                       /* recv_set */
     NULL,                       /* handlers_set */
