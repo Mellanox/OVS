@@ -6,3 +6,5 @@ Change-Id=Ic0198ea966760df766fbd00e297b08df9a217af4; subject=Update metadata; fe
 Change-Id=I3d1edc82dac001c52f396cfcb1fdd6786e445da6; subject=add_metada: fix metadata script.; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=Ieeca82892c22d54e23c6255ca1f6819ae7d6c23d; subject=add_metada: fix metadata order; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I879770684ac98e741467f83d9f9aba4188956a6b; subject=Fix build dependencies for RHEL 8.X; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I3a5f7e20414771606a9ad13e92c56a08ce37e275; subject=spec: Only build python2 if python3 not installed; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I9ae6b775b078dde510fbf7dff32c3b7e8ab8d1b7; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
