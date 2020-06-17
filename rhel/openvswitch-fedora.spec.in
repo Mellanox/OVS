@@ -67,8 +67,8 @@
 %endif
 
 %global do_build_python3 0%{?fedora} > 22 || 0%{?rhel} > 7 || %{with build_python3}
-%global has_python2      %{defined __python2}
-%global no_python2       %{undefined __python2}
+%global has_python2      %{defined __python2} &&  %{_py2} != python3
+%global no_python2       %{undefined __python2} || %{_py2} == python3
 
 Name: openvswitch
 Summary: Open vSwitch
