@@ -7,3 +7,5 @@ Change-Id=I76f9561308d196797a3a68c2173efd386cc27e78; subject=debian: build dir a
 Change-Id=I43f7b3437c49c8d177c8af94fee74922884a0077; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=Id0026c6db1f0af739c0daac9528d96e90560eb6a; subject=spec: Fix RHEL8 python3 issues; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I51e37b9937201afb08fc70e75cb6ce8c8e21a31f; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I8bd7e7d20b950f1aa56e7b055d719d4d73592256; subject=spec: Remove %python_provide from python3 package; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I6e46706c50d2e5143c1efc84d4d9b2a5e2fa2429; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
