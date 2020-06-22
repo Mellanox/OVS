@@ -15,3 +15,6 @@ Change-Id=Ic4c0eee490d20a88b1342bab825bb72dd8e0da9f; subject=debian: fix openvsw
 Change-Id=I3a5f7e20bab513e1c226a9bdff114cfe8f67686b; subject=Update metadata; feature=static-build; upstream_status=ignore; general=;
 Change-Id=Ic0b3c425d393d9b2fb30b8bec8ff3e34c9402b91; subject=spec: remove tabs from spec file; feature=ofed_scripts; upstream_status=NA; general=;
 Change-Id=I563a71ed5de6dc46166ef9823cf8d101888ccfc4; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I39a48434dd8078e5bc8a71ae3fe9261377fc7b72; subject=spec: do not install .a in base package; feature=static-build; upstream_status=NA; general=;
+Change-Id=I6f26218112758fa4454badb7d159c0f5660ff3f6; subject=spec: fix python-twisted dep on rhel7; feature=static-build; upstream_status=NA; general=;
+Change-Id=I183371859d97d89c5f75b58b72e2a92f74e844c4; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
