@@ -90,3 +90,9 @@ Change-Id=I4d704f8d461627edc6eb97d9fe2b9dc5671b2ca1; subject=conntrack: Bidirect
 Change-Id=Idda1519eedbefb88e6c46b2ea66c770bb823daa1; subject=netdev-offload-dpdk: Remove old DROP offload; feature=bp_2_13; upstream_status=NA; general=;
 Change-Id=Ica5ba510b7b188148b623f85b12a03adfc5d251f; subject=Revert "netdev-dpdk: Retry rte_flow_create in case of EAGAIN"; feature=dpdk; upstream_status=NA; general=;
 Change-Id=Idba66bdb8d452f845804be741e5201a588e8728d; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ic45475e947b02d4b72b63848c48f1c49d7f51254; subject=conntrack: Add CT ID per connection; feature=dpdk; upstream_status=in_progress; general=;
+Change-Id=Ia6300add325f1e8e35f2f7d03af597eae1289db8; subject=dpif-netdev: Send CT id to offloading; feature=dpdk; upstream_status=in_progress; general=;
+Change-Id=I41241787cab0fd045f930f9fc4dd2a2ee8da7dfa; subject=dpif-netdev: CT ID allocation/free; feature=dpdk; upstream_status=in_progress; general=;
+Change-Id=I4158706884f93fee2c4e1dbd25028e005cf1d9de; subject=netdev-offload-dpdk: Shared counter for all CT connection flows; feature=dpdk; upstream_status=in_progress; general=;
+Change-Id=I5e1404f9163098560c52f85f01c4af09db0280d2; subject=netdev-offload-dpdk: Fix vxlan drop offload; feature=dpdk; upstream_status=in_progress; general=;
+Change-Id=I12461c7ccc281e198156871007a53ff010be6cba; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
