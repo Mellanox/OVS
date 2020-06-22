@@ -560,9 +560,7 @@ fi
 %{_bindir}/ovs-testcontroller
 %{_bindir}/ovs-pki
 %{_bindir}/vtep-ctl
-%if %{with static}
-%{_libdir}/lib*.a
-%else
+%if ! %{with static}
 %{_libdir}/lib*.so.*
 %endif #!static
 %{_sbindir}/ovs-bugtool
