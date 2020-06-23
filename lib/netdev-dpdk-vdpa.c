@@ -242,7 +242,7 @@ netdev_dpdk_vdpa_queue_state(struct netdev_dpdk_vdpa_relay *relay,
         }
         relay->flow_params.queues_en[event.queue_id] = event.enable;
         /* Load balance the relay's queues on the pr's queues in round robin */
-        relay->qpair[q_id].pr_queue = (event.enable ? q_id % relay->n_rxq :
+        relay->qpair[q_id].pr_queue = (event.enable ? event.queue_id % relay->n_rxq :
                                        NETDEV_DPDK_VDPA_INVALID_QUEUE_ID);
         if (!event.rx) {
             relay->flow_params.queues_en[event.queue_id] = event.enable;
