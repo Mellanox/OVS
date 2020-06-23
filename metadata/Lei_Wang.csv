@@ -1,3 +1,5 @@
 sep=;
 Change-Id=I9ee6a0d6002dc982465a44845952816796705e30; subject=netdev-dpdk-vdpa: add per queue and error statistics for vdpa; feature=bp_2_13; upstream_status=in_progress; general=;
 Change-Id=Ibdfbafd74768469c7ff7acdd33d4bc243f768b4c; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I0593fbbb9c70ee9bc5a79f6752e43816b606f49c; subject=netdev-dpdk-vdpa: fix queues are not utilized fully; feature=bug_fixes; upstream_status=ignore; general=;
+Change-Id=Iac9c12279a4ad680b80fd559e29e8f6001385dc0; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
