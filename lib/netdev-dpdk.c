@@ -558,6 +558,7 @@ struct netdev_dpdk {
     );
 
     struct netdev_dpdk_vdpa_relay *relay;
+    bool netdev_rep;
 };
 
 struct netdev_rxq_dpdk {
@@ -970,6 +971,11 @@ dpdk_watchdog(void *dummy OVS_UNUSED)
         ovs_mutex_lock(&dpdk_mutex);
         LIST_FOR_EACH (dev, list_node, &dpdk_list) {
             ovs_mutex_lock(&dev->mutex);
+            if (!dev->netdev_rep) {
+                ovs_mutex_unlock(&dev->mutex);
+                continue;
+            }
+
             if (dev->type == DPDK_DEV_ETH) {
                 check_link_status(dev);
             }
@@ -2115,6 +2121,7 @@ netdev_dpdk_vdpa_set_config(struct netdev *netdev, const struct smap *args,
                 smap_get(args, "vdpa-accelerator-devargs");
     const char *vdpa_socket_path =
                 smap_get(args, "vdpa-socket-path");
+    const char *rep = smap_get(args, "dpdk-devargs");
     int vdpa_max_queues = smap_get_int(args, "vdpa-max-queues", -1);
     bool vdpa_sw = smap_get_bool(args, "vdpa-sw", false);
     int err = 0;
@@ -2125,11 +2132,14 @@ netdev_dpdk_vdpa_set_config(struct netdev *netdev, const struct smap *args,
                  netdev->name);
         goto free_relay;
     }
+    dev->netdev_rep = (rep == NULL) ? false : true;
 
-    err = netdev_dpdk_set_config(netdev, args, errp);
-    if (err) {
-        VLOG_ERR("netdev_dpdk_set_config failed. Port: %s", netdev->name);
-        goto free_relay;
+    if (dev->netdev_rep) {
+        err = netdev_dpdk_set_config(netdev, args, errp);
+        if (err) {
+            VLOG_ERR("netdev_dpdk_set_config failed. Port: %s", netdev->name);
+            goto free_relay;
+        }
     }
 
     err = netdev_dpdk_vdpa_config_impl(dev->relay, dev->port_id,
@@ -2632,13 +2642,16 @@ netdev_dpdk_vdpa_rxq_recv(struct netdev_rxq *rxq,
 {
     struct netdev_dpdk *dev = netdev_dpdk_cast(rxq->netdev);
     int fwd_rx;
-    int ret;
+    int ret = 0;
 
     fwd_rx = netdev_dpdk_vdpa_rxq_recv_impl(dev->relay, rxq->queue_id);
-    ret = netdev_dpdk_rxq_recv(rxq, batch, qfill);
-    if ((ret == EAGAIN) && fwd_rx) {
-        return 0;
+    if (dev->netdev_rep) {
+        ret = netdev_dpdk_rxq_recv(rxq, batch, qfill);
+        if ((ret == EAGAIN) && fwd_rx) {
+            return 0;
+        }
     }
+
     return ret;
 }
 
@@ -3073,6 +3086,21 @@ netdev_dpdk_eth_send(struct netdev *netdev, int qid,
 }
 
 static int
+netdev_dpdk_vdpa_send(struct netdev *netdev,
+                      int qid,
+                      struct dp_packet_batch *batch,
+                      bool concurrent_txq)
+{
+    struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
+
+    if (!dev->netdev_rep) {
+        return 0;
+    } else {
+        return netdev_dpdk_eth_send(netdev, qid, batch, concurrent_txq);
+    }
+}
+
+static int
 netdev_dpdk_set_etheraddr(struct netdev *netdev, const struct eth_addr mac)
 {
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
@@ -3301,6 +3329,20 @@ out:
     ovs_mutex_unlock(&dev->mutex);
 
     return 0;
+}
+
+static int
+netdev_dpdk_vdpa_get_stats(const struct netdev *netdev,
+                           struct netdev_stats *stats)
+{
+    struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
+    int ret = 0;
+
+    if (dev->netdev_rep) {
+        ret = netdev_dpdk_get_stats(netdev, stats);
+    }
+
+    return ret;
 }
 
 static int
@@ -5335,13 +5377,24 @@ netdev_dpdk_vdpa_reconfigure(struct netdev *netdev)
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
     int err;
 
-    err = netdev_dpdk_reconfigure(netdev);
-    if (err) {
-        VLOG_ERR("netdev_dpdk_reconfigure failed. Port %s", netdev->name);
-        goto out;
+    if (dev->netdev_rep) {
+        err = netdev_dpdk_reconfigure(netdev);
+        if (err) {
+            VLOG_ERR("netdev_dpdk_reconfigure failed. Port %s", netdev->name);
+            goto out;
+        }
+        ovs_mutex_lock(&dev->mutex);
+    } else {
+        netdev->n_txq = dev->requested_n_txq;
+        netdev->n_rxq = dev->requested_n_rxq;
+        ovs_mutex_lock(&dev->mutex);
+
+        err = netdev_dpdk_mempool_configure(dev);
+        if (err && err != EEXIST) {
+            return err;
+        }
     }
 
-    ovs_mutex_lock(&dev->mutex);
     err = netdev_dpdk_vdpa_update_relay(dev->relay, dev->dpdk_mp->mp,
                                         dev->up.n_rxq);
     if (err) {
@@ -5724,9 +5777,9 @@ static const struct netdev_class dpdk_vdpa_class = {
     .rxq_recv = netdev_dpdk_vdpa_rxq_recv,
     .set_config = netdev_dpdk_vdpa_set_config,
     .reconfigure = netdev_dpdk_vdpa_reconfigure,
-    .get_stats = netdev_dpdk_get_stats,
+    .get_stats = netdev_dpdk_vdpa_get_stats,
     .get_custom_stats = netdev_dpdk_vdpa_get_custom_stats,
-    .send = netdev_dpdk_eth_send
+    .send = netdev_dpdk_vdpa_send
 };
 
 void
