@@ -33,3 +33,7 @@ Change-Id=I2fe85bb828c06c24520461a71764620dede59b28; subject=netdev-dpdk-vdpa: A
 Change-Id=I3b46249d72b22079b97f43babc58afc7144afed0; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I1715cfff56cd1b81955826d853043c2a59eb495d; subject=netdev-dpdk-vdpa: change in parameter's name in DPDK; feature=bug_fixes; upstream_status=NA; general=;
 Change-Id=Id9d3c46088202e7697a2581f740ed2ca7ac3a876; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I72a8c5b564838a79fb35244feda56b6c1bc89fd2; subject=netdev-dpdk: Add a flag to configure SW/HW mode; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Idf994535548e709270565694c430a8aa02369f73; subject=netdev-dpdk-vdpa: Support HW vDPA statistics; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I8a61e1aa7a24b0dada0870343a5519970053b3b5; subject=netdev-dpdk: Support netdev without representor; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I5dea348d5e8a3d363c70ef7f2645b70eb30a9925; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
