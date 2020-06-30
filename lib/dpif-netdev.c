@@ -929,6 +929,52 @@ struct dpif_netdev {
     uint64_t last_port_seq;
 };
 
+/*
+ * A mapping from ufid to flow for e2e cache.
+ */
+struct e2e_cache_ufid_to_flow_item {
+    struct cmap_node node;
+    ovs_u128 ufid;
+    struct match match;
+    struct nlattr *actions;
+    uint16_t actions_size;
+};
+
+enum {
+    E2E_SET_ETH_SRC = 1 << 0,
+    E2E_SET_ETH_DST = 1 << 1,
+    E2E_SET_ETH = E2E_SET_ETH_SRC | E2E_SET_ETH_DST,
+
+    E2E_SET_IPV4_SRC = 1 << 2,
+    E2E_SET_IPV4_DST = 1 << 3,
+    E2E_SET_IPV4_TTL = 1 << 4,
+    E2E_SET_IPV4 = E2E_SET_IPV4_SRC | E2E_SET_IPV4_DST | \
+                   E2E_SET_IPV4_TTL,
+
+    E2E_SET_IPV6_SRC = 1 << 5,
+    E2E_SET_IPV6_DST = 1 << 6,
+    E2E_SET_IPV6_HLMT = 1 << 7,
+    E2E_SET_IPV6 = E2E_SET_IPV6_SRC | E2E_SET_IPV6_DST | \
+                   E2E_SET_IPV6_HLMT,
+
+    E2E_SET_UDP_SRC = 1 << 8,
+    E2E_SET_UDP_DST = 1 << 9,
+    E2E_SET_UDP = E2E_SET_UDP_SRC | E2E_SET_UDP_DST,
+
+    E2E_SET_TCP_SRC = 1 << 10,
+    E2E_SET_TCP_DST = 1 << 11,
+    E2E_SET_TCP = E2E_SET_TCP_SRC | E2E_SET_TCP_DST,
+};
+
+struct e2e_cache_merged_set {
+    struct ovs_key_ethernet eth;
+    struct ovs_key_ipv4 ipv4;
+    struct ovs_key_ipv6 ipv6;
+    struct ovs_key_tcp tcp;
+    struct ovs_key_udp udp;
+    uint32_t flags;
+};
+
 static int get_port_by_number(struct dp_netdev *dp, odp_port_t port_no,
                               struct dp_netdev_port **portp)
     OVS_REQUIRES(dp->port_mutex);
@@ -8978,4 +9024,355 @@ dpcls_lookup(struct dpcls *cls, const struct netdev_flow_key *keys[],
         *num_lookups_p = lookups_match;
     }
     return false;
+}
+
+static inline bool
+e2e_cache_set_action_is_valid(struct nlattr *a)
+{
+    const struct nlattr *set_action = nl_attr_get(a);
+    const size_t set_len = nl_attr_get_size(a);
+    const struct nlattr *sa;
+    unsigned int sleft;
+
+    NL_ATTR_FOR_EACH (sa, sleft, set_action, set_len) {
+        enum ovs_key_attr type = nl_attr_type(sa);
+
+        if (!(type == OVS_KEY_ATTR_ETHERNET ||
+              type == OVS_KEY_ATTR_IPV4 ||
+              type == OVS_KEY_ATTR_IPV6 ||
+              type == OVS_KEY_ATTR_TCP ||
+              type == OVS_KEY_ATTR_UDP)) {
+            VLOG_DBG("Unsupported set action type %d", type);
+            /* TODO: add statistic counter */
+            return false;
+        }
+    }
+    return true;
+}
+
+static inline bool
+e2e_cache_flows_are_valid(struct e2e_cache_ufid_to_flow_item **netdev_flows,
+                          uint16_t num)
+{
+    struct match *match;
+    unsigned int left;
+    struct nlattr *a;
+    uint16_t i;
+
+    for (i = 0; i < num; i++) {
+         match = &netdev_flows[i]->match;
+         /* validate match */
+         if ((match->flow.ipv6_label & match->wc.masks.ipv6_label) ||
+             (match->flow.nw_tos & match->wc.masks.nw_tos) ||
+             (match->flow.tcp_flags & match->wc.masks.tcp_flags) ||
+             (match->flow.igmp_group_ip4 & match->wc.masks.igmp_group_ip4)) {
+             /* TODO: add statistic counter */
+             return false;
+         }
+         /* validate actions */
+         NL_ATTR_FOR_EACH (a, left, netdev_flows[i]->actions,
+                           netdev_flows[i]->actions_size) {
+             enum ovs_action_attr type = nl_attr_type(a);
+             if (type == OVS_ACTION_ATTR_USERSPACE ||
+                 type == OVS_ACTION_ATTR_HASH ||
+                 type == OVS_ACTION_ATTR_TRUNC ||
+                 type == OVS_ACTION_ATTR_PUSH_NSH ||
+                 type == OVS_ACTION_ATTR_POP_NSH ||
+                 type == OVS_ACTION_ATTR_CT_CLEAR ||
+                 type == OVS_ACTION_ATTR_CHECK_PKT_LEN ||
+                 type == OVS_ACTION_ATTR_SAMPLE ||
+                 ((type == OVS_ACTION_ATTR_OUTPUT ||
+                   type == OVS_ACTION_ATTR_CLONE) &&
+                  left > NLA_ALIGN(a->nla_len)) ||
+                 ((type == OVS_ACTION_ATTR_SET ||
+                   type == OVS_ACTION_ATTR_SET_MASKED) &&
+                  !e2e_cache_set_action_is_valid(a))) {
+                  /* TODO: add statistic counter */
+                 return false;
+             }
+         }
+    }
+    return true;
+}
+
+#define e2e_save_set_attr(mfield, field, flag)                             \
+        if (mask) {                                                        \
+            if (!is_all_zeros(&mask->field, sizeof mask->field)) {         \
+                if (!is_all_ones(&mask->field, sizeof mask->field)) {      \
+                    VLOG_DBG_RL(&rl, "HW partial mask is not supported");  \
+                }                                                          \
+                merged->flags |= flag;                                     \
+                merged->mfield.field = key->field;                         \
+            }                                                              \
+        } else if (!is_all_zeros(&key->field, sizeof key->field)) {        \
+            merged->flags |= flag;                                         \
+            merged->mfield.field = key->field;                             \
+        }
+
+static inline void
+e2e_cache_save_set_actions(struct e2e_cache_merged_set *merged, bool masked,
+                           const struct nlattr *set_action,
+                           const size_t set_len)
+{
+    const struct nlattr *sa;
+    unsigned int sleft;
+    static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 10);
+
+    NL_ATTR_FOR_EACH (sa, sleft, set_action, set_len) {
+        if (nl_attr_type(sa) == OVS_KEY_ATTR_ETHERNET) {
+            const struct ovs_key_ethernet *key = nl_attr_get(sa);
+            const struct ovs_key_ethernet *mask = masked ? key + 1 : NULL;
+
+            e2e_save_set_attr(eth, eth_src, E2E_SET_ETH_SRC);
+            e2e_save_set_attr(eth, eth_dst, E2E_SET_ETH_DST);
+        } else if (nl_attr_type(sa) == OVS_KEY_ATTR_IPV4) {
+            const struct ovs_key_ipv4 *key = nl_attr_get(sa);
+            const struct ovs_key_ipv4 *mask = masked ? key + 1 : NULL;
+
+            e2e_save_set_attr(ipv4, ipv4_src, E2E_SET_IPV4_SRC);
+            e2e_save_set_attr(ipv4, ipv4_dst, E2E_SET_IPV4_DST);
+            e2e_save_set_attr(ipv4, ipv4_ttl, E2E_SET_IPV4_TTL);
+        } else if (nl_attr_type(sa) == OVS_KEY_ATTR_IPV6) {
+            const struct ovs_key_ipv6 *key = nl_attr_get(sa);
+            const struct ovs_key_ipv6 *mask = masked ? key + 1 : NULL;
+
+            e2e_save_set_attr(ipv6, ipv6_src, E2E_SET_IPV6_SRC);
+            e2e_save_set_attr(ipv6, ipv6_dst, E2E_SET_IPV6_DST);
+            e2e_save_set_attr(ipv6, ipv6_hlimit, E2E_SET_IPV6_HLMT);
+        } else if (nl_attr_type(sa) == OVS_KEY_ATTR_TCP) {
+            const struct ovs_key_tcp *key = nl_attr_get(sa);
+            const struct ovs_key_tcp *mask = masked ? key + 1 : NULL;
+
+            e2e_save_set_attr(tcp, tcp_src, E2E_SET_TCP_SRC);
+            e2e_save_set_attr(tcp, tcp_dst, E2E_SET_TCP_DST);
+        } else if (nl_attr_type(sa) == OVS_KEY_ATTR_UDP) {
+            const struct ovs_key_udp *key = nl_attr_get(sa);
+            const struct ovs_key_udp *mask = masked ? key + 1 : NULL;
+
+            e2e_save_set_attr(udp, udp_src, E2E_SET_UDP_SRC);
+            e2e_save_set_attr(udp, udp_dst, E2E_SET_UDP_DST);
+        }
+    }
+}
+
+#define e2e_construct_set_attr(mfield, field, flag)                     \
+        if (merged->flags & flag) {                                     \
+            key->field = merged->mfield.field;                          \
+            memset(&mask->field, 0xFF, sizeof mask->field);             \
+        }
+
+static inline void
+e2e_cache_attach_merged_set_action(struct ofpbuf *buf, size_t tnl_offset,
+                                   struct e2e_cache_merged_set *merged)
+{
+    size_t offset;
+    struct ofpbuf tmpbuf;
+
+    ofpbuf_init(&tmpbuf, 0);
+    offset = nl_msg_start_nested(&tmpbuf, OVS_ACTION_ATTR_SET_MASKED);
+    if (merged->flags & E2E_SET_ETH) {
+        struct ovs_key_ethernet *key = NULL;
+        struct ovs_key_ethernet *mask = NULL;
+
+        key = nl_msg_put_unspec_zero(&tmpbuf, OVS_KEY_ATTR_ETHERNET,
+                                     2 * sizeof *key);
+        mask = key + 1;
+        e2e_construct_set_attr(eth, eth_src, E2E_SET_ETH_SRC);
+        e2e_construct_set_attr(eth, eth_dst, E2E_SET_ETH_DST);
+    }
+    if (merged->flags & E2E_SET_IPV4) {
+        struct ovs_key_ipv4 *key = NULL;
+        struct ovs_key_ipv4 *mask = NULL;
+
+        key = nl_msg_put_unspec_zero(&tmpbuf, OVS_KEY_ATTR_IPV4,
+                                     2 * sizeof *key);
+        mask = key + 1;
+        e2e_construct_set_attr(ipv4, ipv4_src, E2E_SET_IPV4_SRC);
+        e2e_construct_set_attr(ipv4, ipv4_dst, E2E_SET_IPV4_DST);
+        e2e_construct_set_attr(ipv4, ipv4_ttl, E2E_SET_IPV4_TTL);
+    }
+    if (merged->flags & E2E_SET_IPV6) {
+        struct ovs_key_ipv6 *key = NULL;
+        struct ovs_key_ipv6 *mask = NULL;
+
+        key = nl_msg_put_unspec_zero(&tmpbuf, OVS_KEY_ATTR_IPV6,
+                                     2 * sizeof *key);
+        mask = key + 1;
+        e2e_construct_set_attr(ipv6, ipv6_src, E2E_SET_IPV6_SRC);
+        e2e_construct_set_attr(ipv6, ipv6_dst, E2E_SET_IPV6_DST);
+        e2e_construct_set_attr(ipv6, ipv6_hlimit, E2E_SET_IPV6_HLMT);
+    }
+    if (merged->flags & E2E_SET_TCP) {
+        struct ovs_key_tcp *key = NULL;
+        struct ovs_key_tcp *mask = NULL;
+
+        key = nl_msg_put_unspec_zero(&tmpbuf, OVS_KEY_ATTR_TCP,
+                                     2 * sizeof *key);
+        mask = key + 1;
+        e2e_construct_set_attr(tcp, tcp_src, E2E_SET_TCP_SRC);
+        e2e_construct_set_attr(tcp, tcp_dst, E2E_SET_TCP_DST);
+    }
+    if (merged->flags & E2E_SET_UDP) {
+        struct ovs_key_udp *key = NULL;
+        struct ovs_key_udp *mask = NULL;
+
+        key = nl_msg_put_unspec_zero(&tmpbuf, OVS_KEY_ATTR_UDP,
+                                     2 * sizeof *key);
+        mask = key + 1;
+        e2e_construct_set_attr(udp, udp_src, E2E_SET_UDP_SRC);
+        e2e_construct_set_attr(udp, udp_dst, E2E_SET_UDP_DST);
+    }
+    nl_msg_end_nested(&tmpbuf, offset);
+    /* insert the set action after tnl_pop in the buf */
+    ofpbuf_insert(buf, tnl_offset, tmpbuf.data, tmpbuf.size);
+}
+
+static void
+e2e_cache_merge_actions(struct e2e_cache_ufid_to_flow_item **netdev_flows,
+                        uint16_t num, struct ofpbuf *buf)
+{
+    uint16_t i = 0;
+    unsigned int left;
+    struct nlattr *a;
+    uint16_t num_set = 0;
+    struct e2e_cache_merged_set merged_set;
+    size_t tnl_offset = 0;
+
+    memset(&merged_set, 0, sizeof merged_set);
+    for (i = 0; i < num; i++) {
+         NL_ATTR_FOR_EACH (a, left, netdev_flows[i]->actions,
+                           netdev_flows[i]->actions_size) {
+            enum ovs_action_attr type = nl_attr_type(a);
+
+            if (type == OVS_ACTION_ATTR_CT ||
+                type == OVS_ACTION_ATTR_RECIRC) {
+                continue;
+            }
+            if (type == OVS_ACTION_ATTR_SET ||
+                type == OVS_ACTION_ATTR_SET_MASKED) {
+                const struct nlattr *set_action = nl_attr_get(a);
+                const size_t set_len = nl_attr_get_size(a);
+                bool masked = (type == OVS_ACTION_ATTR_SET_MASKED);
+
+                e2e_cache_save_set_actions(&merged_set, masked,
+                                           set_action, set_len);
+                num_set++;
+                continue;
+            }
+            if (type == OVS_ACTION_ATTR_TUNNEL_POP) {
+                tnl_offset = buf->size + a->nla_len;
+            }
+            ofpbuf_put(buf, a, a->nla_len);
+         }
+    }
+    if (num_set) {
+        e2e_cache_attach_merged_set_action(buf, tnl_offset, &merged_set);
+    }
+}
+
+static inline void
+e2e_cache_shift_tnl_fields(struct match *merged_match)
+{
+    struct eth_addr dl_src, dl_dst;
+    struct eth_addr src_mask, dst_mask;
+    bool merge_src = false;
+    bool merge_dst = false;
+    ovs_be16 dport, dport_mask;
+    uint8_t proto, proto_mask;
+    union flow_in_port in_port, inport_mask;
+
+    if (!is_all_zeros(&merged_match->wc.masks.dl_src,
+                      sizeof merged_match->wc.masks.dl_src)) {
+         memcpy(&dl_src, &merged_match->flow.dl_src, sizeof dl_src);
+         memcpy(&src_mask, &merged_match->wc.masks.dl_src,
+                sizeof src_mask);
+         merge_src = true;
+    }
+    if (!is_all_zeros(&merged_match->wc.masks.dl_dst,
+                      sizeof merged_match->wc.masks.dl_dst)) {
+         memcpy(&dl_dst, &merged_match->flow.dl_dst, sizeof dl_dst);
+         memcpy(&dst_mask, &merged_match->wc.masks.dl_dst,
+                sizeof dst_mask);
+         merge_dst = true;
+    }
+    dport = merged_match->flow.tp_dst;
+    dport_mask = merged_match->wc.masks.tp_dst;
+    proto = merged_match->flow.nw_proto;
+    proto_mask = merged_match->wc.masks.nw_proto;
+    memcpy(&in_port, &merged_match->flow.in_port, sizeof in_port);
+    memcpy(&inport_mask, &merged_match->wc.masks.in_port, sizeof inport_mask);
+    /* clear match buffer */
+    memset(merged_match, 0, sizeof *merged_match);
+    /* restore tunnel matcher */
+    if (merge_src) {
+        memcpy(&merged_match->flow.tunnel.metadata.dl_src, &dl_src,
+               sizeof dl_src);
+        memcpy(&merged_match->wc.masks.tunnel.metadata.dl_src,
+               &src_mask, sizeof src_mask);
+    }
+    if (merge_dst) {
+        memcpy(&merged_match->flow.tunnel.metadata.dl_dst, &dl_dst,
+               sizeof dl_dst);
+        memcpy(&merged_match->wc.masks.tunnel.metadata.dl_dst,
+               &dst_mask, sizeof dst_mask);
+    }
+    merged_match->flow.tunnel.tp_dst = dport;
+    merged_match->wc.masks.tunnel.tp_dst = dport_mask;
+    merged_match->flow.tunnel.metadata.nw_proto = proto;
+    merged_match->wc.masks.tunnel.metadata.nw_proto = proto_mask;
+    memcpy(&merged_match->flow.in_port, &in_port, sizeof in_port);
+    memcpy(&merged_match->wc.masks.in_port, &inport_mask, sizeof inport_mask);
+}
+
+#define merge_flow_matcher(field, src, dst)                          \
+        if (!is_all_zeros(&src->wc.masks.field,                      \
+                          sizeof src->wc.masks.field) &&             \
+            is_all_zeros(&dst->wc.masks.field,                       \
+                         sizeof dst->wc.masks.field)) {              \
+            memcpy(&dst->flow.field, &src->flow.field,               \
+                   sizeof src->flow.field);                          \
+            memcpy(&dst->wc.masks.field, &src->wc.masks.field,       \
+                   sizeof src->wc.masks.field);                      \
+        }
+
+static void
+e2e_cache_merge_match(struct e2e_cache_ufid_to_flow_item **netdev_flows,
+                      uint16_t num, struct match *merged_match)
+{
+    struct match *match;
+    uint16_t i = 0;
+    bool tnl_saved = false;
+
+    for (i = 0; i < num; i++) {
+         /* parse match */
+         match = &(netdev_flows[i]->match);
+         if (!tnl_saved && !is_all_zeros(&match->wc.masks.tunnel,
+                                         sizeof match->wc.masks.tunnel)) {
+             e2e_cache_shift_tnl_fields(merged_match);
+             tnl_saved = true;
+         }
+         /* merge in_port */
+         merge_flow_matcher(in_port, match, merged_match);
+
+         /* merge tunnel outer */
+         merge_flow_matcher(tunnel.ip_src, match, merged_match);
+         merge_flow_matcher(tunnel.ip_dst, match, merged_match);
+         merge_flow_matcher(tunnel.ipv6_src, match, merged_match);
+         merge_flow_matcher(tunnel.ipv6_dst, match, merged_match);
+         merge_flow_matcher(tunnel.tun_id, match, merged_match);
+         merge_flow_matcher(tunnel.tp_dst, match, merged_match);
+
+         /* merge inner/non-tnl */
+         merge_flow_matcher(dl_src, match, merged_match);
+         merge_flow_matcher(dl_dst, match, merged_match);
+         merge_flow_matcher(dl_type, match, merged_match);
+         merge_flow_matcher(nw_src, match, merged_match);
+         merge_flow_matcher(nw_dst, match, merged_match);
+         merge_flow_matcher(ipv6_src, match, merged_match);
+         merge_flow_matcher(ipv6_dst, match, merged_match);
+         merge_flow_matcher(nw_frag, match, merged_match);
+         merge_flow_matcher(nw_proto, match, merged_match);
+         merge_flow_matcher(tp_src, match, merged_match);
+         merge_flow_matcher(tp_dst, match, merged_match);
+    }
 }
