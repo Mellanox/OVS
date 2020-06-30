@@ -1255,6 +1255,15 @@ dpif_execute_helper_cb(void *aux_, struct dp_packet_batch *packets_,
         break;
     }
 
+    case OVS_ACTION_ATTR_DROP: {
+        const enum xlate_error *drop_reason = nl_attr_get(action);
+
+        odp_update_drop_action_counter((int)*drop_reason,
+                                       dp_packet_batch_size(packets_));
+        dp_packet_delete_batch(packets_, should_steal);
+        return;
+    }
+
     case OVS_ACTION_ATTR_HASH:
     case OVS_ACTION_ATTR_PUSH_VLAN:
     case OVS_ACTION_ATTR_POP_VLAN:
@@ -1272,7 +1281,6 @@ dpif_execute_helper_cb(void *aux_, struct dp_packet_batch *packets_,
     case OVS_ACTION_ATTR_CT_CLEAR:
     case OVS_ACTION_ATTR_UNSPEC:
     case OVS_ACTION_ATTR_CHECK_PKT_LEN:
-    case OVS_ACTION_ATTR_DROP:
     case __OVS_ACTION_ATTR_MAX:
         OVS_NOT_REACHED();
     }
