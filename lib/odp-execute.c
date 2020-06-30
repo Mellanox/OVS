@@ -55,13 +55,12 @@ COVERAGE_DEFINE(drop_action_unsupported_packet_type);
 COVERAGE_DEFINE(drop_action_congestion);
 COVERAGE_DEFINE(drop_action_forwarding_disabled);
 
-static void
-dp_update_drop_action_counter(enum xlate_error drop_reason,
-                              int delta)
+void
+odp_update_drop_action_counter(int drop_reason, int delta)
 {
    static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
 
-   switch (drop_reason) {
+   switch ((enum xlate_error)drop_reason) {
    case XLATE_OK:
         COVERAGE_ADD(drop_action_of_pipeline, delta);
         break;
@@ -799,6 +798,7 @@ requires_datapath_assistance(const struct nlattr *a)
     case OVS_ACTION_ATTR_RECIRC:
     case OVS_ACTION_ATTR_CT:
     case OVS_ACTION_ATTR_METER:
+    case OVS_ACTION_ATTR_DROP:
         return true;
 
     case OVS_ACTION_ATTR_SET:
@@ -817,7 +817,6 @@ requires_datapath_assistance(const struct nlattr *a)
     case OVS_ACTION_ATTR_POP_NSH:
     case OVS_ACTION_ATTR_CT_CLEAR:
     case OVS_ACTION_ATTR_CHECK_PKT_LEN:
-    case OVS_ACTION_ATTR_DROP:
         return false;
 
     case OVS_ACTION_ATTR_UNSPEC:
@@ -1059,14 +1058,6 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
             }
             break;
 
-        case OVS_ACTION_ATTR_DROP:{
-            const enum xlate_error *drop_reason = nl_attr_get(a);
-
-            dp_update_drop_action_counter(*drop_reason,
-                                          dp_packet_batch_size(batch));
-            dp_packet_delete_batch(batch, steal);
-            return;
-        }
         case OVS_ACTION_ATTR_OUTPUT:
         case OVS_ACTION_ATTR_TUNNEL_PUSH:
         case OVS_ACTION_ATTR_TUNNEL_POP:
@@ -1074,6 +1065,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
         case OVS_ACTION_ATTR_RECIRC:
         case OVS_ACTION_ATTR_CT:
         case OVS_ACTION_ATTR_UNSPEC:
+        case OVS_ACTION_ATTR_DROP:
         case __OVS_ACTION_ATTR_MAX:
             OVS_NOT_REACHED();
         }
