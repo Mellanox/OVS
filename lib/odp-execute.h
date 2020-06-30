@@ -39,4 +39,9 @@ void odp_execute_actions(void *dp, struct dp_packet_batch *batch,
                          bool steal,
                          const struct nlattr *actions, size_t actions_len,
                          odp_execute_cb dp_execute_action);
+
+/* This helper function is called by datapath handling
+ * OVS_ACTION_ATTR_DROP action. */
+void odp_update_drop_action_counter(int drop_reason, int delta);
+
 #endif
