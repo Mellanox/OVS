@@ -7545,6 +7545,39 @@ packet_enqueue_to_flow_map(struct dp_packet *packet,
     map->tcp_flags = tcp_flags;
 }
 
+#ifdef E2E_CACHE_ENABLED
+static inline void
+e2e_cache_trace_init(struct dp_packet *p)
+{
+    p->e2e_trace_size = 0;
+    p->e2e_trace_flags = E2E_CACHE_TRACE_FLAG_NONE;
+    p->e2e_trace_port = ODPP_NONE;
+}
+
+static inline void
+e2e_cache_trace_add_flow(struct dp_packet *p,
+                         const ovs_u128 *ufid,
+                         odp_port_t port)
+{
+    uint32_t e2e_trace_size = p->e2e_trace_size;
+
+    if (OVS_UNLIKELY(e2e_trace_size >= E2E_CACHE_MAX_TRACE)) {
+        p->e2e_trace_flags |= E2E_CACHE_TRACE_FLAG_OVERFLOW;
+        return;
+    }
+    p->e2e_trace[e2e_trace_size] = *ufid;
+    p->e2e_trace_size = e2e_trace_size + 1;
+    if (OVS_LIKELY(p->e2e_trace_flags & E2E_CACHE_TRACE_FLAG_PORT_SET)) {
+        return;
+    }
+    p->e2e_trace_flags |= E2E_CACHE_TRACE_FLAG_PORT_SET;
+    p->e2e_trace_port = port;
+}
+#else
+#define e2e_cache_trace_init(p) do { } while (0)
+#define e2e_cache_trace_add_flow(p, ufid, port) do { } while (0)
+#endif
+
 /* SMC lookup function for a batch of packets.
  * By doing batching SMC lookup, we can use prefetch
  * to hide memory access latency.
@@ -7598,6 +7631,11 @@ smc_lookup_batch(struct dp_netdev_pmd_thread *pmd,
                                                flow_map, recv_idx);
                     n_smc_hit++;
                     hit = true;
+
+                    if (e2e_cache_enabled) {
+                        e2e_cache_trace_add_flow(packet, &flow->ufid,
+                                                 flow->flow.in_port.odp_port);
+                    }
                     break;
                 }
             }
@@ -7685,6 +7723,9 @@ dfc_processing(struct dp_netdev_pmd_thread *pmd,
 
         if (!md_is_valid) {
             pkt_metadata_init(&packet->md, port_no);
+            if (e2e_cache_enabled) {
+                e2e_cache_trace_init(packet);
+            }
         }
 
         if ((*recirc_depth_get() == 0) &&
@@ -7712,6 +7753,10 @@ dfc_processing(struct dp_netdev_pmd_thread *pmd,
                     packet_enqueue_to_flow_map(packet, flow, tcp_flags,
                                                flow_map, map_cnt++);
                 }
+                if (e2e_cache_enabled) {
+                    e2e_cache_trace_add_flow(packet, &flow->ufid,
+                                             flow->flow.in_port.odp_port);
+                }
                 continue;
             }
         }
@@ -7738,6 +7783,10 @@ dfc_processing(struct dp_netdev_pmd_thread *pmd,
                  * same datapath flows. */
                 packet_enqueue_to_flow_map(packet, flow, tcp_flags,
                                            flow_map, map_cnt++);
+            }
+            if (e2e_cache_enabled) {
+                e2e_cache_trace_add_flow(packet, &flow->ufid,
+                                         flow->flow.in_port.odp_port);
             }
         } else {
             /* Exact match cache missed. Group missed packets together at
@@ -7954,6 +8003,12 @@ fast_path_processing(struct dp_netdev_pmd_thread *pmd,
         smc_insert(pmd, keys[i], hash);
 
         emc_probabilistic_insert(pmd, keys[i], flow);
+
+        if (e2e_cache_enabled) {
+            e2e_cache_trace_add_flow(packet, &flow->ufid,
+                                     flow->flow.in_port.odp_port);
+        }
+
         /* Add these packets into the flow map in the same order
          * as received.
          */
