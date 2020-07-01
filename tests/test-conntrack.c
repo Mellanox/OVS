@@ -89,8 +89,8 @@ ct_thread_main(void *aux_)
     pkt_batch = prepare_packets(batch_size, change_conn, aux->tid, &dl_type);
     ovs_barrier_block(&barrier);
     for (i = 0; i < n_pkts; i += batch_size) {
-        conntrack_execute(ct, pkt_batch, dl_type, false, true, 0, NULL, NULL,
-                          0, 0, NULL, NULL, now, NULL);
+        conntrack_execute(ct, pkt_batch, dl_type, false, true, 0, false,
+                          NULL, NULL, 0, 0, NULL, NULL, now, NULL);
     }
     ovs_barrier_block(&barrier);
     destroy_packets(pkt_batch);
@@ -174,15 +174,15 @@ pcap_batch_execute_conntrack(struct conntrack *ct_,
 
         if (flow.dl_type != dl_type) {
             conntrack_execute(ct_, &new_batch, dl_type, false, true, 0,
-                              NULL, NULL, 0, 0, NULL, NULL, now, NULL);
+                              false, NULL, NULL, 0, 0, NULL, NULL, now, NULL);
             dp_packet_batch_init(&new_batch);
         }
         dp_packet_batch_add(&new_batch, packet);
     }
 
     if (!dp_packet_batch_is_empty(&new_batch)) {
-        conntrack_execute(ct_, &new_batch, dl_type, false, true, 0, NULL, NULL,
-                          0, 0, NULL, NULL, now, NULL);
+        conntrack_execute(ct_, &new_batch, dl_type, false, true, 0, false,
+                          NULL, NULL, 0, 0, NULL, NULL, now, NULL);
     }
 
 }

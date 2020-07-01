@@ -575,10 +575,22 @@ dp_netdev_ct_offload_active(struct ct_flow_offload_item *offload,
     return stats.used >= now;
 }
 
+static ovs_u128
+dp_netdev_ct_offload_get_ufid(struct ct_flow_offload_item *offload)
+{
+    struct match match;
+    ovs_u128 ufid;
+
+    dp_netdev_fill_ct_match(&match, offload);
+    dp_netdev_get_mega_ufid((const struct match *)&match, &ufid);
+    return ufid;
+}
+
 static struct conntrack_offload_class dpif_ct_offload_class = {
     .conn_add = dp_netdev_ct_offload_add_item,
     .conn_del = dp_netdev_ct_offload_del_item,
     .conn_active = dp_netdev_ct_offload_active,
+    .conn_get_ufid = dp_netdev_ct_offload_get_ufid,
 };
 
 #define XPS_TIMEOUT 500000LL    /* In microseconds. */
@@ -7977,9 +7989,9 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
         }
 
         conntrack_execute(dp->conntrack, packets_, aux->flow->dl_type, force,
-                          commit, zone, setmark, setlabel, aux->flow->tp_src,
-                          aux->flow->tp_dst, helper, nat_action_info_ref,
-                          pmd->ctx.now / 1000, pmd->dp);
+                          commit, zone, e2e_cache_enabled, setmark, setlabel,
+                          aux->flow->tp_src, aux->flow->tp_dst, helper,
+                          nat_action_info_ref, pmd->ctx.now / 1000, pmd->dp);
         break;
     }
 

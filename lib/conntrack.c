@@ -1515,13 +1515,43 @@ conntrack_offload_prepare_add(struct conn *conn,
     conn->offloads.dir_info[dir].pkt_ct_state = packet->md.ct_state;
 }
 
+#ifdef E2E_CACHE_ENABLED
+static inline void
+e2e_cache_trace_add_ct(struct conntrack *ct,
+                       struct dp_packet *p,
+                       struct conn *conn,
+                       uint32_t mark,
+                       bool reply,
+                       ovs_u128 label)
+{
+    uint32_t e2e_trace_size = p->e2e_trace_size;
+    int dir;
+    struct ct_flow_offload_item item;
+
+    if (OVS_UNLIKELY(e2e_trace_size >= E2E_CACHE_MAX_TRACE)) {
+        p->e2e_trace_flags |= E2E_CACHE_TRACE_FLAG_OVERFLOW;
+        return;
+    }
+
+    dir = ct_get_packet_dir(reply);
+    conntrack_offload_fill_item_add(&item, conn, dir, mark, label);
+
+    p->e2e_trace_flags |= E2E_CACHE_TRACE_FLAG_CT;
+    p->e2e_trace[e2e_trace_size] = ct->offload_class->conn_get_ufid(&item);
+    p->e2e_trace_size = e2e_trace_size + 1;
+}
+#else
+#define e2e_cache_trace_add_ct(ct, p, conn, m, r, l) do { } while (0)
+#endif
+
 static void
 conntrack_offload_add_conn(struct conntrack *ct,
                            struct dp_packet *packet,
                            struct conn *conn,
                            void *dp,
                            uint32_t mark,
-                           ovs_u128 label)
+                           ovs_u128 label,
+                           bool e2e_cache_enabled)
 {
     /* nat_conn has opposite directions. */
     bool reply = !!conn->master_conn ^ packet->md.reply;
@@ -1543,6 +1573,9 @@ conntrack_offload_add_conn(struct conntrack *ct,
         if (conn->master_conn) {
             conn->master_conn->offloads.flags |= reply
                 ? CT_OFFLOAD_REP : CT_OFFLOAD_INIT;
+        }
+        if (e2e_cache_enabled) {
+            e2e_cache_trace_add_ct(ct, packet, conn, mark, reply, label);
         }
     }
 
@@ -1591,7 +1624,7 @@ conntrack_offload_add_conn(struct conntrack *ct,
 int
 conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
                   ovs_be16 dl_type, bool force, bool commit, uint16_t zone,
-                  const uint32_t *setmark,
+                  bool e2e_cache_enabled, const uint32_t *setmark,
                   const struct ovs_key_ct_labels *setlabel,
                   ovs_be16 tp_src, ovs_be16 tp_dst, const char *helper,
                   const struct nat_action_info_t *nat_action_info,
@@ -1628,7 +1661,8 @@ conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
         if (netdev_is_flow_api_enabled() &&
             (packet->md.ct_state & CS_ESTABLISHED) &&
             conn && !(conn->offloads.flags & CT_OFFLOAD_SKIP)) {
-            conntrack_offload_add_conn(ct, packet, conn, dp, mark, label);
+            conntrack_offload_add_conn(ct, packet, conn, dp, mark, label,
+                                       e2e_cache_enabled);
         }
     }
 
