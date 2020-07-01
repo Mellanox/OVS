@@ -7547,8 +7547,6 @@ packet_enqueue_to_flow_map(struct dp_packet *packet,
 
 #ifdef E2E_CACHE_ENABLED
 
-struct e2e_cache_trace_message;
-
 struct e2e_cache_trace_msg_item {
     struct ovs_list node;
     struct e2e_cache_trace_message *msg;
@@ -7596,7 +7594,6 @@ e2e_cache_trace_add_flow(struct dp_packet *p,
     p->e2e_trace_port = port;
 }
 
-OVS_UNUSED
 static inline int
 e2e_cache_trace_msg_enqueue(struct e2e_cache_trace_message *msg)
 {
@@ -7651,12 +7648,75 @@ e2e_cache_thread_wait_on_queues(void)
     ovs_mutex_unlock(&e2e_cache_thread_msg_queues.mutex);
 }
 
+static void
+e2e_cache_dispatch_trace_message(struct dp_packet_batch *batch)
+{
+    struct dp_packet *packet;
+    size_t buffer_size;
+    struct e2e_cache_trace_message *buffer;
+    struct e2e_cache_trace_info *cur_trace_info;
+    uint32_t num_elements;
+
+    buffer_size = sizeof(struct e2e_cache_trace_message) +
+                         batch->count * sizeof(struct e2e_cache_trace_info);
+
+    buffer = (struct e2e_cache_trace_message *) xmalloc_cacheline(buffer_size);
+    if (OVS_UNLIKELY(!buffer)) {
+        return;
+    }
+
+    num_elements = 0;
+    cur_trace_info = &buffer->data[0];
+
+    DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
+        uint32_t e2e_trace_size = packet->e2e_trace_size;
+
+        /* Don't send "partial" traces due to overflow of the trace storage */
+        if (OVS_UNLIKELY(cur_trace_info->flags &
+                         E2E_CACHE_TRACE_FLAG_OVERFLOW)) {
+            /* TODO: add statistic counter */
+            continue;
+        }
+        /* Send only traces for packet that passed conntrack */
+        if (!(cur_trace_info->flags & E2E_CACHE_TRACE_FLAG_CT)) {
+            continue;
+        }
+
+        cur_trace_info->num_elements = e2e_trace_size;
+        cur_trace_info->port = packet->e2e_trace_port;
+
+        memcpy(&cur_trace_info->ufids[0], &packet->e2e_trace[0],
+               e2e_trace_size * sizeof packet->e2e_trace[0]);
+
+        num_elements++;
+        cur_trace_info++;
+    }
+
+    if (num_elements == 0) {
+        goto out;
+    }
+
+    buffer->num_elements = num_elements;
+
+    if (OVS_UNLIKELY(e2e_cache_trace_msg_enqueue(buffer) != 0)) {
+        /* TODO: add statistic counter of send error */
+        goto out;
+    }
+
+    /* TODO: add statistic counter on success */
+    return;
+
+out:
+    free_cacheline(buffer);
+}
+
 #else
 #define e2e_cache_trace_init(p) do { } while (0)
 #define e2e_cache_trace_add_flow(p, ufid, port) do { } while (0)
 #define e2e_cache_trace_msg_enqueue(m) do { } while (0)
 #define e2e_cache_trace_msg_dequeue() do { } while (0)
 #define e2e_cache_thread_wait_on_queues() do { } while (0)
+#define e2e_cache_dispatch_trace_message(b) do { } while (0)
 #endif /* E2E_CACHE_ENABLED */
 
 /* SMC lookup function for a batch of packets.
@@ -8351,6 +8411,10 @@ dp_execute_output_action(struct dp_netdev_pmd_thread *pmd,
     struct tx_port *p = pmd_send_port_cache_lookup(pmd, port_no);
     struct dp_packet_batch out;
 
+    if (e2e_cache_enabled) {
+        e2e_cache_dispatch_trace_message(packets_);
+    }
+
     if (!OVS_LIKELY(p)) {
         COVERAGE_ADD(datapath_drop_invalid_port,
                      dp_packet_batch_size(packets_));
@@ -8737,6 +8801,11 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
 
         odp_update_drop_action_counter((int)*drop_reason,
                                        dp_packet_batch_size(packets_));
+
+        if (e2e_cache_enabled) {
+            e2e_cache_dispatch_trace_message(packets_);
+        }
+
         dp_packet_delete_batch(packets_, should_steal);
         return;
     }
