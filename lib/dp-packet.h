@@ -106,6 +106,10 @@ enum dp_packet_offload_mask {
 #define DP_PACKET_OL_RX_L4_CKSUM_MASK (DP_PACKET_OL_RX_L4_CKSUM_GOOD | \
                                        DP_PACKET_OL_RX_L4_CKSUM_BAD)
 
+#ifndef E2E_CACHE_ENABLED
+#define E2E_CACHE_ENABLED
+#endif
+
 /* Buffer for holding packet data.  A dp_packet is automatically reallocated
  * as necessary if it grows too large for the available memory.
  * By default the packet type is set to Ethernet (PT_ETH).
