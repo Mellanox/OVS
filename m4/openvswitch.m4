@@ -135,6 +135,18 @@ AC_DEFUN([OVS_CHECK_WIN32],
          ]
       )
 
+      AC_ARG_WITH([no-vdpa],
+         [AS_HELP_STRING([--with-no-vdpa],
+            [Build without netdev-dpdk-vdpa])],
+         [
+            MSVC_CFLAGS="-DNETDEV_DPDK_VDPA"
+            AC_SUBST([MSVC_CFLAGS])
+         ], [
+            MSVC_CFLAGS=""
+            AC_SUBST([MSVC_CFLAGS])
+         ]
+      )
+
       AC_DEFINE([WIN32], [1], [Define to 1 if building on WIN32.])
       AC_CHECK_TYPES([struct timespec], [], [], [[#include <time.h>]])
       AH_BOTTOM([#ifdef WIN32
