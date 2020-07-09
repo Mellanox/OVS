@@ -556,6 +556,10 @@ dp_netdev_ct_offload_active(struct ct_flow_offload_item *offload,
     struct dpif_flow_attrs attrs;
     struct dp_netdev *dp = offload->dp;
 
+    /* if a direction is not offloaded do not attempt to query it from HW */
+    if (!dp) {
+        return false;
+    }
     if (!dpif_netdev_get_flow_offload_status(dp->class->type,
                                              &dp->port_mutex, offload->odp_port,
                                              (const ovs_u128 *) &offload->ufid,
@@ -2775,6 +2779,10 @@ dp_netdev_ct_offload_del(struct dp_offload_item *offload_item, int dir)
     struct netdev *port;
     int ret = 0;
 
+    /* if a direction is not offloaded do not attempt to delete it from HW */
+    if (!offload.dp) {
+        return -1;
+    }
     port = netdev_ports_get(offload.odp_port,
                             dpif_normalize_type(offload_item->dp->class->type));
     if (!port) {
