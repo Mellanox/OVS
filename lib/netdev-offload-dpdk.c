@@ -312,17 +312,6 @@ get_context_data_by_id(struct context_metadata *md, uint32_t id, void *data)
     return -1;
 }
 
-static void
-context_release(struct context_metadata *md, void *arg, uint32_t id,
-                struct context_data *data_cur)
-{
-    hmap_remove(&md->i2d_hmap, &data_cur->i2d_node);
-    hmap_remove(&md->d2i_hmap, &data_cur->d2i_node);
-    free(data_cur);
-    md->id_free(arg, id);
-    VLOG_DBG_RL(&rl, "%s: md=%s, id=%d", __func__, md->name, id);
-}
-
 static struct ovs_list context_release_list =
     OVS_LIST_INITIALIZER(&context_release_list);
 
@@ -334,6 +323,21 @@ struct context_release_item {
     uint32_t id;
     struct context_data *data;
 };
+
+static void
+context_release(struct context_release_item *item)
+{
+    struct context_metadata *md = item->md;
+    struct context_data *data = item->data;
+    uint32_t id = item->id;
+    void *arg = item->arg;
+
+    VLOG_DBG_RL(&rl, "%s: md=%s, id=%d", __func__, md->name, id);
+    hmap_remove(&md->i2d_hmap, &data->i2d_node);
+    hmap_remove(&md->d2i_hmap, &data->d2i_node);
+    free(data);
+    md->id_free(arg, id);
+}
 
 static void
 context_delayed_release(struct context_metadata *md, void *arg, uint32_t id,
@@ -374,7 +378,7 @@ do_context_delayed_release(void)
         VLOG_DBG_RL(&rl, "%s: md=%s, id=%d, timestamp=%llu, now=%llu",
                     __func__, item->md->name, item->id, item->timestamp, now);
         if (item->data->refcnt == 0) {
-            context_release(item->md, item->arg, item->id, item->data);
+            context_release(item);
         }
         ovs_list_remove(list);
     }
