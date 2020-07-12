@@ -489,10 +489,16 @@ int dpif_port_dump_done(struct dpif_port_dump *);
 int dpif_port_poll(const struct dpif *, char **devnamep);
 void dpif_port_poll_wait(const struct dpif *);
 
+#define CT_CONN_TS_INTERVAL_NUM (1 << 10)
+#define CT_CONN_TS_INTERVAL_MASK (CT_CONN_TS_INTERVAL_NUM - 1)
+#define CT_CONN_TS_BITS 9
+#define CT_CONN_TIMESTAMPS (1 << CT_CONN_TS_BITS)
+#define CT_CONN_TS_MASK (CT_CONN_TIMESTAMPS - 1)
 struct dpif_offload_stats {
     uint32_t ct_connections;
     uint32_t queue_enqueues;
     uint32_t queue_dequeues;
+    long long int timestamps[CT_CONN_TIMESTAMPS];
 };
 
 /* Flow table operations. */

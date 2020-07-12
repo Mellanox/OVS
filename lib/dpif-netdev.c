@@ -3076,6 +3076,7 @@ dp_netdev_flow_offload_main(void *data OVS_UNUSED)
 {
     struct dp_offload_item *offload_item;
     struct ovs_list *list;
+    int ts_index = 0;
     const char *op;
     int ret;
 
@@ -3145,13 +3146,18 @@ dp_netdev_flow_offload_main(void *data OVS_UNUSED)
                          dir == CT_DIR_INIT ? "init" : "reply",
                          UUID_ARGS((struct uuid *)&ct_offload[dir].ufid));
             }
-            if (!rets[CT_DIR_INIT] && !rets[CT_DIR_REP]) {
+            if (dp && !rets[CT_DIR_INIT] && !rets[CT_DIR_REP]) {
                 if (ct_offload[CT_DIR_INIT].op ==
                     DP_NETDEV_FLOW_OFFLOAD_OP_ADD) {
                     dp->offload_stats.ct_connections++;
                 } else {
                     dp->offload_stats.ct_connections--;
                 }
+            }
+            if (dp && (dp->offload_stats.ct_connections &
+                       CT_CONN_TS_INTERVAL_MASK) == 0) {
+                ts_index &= CT_CONN_TS_MASK;
+                dp->offload_stats.timestamps[ts_index++] = time_msec();
             }
             if (ct_offload[CT_DIR_INIT].op == DP_NETDEV_FLOW_OFFLOAD_OP_ADD &&
                 rets[CT_DIR_INIT] && rets[CT_DIR_REP]) {
@@ -4503,9 +4509,12 @@ static int
 dpif_netdev_get_offload_stats(struct dpif *dpif, struct dpif_offload_stats *offload_stats)
 {
     struct dp_netdev *dp = get_dp_netdev(dpif);
+
     offload_stats->ct_connections = dp->offload_stats.ct_connections;
     offload_stats->queue_enqueues = dp_flow_offload.enqueues;
     offload_stats->queue_dequeues = dp_flow_offload.dequeues;
+    memcpy(&offload_stats->timestamps, &dp->offload_stats.timestamps,
+           sizeof offload_stats->timestamps);
 
     return 0;
 }
