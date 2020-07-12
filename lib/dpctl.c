@@ -1114,12 +1114,38 @@ dpctl_get_offload_stats(int argc, const char *argv[],
 
         error = dpif_get_offload_stats(dpif, &offload_stats);
         if (!error) {
+            struct ds s = DS_EMPTY_INITIALIZER;
+            int i;
+
+            if (dpctl_p->verbosity) {
+                ds_put_format(&s, "CT insertion/deletion rates (%u resolution,"
+                              " K connections/sec):\n", CT_CONN_TS_INTERVAL_NUM);
+            }
+#define CT_RATE(i) \
+    offload_stats.timestamps[(i) & CT_CONN_TS_MASK] == \
+    offload_stats.timestamps[(i - 1) & CT_CONN_TS_MASK] ? 0 : \
+    ((double) CT_CONN_TS_INTERVAL_NUM) / \
+    (offload_stats.timestamps[(i) & CT_CONN_TS_MASK] - \
+     offload_stats.timestamps[(i - 1) & CT_CONN_TS_MASK])
+#define PER_LINE 16
+            for (i = 0; dpctl_p->verbosity && i < CT_CONN_TIMESTAMPS;
+                 i += PER_LINE) {
+                int j;
+
+                ds_put_format(&s, "%4u ", i);
+                for (j = 0; j < PER_LINE; j++) {
+                    ds_put_format(&s, "%4.1f ", CT_RATE(i + j));
+                }
+                ds_put_cstr(&s, "\n");
+            }
             dpctl_print(dpctl_p,
-                        "Offload queue depth: %u (%u - %u)\n"
-                        "Connction tracking offloaded connections: %u\n",
+                        "%sOffload queue depth: %u (%u - %u)\n"
+                        "Connection tracking offloaded connections: %u\n",
+                        ds_cstr(&s),
                         offload_stats.queue_enqueues - offload_stats.queue_dequeues,
                         offload_stats.queue_enqueues, offload_stats.queue_dequeues,
                         offload_stats.ct_connections);
+            ds_destroy(&s);
         } else {
             dpctl_error(dpctl_p, error, "Offloaded statistics could not be retrieved");
         }
