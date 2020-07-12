@@ -108,3 +108,7 @@ Change-Id=I6afa5d9d28c2fc5f9d195f62f296dc6725892e91; subject=netdev-offload: Del
 Change-Id=Ida9b32eaf2998166ef79e67e3b864f69edf352b2; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=Iad04f69ddd81d9c8682097bc829b1dc5170d2df8; subject=netdev-dpdk-vdpa: Add option to compile out netdev-dpdk-vdpa; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I913935d1cc6731dfb9233a147864d7e90e40b8fd; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I95196ee8b898b73d5c65bd7c0497a14db23232ac; subject=dpctl: Add offload queue lengths statistics; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I328da02192c63182f07c5eebcfce2005910f6b8b; subject=dpctl: Add CT insertion/deletion rates statistics; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I0b76591a04c37509ea8548084e90ced61b89f8d7; subject=dpif-netdev: Fix CT removal crash; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I3ab17f97cf3af4a71795eaf5e7912767a2714782; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
