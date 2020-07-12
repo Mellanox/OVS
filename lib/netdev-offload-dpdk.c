@@ -219,6 +219,7 @@ struct context_data {
     void *data;
     uint32_t id;
     uint32_t refcnt;
+    bool pending_release;
 };
 
 static int
@@ -343,8 +344,9 @@ context_delayed_release(struct context_metadata *md, void *arg, uint32_t id,
     item->md = md;
     item->arg = arg;
     item->id = id;
-    item->data= data;
+    item->data = data;
     item->timestamp = time_msec();
+    data->pending_release = true;
     ovs_list_push_back(&context_release_list, &item->node);
     VLOG_DBG_RL(&rl, "%s: md=%s, id=%d, timestamp=%llu", __func__,
                 item->md->name, item->id, item->timestamp);
@@ -398,7 +400,10 @@ put_context_data_by_id(struct context_metadata *md, void *arg, uint32_t id)
                         ds_cstr(md->dump_context_data(&s, data_cur->data)),
                         data_cur->refcnt, data_cur->id);
             ds_destroy(&s);
-            if (data_cur->refcnt == 0) {
+            /* If there is already a pending release for this item that has
+             * not been handled yet, don't reqest it again.
+             */
+            if (data_cur->refcnt == 0 && !data_cur->pending_release) {
                 context_delayed_release(md, arg, id, data_cur);
             }
             return;
