@@ -1115,7 +1115,10 @@ dpctl_get_offload_stats(int argc, const char *argv[],
         error = dpif_get_offload_stats(dpif, &offload_stats);
         if (!error) {
             dpctl_print(dpctl_p,
+                        "Offload queue depth: %u (%u - %u)\n"
                         "Connction tracking offloaded connections: %u\n",
+                        offload_stats.queue_enqueues - offload_stats.queue_dequeues,
+                        offload_stats.queue_enqueues, offload_stats.queue_dequeues,
                         offload_stats.ct_connections);
         } else {
             dpctl_error(dpctl_p, error, "Offloaded statistics could not be retrieved");
