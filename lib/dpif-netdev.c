@@ -2877,7 +2877,6 @@ dp_netdev_flow_offload_main(void *data OVS_UNUSED)
             struct ct_flow_offload_item *ct_offload =
                     offload_item->ct_offload_item;
             struct dp_netdev *dp = ct_offload->dp;
-            bool conn_deleted = false;
             int rets[CT_DIR_NUM];
             int dir;
 
@@ -2893,7 +2892,6 @@ dp_netdev_flow_offload_main(void *data OVS_UNUSED)
                 case DP_NETDEV_FLOW_OFFLOAD_OP_DEL:
                     op = "delete";
                     ret = dp_netdev_ct_offload_del(offload_item, dir);
-                    conn_deleted = conn_deleted || !ret;
                     break;
                 default:
                     OVS_NOT_REACHED();
@@ -2904,19 +2902,13 @@ dp_netdev_flow_offload_main(void *data OVS_UNUSED)
                          dir == CT_DIR_INIT ? "init" : "reply",
                          UUID_ARGS((struct uuid *)&ct_offload[dir].ufid));
             }
-            switch (ct_offload[CT_DIR_INIT].op) {
-            case DP_NETDEV_FLOW_OFFLOAD_OP_ADD:
-                 if (*ct_offload[CT_DIR_INIT].status &&
-                     *ct_offload[CT_DIR_REP].status) {
-                     dp->offload_stats.ct_connections++;
-                 }
-                 break;
-            case DP_NETDEV_FLOW_OFFLOAD_OP_DEL:
-                 if (conn_deleted && *ct_offload[CT_DIR_INIT].status &&
-                     *ct_offload[CT_DIR_REP].status) {
-                     dp->offload_stats.ct_connections--;
-                 }
-                 break;
+            if (!rets[CT_DIR_INIT] && !rets[CT_DIR_REP]) {
+                if (ct_offload[CT_DIR_INIT].op ==
+                    DP_NETDEV_FLOW_OFFLOAD_OP_ADD) {
+                    dp->offload_stats.ct_connections++;
+                } else {
+                    dp->offload_stats.ct_connections--;
+                }
             }
             if ((dp->offload_stats.ct_connections &
                  CT_CONN_TS_INTERVAL_MASK) == 0) {
