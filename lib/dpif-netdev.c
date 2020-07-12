@@ -453,6 +453,8 @@ struct dp_flow_offload {
     struct ovs_mutex mutex;
     struct ovs_list list;
     pthread_cond_t cond;
+    uint32_t enqueues;
+    uint32_t dequeues;
 };
 
 static struct dp_flow_offload dp_flow_offload = {
@@ -956,6 +958,7 @@ dp_netdev_append_ct_offload(struct ct_flow_offload_item *offload)
 
     ovs_mutex_lock(&dp_flow_offload.mutex);
     ovs_list_push_back(&dp_flow_offload.list, &offload_item->node);
+    dp_flow_offload.enqueues++;
     xpthread_cond_signal(&dp_flow_offload.cond);
     ovs_mutex_unlock(&dp_flow_offload.mutex);
 }
@@ -2693,6 +2696,7 @@ dp_netdev_append_flow_offload(struct dp_flow_offload_item *offload)
 
     ovs_mutex_lock(&dp_flow_offload.mutex);
     ovs_list_push_back(&dp_flow_offload.list, &offload_item->node);
+    dp_flow_offload.enqueues++;
     xpthread_cond_signal(&dp_flow_offload.cond);
     ovs_mutex_unlock(&dp_flow_offload.mutex);
 }
@@ -3084,6 +3088,7 @@ dp_netdev_flow_offload_main(void *data OVS_UNUSED)
             ovsrcu_quiesce_end();
         }
         list = ovs_list_pop_front(&dp_flow_offload.list);
+        dp_flow_offload.dequeues++;
         offload_item = CONTAINER_OF(list, struct dp_offload_item, node);
         ovs_mutex_unlock(&dp_flow_offload.mutex);
 
@@ -4499,6 +4504,8 @@ dpif_netdev_get_offload_stats(struct dpif *dpif, struct dpif_offload_stats *offl
 {
     struct dp_netdev *dp = get_dp_netdev(dpif);
     offload_stats->ct_connections = dp->offload_stats.ct_connections;
+    offload_stats->queue_enqueues = dp_flow_offload.enqueues;
+    offload_stats->queue_dequeues = dp_flow_offload.dequeues;
 
     return 0;
 }

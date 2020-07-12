@@ -491,6 +491,8 @@ void dpif_port_poll_wait(const struct dpif *);
 
 struct dpif_offload_stats {
     uint32_t ct_connections;
+    uint32_t queue_enqueues;
+    uint32_t queue_dequeues;
 };
 
 /* Flow table operations. */
