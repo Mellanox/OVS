@@ -37,3 +37,5 @@ Change-Id=I72a8c5b564838a79fb35244feda56b6c1bc89fd2; subject=netdev-dpdk: Add a 
 Change-Id=Idf994535548e709270565694c430a8aa02369f73; subject=netdev-dpdk-vdpa: Support HW vDPA statistics; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I8a61e1aa7a24b0dada0870343a5519970053b3b5; subject=netdev-dpdk: Support netdev without representor; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I5dea348d5e8a3d363c70ef7f2645b70eb30a9925; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ib24ac7912ec8720c4c512470cbb65dd12dd8f244; subject=Revert "netdev-dpdk-vdpa: Add option to compile out netdev-dpdk-vdpa"; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I808329d744444db4e0517f068da78bd39d03b770; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
