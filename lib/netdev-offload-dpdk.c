@@ -322,6 +322,7 @@ struct context_release_item {
     void *arg;
     uint32_t id;
     struct context_data *data;
+    bool associated;
 };
 
 static void
@@ -332,16 +333,23 @@ context_release(struct context_release_item *item)
     uint32_t id = item->id;
     void *arg = item->arg;
 
-    VLOG_DBG_RL(&rl, "%s: md=%s, id=%d", __func__, md->name, id);
-    hmap_remove(&md->i2d_hmap, &data->i2d_node);
-    hmap_remove(&md->d2i_hmap, &data->d2i_node);
-    free(data);
-    md->id_free(arg, id);
+    VLOG_DBG_RL(&rl, "%s: md=%s, id=%d. associated=%d", __func__, md->name,
+                id, item->associated);
+    if (!item->associated) {
+        hmap_remove(&md->i2d_hmap, &data->i2d_node);
+        hmap_remove(&md->d2i_hmap, &data->d2i_node);
+        free(data);
+        md->id_free(arg, id);
+    } else {
+        hmap_remove(&md->associated_i2d_hmap,
+                    &data->associated_i2d_node);
+        free(data);
+    }
 }
 
 static void
 context_delayed_release(struct context_metadata *md, void *arg, uint32_t id,
-                        struct context_data *data)
+                        struct context_data *data, bool associated)
 {
     struct context_release_item *item = xzalloc(sizeof *item);
 
@@ -349,11 +357,13 @@ context_delayed_release(struct context_metadata *md, void *arg, uint32_t id,
     item->arg = arg;
     item->id = id;
     item->data = data;
+    item->associated = associated;
     item->timestamp = time_msec();
     data->pending_release = true;
     ovs_list_push_back(&context_release_list, &item->node);
-    VLOG_DBG_RL(&rl, "%s: md=%s, id=%d, timestamp=%llu", __func__,
-                item->md->name, item->id, item->timestamp);
+    VLOG_DBG_RL(&rl, "%s: md=%s, id=%d, associated=%d, timestamp=%llu",
+                __func__, item->md->name, item->id, associated,
+                item->timestamp);
 }
 
 #define DELAYED_RELEASE_TIMEOUT_MS 250
@@ -375,9 +385,10 @@ do_context_delayed_release(void)
         if (now < item->timestamp + DELAYED_RELEASE_TIMEOUT_MS) {
             break;
         }
-        VLOG_DBG_RL(&rl, "%s: md=%s, id=%d, timestamp=%llu, now=%llu",
-                    __func__, item->md->name, item->id, item->timestamp, now);
-        if (item->data->refcnt == 0) {
+        VLOG_DBG_RL(&rl, "%s: md=%s, id=%d, associated=%d, timestamp=%llu, "
+                    "now=%llu", __func__, item->md->name, item->id,
+                    item->associated, item->timestamp, now);
+        if (item->data->refcnt == 0 || item->associated) {
             context_release(item);
         }
         ovs_list_remove(list);
@@ -408,7 +419,7 @@ put_context_data_by_id(struct context_metadata *md, void *arg, uint32_t id)
              * not been handled yet, don't reqest it again.
              */
             if (data_cur->refcnt == 0 && !data_cur->pending_release) {
-                context_delayed_release(md, arg, id, data_cur);
+                context_delayed_release(md, arg, id, data_cur, false);
             }
             return;
         }
@@ -471,9 +482,7 @@ disassociate_id_data(struct context_metadata *md, uint32_t id)
                         ds_cstr(md->dump_context_data(&s, data_cur->data)),
                         data_cur->id);
             ds_destroy(&s);
-            hmap_remove(&md->associated_i2d_hmap,
-                        &data_cur->associated_i2d_node);
-            free(data_cur);
+            context_delayed_release(md, NULL, id, data_cur, true);
             return 0;
         }
     }
