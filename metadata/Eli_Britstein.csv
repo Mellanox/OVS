@@ -112,3 +112,7 @@ Change-Id=I95196ee8b898b73d5c65bd7c0497a14db23232ac; subject=dpctl: Add offload 
 Change-Id=I328da02192c63182f07c5eebcfce2005910f6b8b; subject=dpctl: Add CT insertion/deletion rates statistics; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I0b76591a04c37509ea8548084e90ced61b89f8d7; subject=dpif-netdev: Fix CT removal crash; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I3ab17f97cf3af4a71795eaf5e7912767a2714782; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I553361bcade42c2799c2aca768412bdee69a3291; subject=netdev-offload-dpdk: Fix delayed context release; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Ib8cce7e6d5222ab6eb22074a143e08a864c11f3e; subject=netdev-offload-dpdk: Refactor context release helper; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I3a84c71088359c9e84220613296f3902eeacdd92; subject=netdev-offload-dpdk: Delayed context release for associated IDs; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I4bbee65e6c30b985f55a8c22537f17d57e665389; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
