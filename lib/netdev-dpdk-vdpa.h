@@ -31,7 +31,6 @@ struct rte_mempool;
  * used to forward packets between vf to vm and vice versa.
  */
 
-#ifdef NETDEV_DPDK_VDPA
 void *
 netdev_dpdk_vdpa_alloc_relay(void);
 int
@@ -52,54 +51,6 @@ void
 netdev_dpdk_vdpa_destruct_impl(struct netdev_dpdk_vdpa_relay *relay);
 int
 netdev_dpdk_vdpa_get_custom_stats_impl(struct netdev_dpdk_vdpa_relay *relay,
-                                       struct netdev_custom_stats *cstm_stats);
-
-#else /* stubs */
-
-static void *
-netdev_dpdk_vdpa_alloc_relay(void)
-{
-    return NULL;
-}
-
-static int
-netdev_dpdk_vdpa_update_relay(struct netdev_dpdk_vdpa_relay *relay OVS_UNUSED,
-                              struct rte_mempool *mp OVS_UNUSED,
-                              int n_rxq OVS_UNUSED)
-{
-    return -1;
-}
-
-static int
-netdev_dpdk_vdpa_rxq_recv_impl(struct netdev_dpdk_vdpa_relay *relay OVS_UNUSED,
-                               int pr_queue OVS_UNUSED)
-{
-    return -1;
-}
-
-static int
-netdev_dpdk_vdpa_config_impl(struct netdev_dpdk_vdpa_relay *relay OVS_UNUSED,
-                             uint16_t port_id OVS_UNUSED,
-                             const char *vm_socket OVS_UNUSED,
-                             const char *vf_pci OVS_UNUSED,
-                             int max_queues OVS_UNUSED,
-                             bool hw_mode OVS_UNUSED)
-{
-    return -1;
-}
-
-static void
-netdev_dpdk_vdpa_destruct_impl(struct netdev_dpdk_vdpa_relay *relay OVS_UNUSED)
-{
-}
-
-static int
-netdev_dpdk_vdpa_get_custom_stats_impl(struct netdev_dpdk_vdpa_relay *relay OVS_UNUSED,
-                                       struct netdev_custom_stats *cstm_stats OVS_UNUSED)
-{
-    return -1;
-}
-
-#endif /* NETDEV_DPDK_VDPA */
+                                     struct netdev_custom_stats *cstm_stats);
 
 #endif /* netdev-dpdk-vdpa.h */

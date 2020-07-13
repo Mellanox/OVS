@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-#ifdef NETDEV_DPDK_VDPA
 #include <config.h>
 #include "netdev-dpdk-vdpa.h"
 
@@ -1209,4 +1208,4 @@ netdev_dpdk_vdpa_get_custom_stats_impl(struct netdev_dpdk_vdpa_relay *relay,
     }
     return 0;
 }
-#endif
+
