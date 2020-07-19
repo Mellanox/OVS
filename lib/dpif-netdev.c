@@ -3401,11 +3401,15 @@ queue_netdev_flow_del(struct dp_netdev_pmd_thread *pmd,
         return;
     }
 
+    e2e_cache_flow_del(&flow->mega_ufid);
     offload = dp_netdev_alloc_flow_offload(pmd, flow,
                                            DP_NETDEV_FLOW_OFFLOAD_OP_DEL);
     dp_netdev_append_flow_offload(offload);
 }
 
+static int
+e2e_cache_flow_put(const ovs_u128 *ufid, struct match *match,
+                   const struct nlattr *actions, size_t actions_len);
 static void
 queue_netdev_flow_put(struct dp_netdev_pmd_thread *pmd,
                       struct dp_netdev_flow *flow, struct match *match,
@@ -3418,6 +3422,7 @@ queue_netdev_flow_put(struct dp_netdev_pmd_thread *pmd,
         return;
     }
 
+    e2e_cache_flow_put(&flow->mega_ufid, match, actions, actions_len);
     if (flow->mark != INVALID_FLOW_MARK) {
         op = DP_NETDEV_FLOW_OFFLOAD_OP_MOD;
     } else {
