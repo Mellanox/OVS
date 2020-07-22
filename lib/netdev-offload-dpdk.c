@@ -147,7 +147,7 @@ ufid_to_rte_flow_data_find(const ovs_u128 *ufid)
     return NULL;
 }
 
-static inline void
+static inline struct ufid_to_rte_flow_data *
 ufid_to_rte_flow_associate(const ovs_u128 *ufid,
                            struct flows_handle *flows, bool actions_offloaded,
                            struct act_resources *act_resources)
@@ -174,6 +174,7 @@ ufid_to_rte_flow_associate(const ovs_u128 *ufid,
 
     cmap_insert(&ufid_to_rte_flow,
                 CONST_CAST(struct cmap_node *, &data->node), hash);
+    return data;
 }
 
 static inline void
@@ -3605,7 +3606,7 @@ out:
     return ret;
 }
 
-static int
+static struct ufid_to_rte_flow_data *
 netdev_offload_dpdk_add_flow(struct netdev *netdev,
                              struct match *match,
                              struct nlattr *nl_actions,
@@ -3618,6 +3619,7 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
     struct flows_handle flows = { .items = NULL, .cnt = 0 };
     struct act_vars act_vars = { .vport = ODPP_NONE };
     struct flow_item flow_item = { .devargs = NULL };
+    struct ufid_to_rte_flow_data *flows_data = NULL;
     bool actions_offloaded = true;
     int ret;
 
@@ -3653,15 +3655,15 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
     if (ret) {
         goto out;
     }
-    ufid_to_rte_flow_associate(ufid, &flows, actions_offloaded,
-                               &act_resources);
+    flows_data = ufid_to_rte_flow_associate(ufid, &flows, actions_offloaded,
+                                            &act_resources);
 
 out:
     if (ret) {
         put_action_resources(netdev, &act_resources);
     }
     free_flow_patterns(&patterns);
-    return ret;
+    return flows_data;
 }
 
 static int
@@ -3728,6 +3730,8 @@ netdev_offload_dpdk_flow_put(struct netdev *netdev, struct match *match,
                              struct dpif_flow_stats *stats)
 {
     struct ufid_to_rte_flow_data *rte_flow_data;
+    struct dpif_flow_stats old_stats;
+    bool modification = false;
     int ret;
 
     do_context_delayed_release();
@@ -3735,9 +3739,12 @@ netdev_offload_dpdk_flow_put(struct netdev *netdev, struct match *match,
     /*
      * If an old rte_flow exists, it means it's a flow modification.
      * Here destroy the old rte flow first before adding a new one.
+     * Keep the stats for the newly created rule.
      */
     rte_flow_data = ufid_to_rte_flow_data_find(ufid);
     if (rte_flow_data) {
+        old_stats = rte_flow_data->stats;
+        modification = true;
         ret = netdev_offload_dpdk_remove_flows(netdev, ufid,
                                                &rte_flow_data->flows);
         if (ret < 0) {
@@ -3745,11 +3752,18 @@ netdev_offload_dpdk_flow_put(struct netdev *netdev, struct match *match,
         }
     }
 
-    if (stats) {
-        memset(stats, 0, sizeof *stats);
+    rte_flow_data = netdev_offload_dpdk_add_flow(netdev, match, actions,
+                                                 actions_len, ufid, info);
+    if (!rte_flow_data) {
+        return -1;
     }
-    return netdev_offload_dpdk_add_flow(netdev, match, actions,
-                                        actions_len, ufid, info);
+    if (modification) {
+        rte_flow_data->stats = old_stats;
+    }
+    if (stats) {
+        *stats = rte_flow_data->stats;
+    }
+    return 0;
 }
 
 static int
