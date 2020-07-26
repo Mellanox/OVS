@@ -9026,6 +9026,7 @@ dpcls_lookup(struct dpcls *cls, const struct netdev_flow_key *keys[],
     return false;
 }
 
+#ifdef E2E_CACHE_ENABLED
 static inline bool
 e2e_cache_set_action_is_valid(struct nlattr *a)
 {
@@ -9376,3 +9377,4 @@ e2e_cache_merge_match(struct e2e_cache_ufid_to_flow_item **netdev_flows,
          merge_flow_matcher(tp_dst, match, merged_match);
     }
 }
+#endif /* E2E_CACHE_ENABLED */
