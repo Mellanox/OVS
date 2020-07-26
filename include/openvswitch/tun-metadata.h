@@ -47,6 +47,10 @@ extern "C" {
  * and finding it requires referring to 'tab', if set, or the global metadata
  * table. */
 struct tun_metadata {
+    struct eth_addr dl_src;    /* src eth addr for tunnel */
+    struct eth_addr dl_dst;    /* dst eth addr for tunnel */
+    uint8_t nw_proto;          /* L3 protocol for tunnel */
+    uint8_t pad0[3];     /* Pad to 64 bits. */
     union { /* Valid members of 'opts'. When 'opts' is sorted into known types,
              * 'map' is used. When 'opts' is raw packet data, 'len' is used. */
         uint64_t map;                      /* 1-bit for each present TLV. */
@@ -55,7 +59,7 @@ struct tun_metadata {
     const struct tun_table *tab; /* Types & lengths for 'opts' and 'opt_map'. */
 
 #if UINTPTR_MAX == UINT32_MAX
-    uint8_t pad[4];             /* Pad to 64-bit boundary. */
+    uint8_t pad1[4];             /* Pad to 64-bit boundary. */
 #endif
 
     union {
