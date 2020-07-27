@@ -10034,6 +10034,7 @@ const struct dpif_class dpif_netdev_class = {
     dpif_netdev_flow_dump_thread_create,
     dpif_netdev_flow_dump_thread_destroy,
     dpif_netdev_flow_dump_next,
+    NULL,                       /* dump e2e stats */
     dpif_netdev_operate,
     dpif_netdev_offload_stats_get,
     NULL,                       /* recv_set */
