@@ -1268,6 +1268,28 @@ out:
 }
 
 static int
+dpctl_dump_e2e_stats(int argc, const char *argv[], struct dpctl_params *dpctl_p)
+{
+    struct ds s = DS_EMPTY_INITIALIZER;
+    struct dpif *dpif;
+    int error;
+
+    error = opt_dpif_open(argc, argv, dpctl_p, 0, &dpif);
+    if (!error) {
+        error = dpif_dump_e2e_stats(dpif, &s);
+
+        if (!error) {
+            dpctl_print(dpctl_p, "%s\n",ds_cstr(&s));
+        } else {
+            dpctl_error(dpctl_p, error, "Could not dump e2e cache stats");
+        }
+        dpif_close(dpif);
+    }
+
+    return error;
+}
+
+static int
 dpctl_del_flow(int argc, const char *argv[], struct dpctl_params *dpctl_p)
 {
     const char *key_s = argv[argc - 1];
@@ -1443,7 +1465,6 @@ dpctl_list_commands(int argc OVS_UNUSED, const char *argv[] OVS_UNUSED,
 
     return 0;
 }
-
 
 static int
 dpctl_dump_conntrack(int argc, const char *argv[],
@@ -2566,6 +2587,7 @@ static const struct dpctl_command all_commands[] = {
     { "offload-stats-show", "[dp]",
       0, 1, dpctl_offload_stats_show, DP_RO },
     { "dump-conntrack", "[dp] [zone=N]", 0, 2, dpctl_dump_conntrack, DP_RO },
+    { "dump-e2e-stats", "", 0, 0, dpctl_dump_e2e_stats, DP_RO },
     { "flush-conntrack", "[dp] [zone=N] [ct-tuple]", 0, 3,
       dpctl_flush_conntrack, DP_RW },
     { "ct-stats-show", "[dp] [zone=N]",
