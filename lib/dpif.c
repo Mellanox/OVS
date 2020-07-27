@@ -1144,6 +1144,14 @@ dpif_flow_dump_next(struct dpif_flow_dump_thread *thread,
     return n;
 }
 
+int
+dpif_dump_e2e_stats(struct dpif *dpif, struct ds *s)
+{
+    return (dpif->dpif_class->dump_e2e_stats
+            ? dpif->dpif_class->dump_e2e_stats(s)
+            : EOPNOTSUPP);
+}
+
 struct dpif_execute_helper_aux {
     struct dpif *dpif;
     const struct flow *flow;
