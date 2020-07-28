@@ -7703,6 +7703,39 @@ struct e2e_cache_thread_msg_queues {
     pthread_cond_t cond;
 };
 
+/* This struct holds the e2e-cache statistic counters
+ * generated_msgs = Amount of trace messages generated/dispatched to E2E cache.
+ * processed_msgs = Amount of trace messages processed by E2E cache.
+ * discarded_msgs = Amount of trace messages discarded by E2E cache.
+ * trace_msgs_in_queue = Amount of trace messages in E2E cache queue.
+ * new_flow_msgs = Amount of new flow messages received by E2E cache.
+ * del_flow_msgs = Amount of delete flow messages received by E2E cache.
+ * new_ct_msgs = Amount of new CT messages received by E2E cache.
+ * del_ct_msgs = Amount of delete CT messages received by E2E cache.
+ * new_del_flow_ct_in_queue = Amount of new/delete flow/CT message in E2E cache queue.
+ * succ_merged_flows = Amount of successfully merged flows.
+ * merge_rej_flows = Amount of flows rejected by the merge engine.
+ * add_merged_flow_hw = Amount of add merged flow messages dispatched to HW offload.
+ * del_merged_flow_hw = Amount of delete merged flow messages disapatched to HW offload.
+ * merged_flows_in_cache = Amount of merged flows in E2E cache.
+ */
+struct e2e_cache_stats {
+    atomic_uint64_t generated_msgs;
+    atomic_uint64_t processed_msgs;
+    atomic_uint64_t discarded_msgs;
+    atomic_uint64_t trace_msgs_in_queue;
+    atomic_uint64_t new_flow_msgs;
+    atomic_uint64_t del_flow_msgs;
+    atomic_uint64_t new_ct_msgs;
+    atomic_uint64_t del_ct_msgs;
+    atomic_uint64_t new_del_flow_ct_in_queue;
+    atomic_uint64_t succ_merged_flows;
+    atomic_uint64_t merge_rej_flows;
+    atomic_uint64_t add_merged_flow_hw;
+    atomic_uint64_t del_merged_flow_hw;
+    atomic_uint64_t merged_flows_in_cache;
+};
+
 static struct e2e_cache_thread_msg_queues e2e_cache_thread_msg_queues = {
     .mutex = OVS_MUTEX_INITIALIZER,
     .ufid_msg_list =
@@ -7714,6 +7747,7 @@ static struct e2e_cache_thread_msg_queues e2e_cache_thread_msg_queues = {
 static struct ovsthread_once e2e_cache_thread_once
     = OVSTHREAD_ONCE_INITIALIZER;
 
+static struct e2e_cache_stats e2e_stats;
 static struct ovs_mutex ufid_to_flow_map_mutex = OVS_MUTEX_INITIALIZER;
 static struct cmap ufid_to_flow_map OVS_GUARDED_BY(ufid_to_flow_map_mutex) =
     CMAP_INITIALIZER;
@@ -7721,6 +7755,48 @@ static struct cmap ufid_to_flow_map OVS_GUARDED_BY(ufid_to_flow_map_mutex) =
 static struct hmap merged_flows_map = HMAP_INITIALIZER(&merged_flows_map);
 
 static void *dp_netdev_e2e_cache_main(void *arg);
+void dpif_netdev_e2e_stats_format(struct e2e_cache_stats *, struct ds *);
+
+void
+dpif_netdev_e2e_stats_format(struct e2e_cache_stats *stats, struct ds *s)
+{
+    ds_put_format(s, "%-45s : %"PRIu64"", "generated messages",
+                  atomic_count_get64(&stats->generated_msgs));
+    ds_put_format(s, "\n%-45s : %"PRIu64"", "processed messages",
+                  atomic_count_get64(&stats->processed_msgs));
+    ds_put_format(s, "\n%-45s : %"PRIu64"", "discarded messages",
+                  atomic_count_get64(&stats->discarded_msgs));
+    ds_put_format(s, "\n%-45s : %"PRIu64"", "messages in e2e queue",
+                  atomic_count_get64(&stats->trace_msgs_in_queue));
+    ds_put_format(s, "\n%-45s : %"PRIu64"", "new flow messages",
+                  atomic_count_get64(&stats->new_flow_msgs));
+    ds_put_format(s, "\n%-45s : %"PRIu64"", "delete flow messages",
+                  atomic_count_get64(&stats->del_flow_msgs));
+    ds_put_format(s, "\n%-45s : %"PRIu64"", "new ct messages",
+                  atomic_count_get64(&stats->new_ct_msgs));
+    ds_put_format(s, "\n%-45s : %"PRIu64"", "delete ct messages",
+                  atomic_count_get64(&stats->del_ct_msgs));
+    ds_put_format(s, "\n%-45s : %"PRIu64"",
+                  "new del flow/ct messages in queue",
+                  atomic_count_get64(&stats->new_del_flow_ct_in_queue));
+    ds_put_format(s, "\n%-45s : %"PRIu64"", "suscessfully merged flows",
+                  atomic_count_get64(&stats->succ_merged_flows));
+    ds_put_format(s, "\n%-45s : %"PRIu64"", "rejected flows",
+                  atomic_count_get64(&stats->merge_rej_flows));
+    ds_put_format(s, "\n%-45s : %"PRIu64"", "add merged flows messages to HW",
+                  atomic_count_get64(&stats->add_merged_flow_hw));
+    ds_put_format(s, "\n%-45s : %"PRIu64"", "delete merged flows messages to HW",
+                  atomic_count_get64(&stats->del_merged_flow_hw));
+    ds_put_format(s, "\n%-45s : %"PRIu64"", "merged flows in e2e cache",
+                  atomic_count_get64(&stats->merged_flows_in_cache));
+}
+
+static int
+dpif_netdev_dump_e2e_stats(struct ds *s)
+{
+    dpif_netdev_e2e_stats_format(&e2e_stats, s);
+    return 0;
+}
 
 static inline void
 e2e_cache_trace_init(struct dp_packet *p)
@@ -7766,7 +7842,7 @@ e2e_cache_trace_msg_enqueue(struct e2e_cache_trace_message *msg)
                        &item->node);
     xpthread_cond_signal(&e2e_cache_thread_msg_queues.cond);
     ovs_mutex_unlock(&e2e_cache_thread_msg_queues.mutex);
-
+    atomic_count_inc64(&e2e_stats.trace_msgs_in_queue);
     return 0;
 }
 
@@ -7787,7 +7863,7 @@ e2e_cache_trace_msg_dequeue(void)
     trace_msg_item = CONTAINER_OF(list, struct e2e_cache_trace_msg_item, node);
     msg = trace_msg_item->msg;
     free(trace_msg_item);
-
+    atomic_count_dec64(&e2e_stats.trace_msgs_in_queue);
     return msg;
 }
 
@@ -7837,6 +7913,7 @@ e2e_cache_merged_flow_offload_del(struct e2e_cache_ufid_to_flow_item *mflow)
 
     mflow->dp = NULL;
     mflow->offloaded_flow = NULL;
+    atomic_count_inc64(&e2e_stats.del_merged_flow_hw);
     rv = dp_netdev_flow_offload_del(offload_item);
     free(offload_item);
     return rv;
@@ -7885,6 +7962,7 @@ e2e_cache_merged_flow_offload_put(struct dp_netdev *dp,
 
     mflow->dp = dp;
     mflow->offloaded_flow = flow;
+    atomic_count_inc64(&e2e_stats.add_merged_flow_hw);
     return 0;
 }
 
@@ -7953,7 +8031,7 @@ e2e_cache_merged_flow_db_rem(struct e2e_cache_ufid_to_flow_item *dp_flow_data)
     e2e_cache_disassociate_merged_flow(dp_flow_data);
 
     hmap_remove(&merged_flows_map, &dp_flow_data->node.in_hmap);
-    /* TODO: Add statistic counter */
+    atomic_count_dec64(&e2e_stats.merged_flows_in_cache);
 }
 
 static void
@@ -7987,6 +8065,7 @@ e2e_cache_merged_flow_db_put(struct e2e_cache_ufid_to_flow_item *merged_flow)
     }
 
     hmap_insert(&merged_flows_map, &merged_flow->node.in_hmap, hash);
+    atomic_count_inc64(&e2e_stats.merged_flows_in_cache);
     return 0;
 }
 
@@ -8156,7 +8235,7 @@ e2e_cache_flow_del(const ovs_u128 *ufid)
                        &del_msg->node);
     xpthread_cond_signal(&e2e_cache_thread_msg_queues.cond);
     ovs_mutex_unlock(&e2e_cache_thread_msg_queues.mutex);
-
+    atomic_count_inc64(&e2e_stats.del_flow_msgs);
     return 0;
 }
 
@@ -8191,7 +8270,7 @@ e2e_cache_flow_put(const ovs_u128 *ufid, struct match *match,
                        &put_msg->node);
     xpthread_cond_signal(&e2e_cache_thread_msg_queues.cond);
     ovs_mutex_unlock(&e2e_cache_thread_msg_queues.mutex);
-
+    atomic_count_inc64(&e2e_stats.new_flow_msgs);
     return 0;
 }
 
@@ -8253,11 +8332,12 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
         /* Don't send "partial" traces due to overflow of the trace storage */
         if (OVS_UNLIKELY(packet->e2e_trace_flags &
                          E2E_CACHE_TRACE_FLAG_OVERFLOW)) {
-            /* TODO: add statistic counter */
+            atomic_count_inc64(&e2e_stats.discarded_msgs);
             continue;
         }
         /* Send only traces for packet that passed conntrack */
         if (!(packet->e2e_trace_flags & E2E_CACHE_TRACE_FLAG_CT)) {
+            atomic_count_inc64(&e2e_stats.discarded_msgs);
             continue;
         }
 
@@ -8279,11 +8359,11 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
     buffer->num_elements = num_elements;
 
     if (OVS_UNLIKELY(e2e_cache_trace_msg_enqueue(buffer) != 0)) {
-        /* TODO: add statistic counter of send error */
+        atomic_count_inc64(&e2e_stats.discarded_msgs);
         goto out;
     }
 
-    /* TODO: add statistic counter on success */
+    atomic_count_inc64(&e2e_stats.generated_msgs);
     return;
 
 out:
@@ -8434,8 +8514,10 @@ dp_netdev_e2e_cache_main(void *arg OVS_UNUSED)
         while ((ufid_msg = e2e_cache_ufid_msg_dequeue()) != NULL) {
             if (ufid_msg->op == E2E_UFID_MSG_PUT) {
                 e2e_cache_flow_db_put(ufid_msg);
+                atomic_count_inc64(&e2e_stats.new_flow_msgs);
             } else {
                 e2e_cache_flow_db_del(&ufid_msg->ufid);
+                atomic_count_inc64(&e2e_stats.del_flow_msgs);
             }
             free(ufid_msg);
         }
@@ -8445,6 +8527,7 @@ dp_netdev_e2e_cache_main(void *arg OVS_UNUSED)
             continue;
         }
 
+        atomic_count_inc64(&e2e_stats.processed_msgs);
         num_elements = trace_msg->num_elements;
         for (i = 0; i < num_elements; i++) {
             e2e_cache_process_trace_info((struct dp_netdev *)trace_msg->dp,
@@ -10034,7 +10117,7 @@ const struct dpif_class dpif_netdev_class = {
     dpif_netdev_flow_dump_thread_create,
     dpif_netdev_flow_dump_thread_destroy,
     dpif_netdev_flow_dump_next,
-    NULL,                       /* dump e2e stats */
+    dpif_netdev_dump_e2e_stats,
     dpif_netdev_operate,
     dpif_netdev_offload_stats_get,
     NULL,                       /* recv_set */
@@ -10906,14 +10989,17 @@ e2e_cache_merge_flows(struct e2e_cache_ufid_to_flow_item **flows,
                       struct ofpbuf *merged_actions)
 {
     if (!e2e_cache_flows_are_valid(flows, num_flows)) {
+        atomic_count_inc64(&e2e_stats.merge_rej_flows);
         return -1;
     }
     e2e_cache_merge_match(flows, num_flows, &merged_flow->match);
     dp_netdev_get_mega_ufid(&merged_flow->match, &merged_flow->ufid);
     e2e_cache_merge_actions(flows, num_flows, merged_actions);
     if (OVS_UNLIKELY(merged_actions->size < sizeof(struct nlattr))) {
+        atomic_count_inc64(&e2e_stats.merge_rej_flows);
         return -1;
     }
+    atomic_count_inc64(&e2e_stats.succ_merged_flows);
     return 0;
 }
 #endif /* E2E_CACHE_ENABLED */
