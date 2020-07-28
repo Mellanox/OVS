@@ -7166,7 +7166,6 @@ e2e_cache_merged_flow_db_del(const ovs_u128 *ufid)
     e2e_cache_flow_free(dp_flow_data);
 }
 
-OVS_UNUSED
 static inline void
 e2e_cache_merged_flow_db_put(struct e2e_cache_ufid_to_flow_item *merged_flow)
 {
@@ -7177,7 +7176,6 @@ e2e_cache_merged_flow_db_put(struct e2e_cache_ufid_to_flow_item *merged_flow)
 }
 
 /* Find dp_flow_data with @ufid. */
-OVS_UNUSED
 static inline struct e2e_cache_ufid_to_flow_item *
 e2e_cache_ufid_to_flow_data_find(const ovs_u128 *ufid)
 {
@@ -7385,11 +7383,84 @@ out:
     free_cacheline(buffer);
 }
 
+static int
+e2e_cache_trace_info_to_flows(const struct e2e_cache_trace_info *trc_info,
+                              struct e2e_cache_ufid_to_flow_item *flows[])
+{
+    int32_t i, num_elements = (int32_t) trc_info->num_elements;
+
+    for (i = 0; i < num_elements; i++) {
+        flows[i] = e2e_cache_ufid_to_flow_data_find(&trc_info->ufids[i]);
+        if (OVS_UNLIKELY(!flows[i])) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static int
+e2e_cache_merge_flows(struct e2e_cache_ufid_to_flow_item **flows,
+                      uint16_t num_flows,
+                      struct e2e_cache_ufid_to_flow_item *merged_flow,
+                      struct ofpbuf *merged_actions);
+
+static int
+e2e_cache_process_trace_info(const struct e2e_cache_trace_info *trc_info)
+{
+    struct e2e_cache_ufid_to_flow_item *merged_flow;
+    struct nlattr *actions;
+    size_t actions_len;
+    struct ofpbuf merged_actions;
+    struct e2e_cache_ufid_to_flow_item *mt_flows[E2E_CACHE_MAX_TRACE];
+    uint64_t merged_actions_buf[1024 / sizeof(uint64_t)];
+
+    merged_flow = xzalloc(sizeof *merged_flow);
+    if (OVS_UNLIKELY(!merged_flow)) {
+        goto out;
+    }
+
+    if (OVS_UNLIKELY(e2e_cache_trace_info_to_flows(trc_info,
+                                                   mt_flows) != 0)) {
+        goto out;
+    }
+
+    ofpbuf_use_stack(&merged_actions, &merged_actions_buf,
+                     sizeof merged_actions_buf);
+
+    if (OVS_UNLIKELY(e2e_cache_merge_flows(mt_flows, trc_info->num_elements,
+                                           merged_flow,
+                                           &merged_actions) != 0)) {
+        goto out;
+    }
+
+    actions = ofpbuf_at_assert(&merged_actions, 0, sizeof(struct nlattr));
+    actions_len = merged_actions.size;
+    merged_flow->actions = (struct nlattr *) xmalloc(actions_len);
+    if (OVS_UNLIKELY(!merged_flow->actions)) {
+        goto out;
+    }
+    memcpy(merged_flow->actions, actions, actions_len);
+    merged_flow->actions_size = actions_len;
+
+    e2e_cache_merged_flow_db_put(merged_flow);
+
+    /* TODO: placeholder for dispatch merged flow to offload thread */
+
+    return 0;
+
+out:
+    if (merged_flow) {
+        e2e_cache_flow_free(merged_flow);
+    }
+    return -1;
+}
+
 static void *
 dp_netdev_e2e_cache_main(void *arg OVS_UNUSED)
 {
     struct e2e_cache_del_ufid_msg *del_msg;
     struct e2e_cache_trace_message *trace_msg;
+    uint32_t i, num_elements;
 
     for (;;) {
         e2e_cache_thread_wait_on_queues();
@@ -7400,11 +7471,16 @@ dp_netdev_e2e_cache_main(void *arg OVS_UNUSED)
         }
 
         trace_msg = e2e_cache_trace_msg_dequeue();
-        if (OVS_LIKELY(trace_msg)) {
-            /* TODO: process traces message */
-
-            free_cacheline(trace_msg);
+        if (OVS_UNLIKELY(!trace_msg)) {
+            continue;
         }
+
+        num_elements = trace_msg->num_elements;
+        for (i = 0; i < num_elements; i++) {
+            e2e_cache_process_trace_info(&trace_msg->data[i]);
+        }
+
+        free_cacheline(trace_msg);
     }
 
     return NULL;
@@ -9269,7 +9345,6 @@ e2e_cache_set_action_is_valid(struct nlattr *a)
     return true;
 }
 
-OVS_UNUSED
 static inline bool
 e2e_cache_flows_are_valid(struct e2e_cache_ufid_to_flow_item **netdev_flows,
                           uint16_t num)
@@ -9447,7 +9522,6 @@ e2e_cache_attach_merged_set_action(struct ofpbuf *buf, size_t tnl_offset,
     ofpbuf_insert(buf, tnl_offset, tmpbuf.data, tmpbuf.size);
 }
 
-OVS_UNUSED
 static void
 e2e_cache_merge_actions(struct e2e_cache_ufid_to_flow_item **netdev_flows,
                         uint16_t num, struct ofpbuf *buf)
@@ -9556,7 +9630,6 @@ e2e_cache_shift_tnl_fields(struct match *merged_match)
                    sizeof src->wc.masks.field);                      \
         }
 
-OVS_UNUSED
 static void
 e2e_cache_merge_match(struct e2e_cache_ufid_to_flow_item **netdev_flows,
                       uint16_t num, struct match *merged_match)
@@ -9597,5 +9670,20 @@ e2e_cache_merge_match(struct e2e_cache_ufid_to_flow_item **netdev_flows,
          merge_flow_matcher(tp_src, match, merged_match);
          merge_flow_matcher(tp_dst, match, merged_match);
     }
+}
+
+static int
+e2e_cache_merge_flows(struct e2e_cache_ufid_to_flow_item **flows,
+                      uint16_t num_flows,
+                      struct e2e_cache_ufid_to_flow_item *merged_flow,
+                      struct ofpbuf *merged_actions)
+{
+    if (!e2e_cache_flows_are_valid(flows, num_flows)) {
+        return -1;
+    }
+    e2e_cache_merge_match(flows, num_flows, &merged_flow->match);
+    dp_netdev_get_mega_ufid(&merged_flow->match, &merged_flow->ufid);
+    e2e_cache_merge_actions(flows, num_flows, merged_actions);
+    return 0;
 }
 #endif /* E2E_CACHE_ENABLED */
