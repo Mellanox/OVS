@@ -8014,7 +8014,8 @@ e2e_cache_del_ufid_msg_dequeue(void)
 }
 
 static void
-e2e_cache_dispatch_trace_message(struct dp_packet_batch *batch)
+e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
+                                 struct dp_packet_batch *batch)
 {
     struct e2e_cache_trace_info *cur_trace_info;
     struct e2e_cache_trace_message *buffer;
@@ -8067,6 +8068,7 @@ e2e_cache_dispatch_trace_message(struct dp_packet_batch *batch)
         goto out;
     }
 
+    buffer->dp = dp;
     buffer->num_elements = num_elements;
 
     if (OVS_UNLIKELY(e2e_cache_trace_msg_enqueue(buffer) != 0)) {
@@ -8103,7 +8105,8 @@ e2e_cache_merge_flows(struct e2e_cache_ufid_to_flow_item **flows,
                       struct ofpbuf *merged_actions);
 
 static int
-e2e_cache_process_trace_info(const struct e2e_cache_trace_info *trc_info)
+e2e_cache_process_trace_info(struct dp_netdev *dp OVS_UNUSED,
+                             const struct e2e_cache_trace_info *trc_info)
 {
     struct e2e_cache_ufid_to_flow_item *merged_flow;
     struct nlattr *actions;
@@ -8177,7 +8180,8 @@ dp_netdev_e2e_cache_main(void *arg OVS_UNUSED)
 
         num_elements = trace_msg->num_elements;
         for (i = 0; i < num_elements; i++) {
-            e2e_cache_process_trace_info(&trace_msg->data[i]);
+            e2e_cache_process_trace_info((struct dp_netdev *)trace_msg->dp,
+                                         &trace_msg->data[i]);
         }
 
         free_cacheline(trace_msg);
@@ -8191,7 +8195,8 @@ dp_netdev_e2e_cache_main(void *arg OVS_UNUSED)
 #define e2e_cache_trace_msg_enqueue(m) do { } while (0)
 #define e2e_cache_trace_msg_dequeue() do { } while (0)
 #define e2e_cache_thread_wait_on_queues() do { } while (0)
-#define e2e_cache_dispatch_trace_message(b) do { } while (0)
+#define e2e_cache_dispatch_trace_message(d, b) do { } while (0)
+OVS_UNUSED
 static int
 e2e_cache_flow_put(const ovs_u128 *ufid OVS_UNUSED,
                    struct match *match OVS_UNUSED,
@@ -8899,7 +8904,7 @@ dp_execute_output_action(struct dp_netdev_pmd_thread *pmd,
     struct dp_packet_batch out;
 
     if (e2e_cache_enabled) {
-        e2e_cache_dispatch_trace_message(packets_);
+        e2e_cache_dispatch_trace_message(pmd->dp, packets_);
     }
 
     if (!OVS_LIKELY(p)) {
@@ -9291,7 +9296,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
                                        dp_packet_batch_size(packets_));
 
         if (e2e_cache_enabled) {
-            e2e_cache_dispatch_trace_message(packets_);
+            e2e_cache_dispatch_trace_message(pmd->dp, packets_);
         }
 
         dp_packet_delete_batch(packets_, should_steal);
