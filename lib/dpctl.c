@@ -1422,6 +1422,41 @@ dpctl_dump_e2e_stats(int argc, const char *argv[], struct dpctl_params *dpctl_p)
 }
 
 static int
+dpctl_dump_e2e_flows(int argc, const char *argv[], struct dpctl_params *dpctl_p)
+{
+    struct ds s = DS_EMPTY_INITIALIZER;
+    struct dpif *dpif;
+    int error;
+
+    error = opt_dpif_open(argc, argv, dpctl_p, 0, &dpif);
+    if (!error) {
+        struct hmap *portno_names = dpctl_get_portno_names(dpif, dpctl_p);
+
+        struct ofputil_port_map port_map;
+        ofputil_port_map_init(&port_map);
+
+        struct dpif_port_dump port_dump;
+        struct dpif_port dpif_port;
+        DPIF_PORT_FOR_EACH (&dpif_port, &port_dump, dpif) {
+            ofputil_port_map_put(&port_map,
+                                 u16_to_ofp(odp_to_u32(dpif_port.port_no)),
+                                 dpif_port.name);
+        }
+
+        error = dpif_dump_e2e_flows(dpif, portno_names, &port_map, &s);
+
+        if (!error) {
+            dpctl_print(dpctl_p, "%s",ds_cstr(&s));
+        } else {
+            dpctl_error(dpctl_p, error, "Could not dump e2e cache flows");
+        }
+        dpif_close(dpif);
+    }
+
+    return error;
+}
+
+static int
 dpctl_parse_flow_line(int command, struct ds *s, char **flow, char **action)
 {
     const char *line = ds_cstr(s);
@@ -2757,6 +2792,7 @@ static const struct dpctl_command all_commands[] = {
     { "dump-conntrack", "[-m] [-s] [dp] [zone=N]",
       0, 4, dpctl_dump_conntrack, DP_RO },
     { "dump-e2e-stats", "", 0, 0, dpctl_dump_e2e_stats, DP_RO },
+    { "dump-e2e-flows", "", 0, 1, dpctl_dump_e2e_flows, DP_RO },
     { "flush-conntrack", "[dp] [zone=N] [ct-tuple]", 0, 3,
       dpctl_flush_conntrack, DP_RW },
     { "ct-stats-show", "[dp] [zone=N]",
