@@ -4139,6 +4139,7 @@ const struct dpif_class dpif_netlink_class = {
     dpif_netlink_flow_dump_thread_destroy,
     dpif_netlink_flow_dump_next,
     NULL,                       /* dump e2e stats */
+    NULL,                       /* dump e2e flows */
     dpif_netlink_operate,
     NULL,                       /* offload_stats_get */
     dpif_netlink_recv_set,

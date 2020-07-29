@@ -1152,6 +1152,14 @@ dpif_dump_e2e_stats(struct dpif *dpif, struct ds *s)
             : EOPNOTSUPP);
 }
 
+int
+dpif_dump_e2e_flows(struct dpif *dpif, struct hmap *portno_names, struct ofputil_port_map *port_map, struct ds *s)
+{
+    return (dpif->dpif_class->dump_e2e_flows
+            ? dpif->dpif_class->dump_e2e_flows(portno_names, port_map, s)
+            : EOPNOTSUPP);
+}
+
 struct dpif_execute_helper_aux {
     struct dpif *dpif;
     const struct flow *flow;

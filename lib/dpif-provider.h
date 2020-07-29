@@ -324,6 +324,9 @@ struct dpif_class {
 
     /* Dump E2E cache statistics. */
     int (*dump_e2e_stats)(struct ds *);
+    /* Dump E2E cache flows. */
+    int (*dump_e2e_flows)(struct hmap *, struct ofputil_port_map *,
+                          struct ds *);
 
     /* Executes each of the 'n_ops' operations in 'ops' on 'dpif', in the order
      * in which they are specified, placing each operation's results in the
