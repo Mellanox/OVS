@@ -606,6 +606,7 @@ struct dpif_flow {
 int dpif_flow_dump_next(struct dpif_flow_dump_thread *,
                         struct dpif_flow *flows, int max_flows);
 int dpif_dump_e2e_stats(struct dpif *dpif, struct ds *s);
+int dpif_dump_e2e_flows(struct dpif *dpif, struct hmap *portno_names, struct ofputil_port_map *port_map, struct ds *s);
 
 #define DPIF_FLOW_BUFSIZE 2048
 
