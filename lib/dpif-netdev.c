@@ -7309,6 +7309,9 @@ e2e_cache_del_ufid_msg_dequeue(void)
     struct ovs_list *list;
     struct e2e_cache_del_ufid_msg *del_msg;
 
+    if (ovs_list_is_empty(&e2e_cache_thread_msg_queues.del_ufid_msg_list)) {
+        return NULL;
+    }
     ovs_mutex_lock(&e2e_cache_thread_msg_queues.mutex);
     list = ovs_list_pop_front(&e2e_cache_thread_msg_queues.del_ufid_msg_list);
     ovs_mutex_unlock(&e2e_cache_thread_msg_queues.mutex);
