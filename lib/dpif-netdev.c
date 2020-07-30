@@ -7096,6 +7096,9 @@ e2e_cache_trace_msg_dequeue(void)
     struct e2e_cache_trace_msg_item *trace_msg_item;
     struct e2e_cache_trace_message *msg;
 
+    if (ovs_list_is_empty(&e2e_cache_thread_msg_queues.trace_msg_list)) {
+        return NULL;
+    }
     ovs_mutex_lock(&e2e_cache_thread_msg_queues.mutex);
     list = ovs_list_pop_front(&e2e_cache_thread_msg_queues.trace_msg_list);
     ovs_mutex_unlock(&e2e_cache_thread_msg_queues.mutex);
