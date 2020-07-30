@@ -7498,6 +7498,21 @@ dp_netdev_e2e_cache_main(void *arg OVS_UNUSED)
 #define e2e_cache_trace_msg_dequeue() do { } while (0)
 #define e2e_cache_thread_wait_on_queues() do { } while (0)
 #define e2e_cache_dispatch_trace_message(b) do { } while (0)
+OVS_UNUSED
+static int
+e2e_cache_flow_put(const ovs_u128 *ufid OVS_UNUSED,
+                   struct match *match OVS_UNUSED,
+                   const struct nlattr *actions OVS_UNUSED,
+                   size_t actions_len OVS_UNUSED)
+{
+    return 0;
+}
+OVS_UNUSED
+static int
+e2e_cache_flow_del(const ovs_u128 *ufid OVS_UNUSED)
+{
+    return 0;
+}
 #endif /* E2E_CACHE_ENABLED */
 
 /* SMC lookup function for a batch of packets.
