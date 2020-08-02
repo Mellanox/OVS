@@ -7811,6 +7811,9 @@ handle_packet_upcall(struct dp_netdev_pmd_thread *pmd,
         uint32_t hash = dp_netdev_flow_hash(&netdev_flow->ufid);
         smc_insert(pmd, key, hash);
         emc_probabilistic_insert(pmd, key, netdev_flow);
+        if (e2e_cache_enabled) {
+            e2e_cache_trace_add_flow(packet, &netdev_flow->mega_ufid);
+        }
     }
     if (pmd_perf_metrics_enabled(pmd)) {
         /* Update upcall stats. */
