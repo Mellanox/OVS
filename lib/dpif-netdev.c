@@ -7646,8 +7646,7 @@ e2e_cache_trace_init(struct dp_packet *p)
 
 static inline void
 e2e_cache_trace_add_flow(struct dp_packet *p,
-                         const ovs_u128 *ufid,
-                         odp_port_t port)
+                         const ovs_u128 *ufid)
 {
     uint32_t e2e_trace_size = p->e2e_trace_size;
 
@@ -7661,7 +7660,7 @@ e2e_cache_trace_add_flow(struct dp_packet *p,
         return;
     }
     p->e2e_trace_flags |= E2E_CACHE_TRACE_FLAG_PORT_SET;
-    p->e2e_trace_port = port;
+    p->e2e_trace_port = p->md.in_port.odp_port;
 }
 
 static inline int
@@ -8089,7 +8088,7 @@ dp_netdev_e2e_cache_main(void *arg OVS_UNUSED)
 }
 #else
 #define e2e_cache_trace_init(p) do { } while (0)
-#define e2e_cache_trace_add_flow(p, ufid, port) do { } while (0)
+#define e2e_cache_trace_add_flow(p, ufid) do { } while (0)
 #define e2e_cache_trace_msg_enqueue(m) do { } while (0)
 #define e2e_cache_trace_msg_dequeue() do { } while (0)
 #define e2e_cache_thread_wait_on_queues() do { } while (0)
@@ -8151,8 +8150,7 @@ smc_lookup_batch(struct dp_netdev_pmd_thread *pmd,
                     hit = true;
 
                     if (e2e_cache_enabled) {
-                        e2e_cache_trace_add_flow(packet, &flow->mega_ufid,
-                                                 flow->flow.in_port.odp_port);
+                        e2e_cache_trace_add_flow(packet, &flow->mega_ufid);
                     }
                     break;
                 }
@@ -8272,8 +8270,7 @@ dfc_processing(struct dp_netdev_pmd_thread *pmd,
                                                flow_map, map_cnt++);
                 }
                 if (e2e_cache_enabled) {
-                    e2e_cache_trace_add_flow(packet, &flow->mega_ufid,
-                                             flow->flow.in_port.odp_port);
+                    e2e_cache_trace_add_flow(packet, &flow->mega_ufid);
                 }
                 continue;
             }
@@ -8303,8 +8300,7 @@ dfc_processing(struct dp_netdev_pmd_thread *pmd,
                                            flow_map, map_cnt++);
             }
             if (e2e_cache_enabled) {
-                e2e_cache_trace_add_flow(packet, &flow->mega_ufid,
-                                         flow->flow.in_port.odp_port);
+                e2e_cache_trace_add_flow(packet, &flow->mega_ufid);
             }
         } else {
             /* Exact match cache missed. Group missed packets together at
@@ -8523,8 +8519,7 @@ fast_path_processing(struct dp_netdev_pmd_thread *pmd,
         emc_probabilistic_insert(pmd, keys[i], flow);
 
         if (e2e_cache_enabled) {
-            e2e_cache_trace_add_flow(packet, &flow->mega_ufid,
-                                     flow->flow.in_port.odp_port);
+            e2e_cache_trace_add_flow(packet, &flow->mega_ufid);
         }
 
         /* Add these packets into the flow map in the same order
