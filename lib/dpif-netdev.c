@@ -7323,11 +7323,11 @@ e2e_cache_del_ufid_msg_dequeue(void)
 static void
 e2e_cache_dispatch_trace_message(struct dp_packet_batch *batch)
 {
-    struct dp_packet *packet;
-    size_t buffer_size;
-    struct e2e_cache_trace_message *buffer;
     struct e2e_cache_trace_info *cur_trace_info;
+    struct e2e_cache_trace_message *buffer;
+    struct dp_packet *packet;
     uint32_t num_elements;
+    size_t buffer_size;
 
     if (ovsthread_once_start(&e2e_cache_thread_once)) {
         xpthread_cond_init(&e2e_cache_thread_msg_queues.cond, NULL);
@@ -7351,13 +7351,13 @@ e2e_cache_dispatch_trace_message(struct dp_packet_batch *batch)
         uint32_t e2e_trace_size = packet->e2e_trace_size;
 
         /* Don't send "partial" traces due to overflow of the trace storage */
-        if (OVS_UNLIKELY(cur_trace_info->flags &
+        if (OVS_UNLIKELY(packet->e2e_trace_flags &
                          E2E_CACHE_TRACE_FLAG_OVERFLOW)) {
             /* TODO: add statistic counter */
             continue;
         }
         /* Send only traces for packet that passed conntrack */
-        if (!(cur_trace_info->flags & E2E_CACHE_TRACE_FLAG_CT)) {
+        if (!(packet->e2e_trace_flags & E2E_CACHE_TRACE_FLAG_CT)) {
             continue;
         }
 
