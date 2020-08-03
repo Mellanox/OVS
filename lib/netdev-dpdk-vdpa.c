@@ -233,11 +233,11 @@ netdev_dpdk_vdpa_queue_state(struct netdev_dpdk_vdpa_relay *relay,
 
     while (!rte_eth_vhost_get_queue_event(port, &event)) {
         q_id = (event.rx ? event.queue_id * 2 : event.queue_id * 2 + 1);
-        if ((q_id >= relay->num_queues) && event.enable) {
+        if ((event.queue_id >= relay->num_queues) && event.enable) {
             VLOG_ERR("netdev_dpdk_vdpa_queue_state: "
                      "Queue %u is higher than max queues configures for port "
                      "%u. Max queues configured: %u",
-                     q_id, port, relay->num_queues);
+                     event.queue_id, port, relay->num_queues);
             return ENODEV;
         }
         relay->flow_params.queues_en[event.queue_id] = event.enable;
