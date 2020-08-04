@@ -8028,7 +8028,8 @@ e2e_cache_process_trace_info(const struct e2e_cache_trace_info *trc_info)
         goto out;
     }
 
-    actions = ofpbuf_at_assert(&merged_actions, 0, sizeof(struct nlattr));
+    actions = (struct nlattr *) ofpbuf_at_assert(&merged_actions, 0,
+                                                 sizeof(struct nlattr));
     actions_len = merged_actions.size;
     merged_flow->actions = (struct nlattr *) xmalloc(actions_len);
     if (OVS_UNLIKELY(!merged_flow->actions)) {
@@ -10512,6 +10513,9 @@ e2e_cache_merge_flows(struct e2e_cache_ufid_to_flow_item **flows,
     e2e_cache_merge_match(flows, num_flows, &merged_flow->match);
     dp_netdev_get_mega_ufid(&merged_flow->match, &merged_flow->ufid);
     e2e_cache_merge_actions(flows, num_flows, merged_actions);
+    if (OVS_UNLIKELY(merged_actions->size < sizeof(struct nlattr))) {
+        return -1;
+    }
     return 0;
 }
 #endif /* E2E_CACHE_ENABLED */
