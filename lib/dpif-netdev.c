@@ -8144,7 +8144,7 @@ smc_lookup_batch(struct dp_netdev_pmd_thread *pmd,
                     hit = true;
 
                     if (e2e_cache_enabled) {
-                        e2e_cache_trace_add_flow(packet, &flow->ufid,
+                        e2e_cache_trace_add_flow(packet, &flow->mega_ufid,
                                                  flow->flow.in_port.odp_port);
                     }
                     break;
@@ -8265,7 +8265,7 @@ dfc_processing(struct dp_netdev_pmd_thread *pmd,
                                                flow_map, map_cnt++);
                 }
                 if (e2e_cache_enabled) {
-                    e2e_cache_trace_add_flow(packet, &flow->ufid,
+                    e2e_cache_trace_add_flow(packet, &flow->mega_ufid,
                                              flow->flow.in_port.odp_port);
                 }
                 continue;
@@ -8296,7 +8296,7 @@ dfc_processing(struct dp_netdev_pmd_thread *pmd,
                                            flow_map, map_cnt++);
             }
             if (e2e_cache_enabled) {
-                e2e_cache_trace_add_flow(packet, &flow->ufid,
+                e2e_cache_trace_add_flow(packet, &flow->mega_ufid,
                                          flow->flow.in_port.odp_port);
             }
         } else {
@@ -8516,7 +8516,7 @@ fast_path_processing(struct dp_netdev_pmd_thread *pmd,
         emc_probabilistic_insert(pmd, keys[i], flow);
 
         if (e2e_cache_enabled) {
-            e2e_cache_trace_add_flow(packet, &flow->ufid,
+            e2e_cache_trace_add_flow(packet, &flow->mega_ufid,
                                      flow->flow.in_port.odp_port);
         }
 
