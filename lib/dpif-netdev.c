@@ -7823,7 +7823,6 @@ e2e_cache_flow_free(void *arg)
     free(dp_flow_data);
 }
 
-OVS_UNUSED
 static void
 e2e_cache_merged_flow_db_del(const ovs_u128 *ufid)
 {
@@ -7840,13 +7839,30 @@ e2e_cache_merged_flow_db_del(const ovs_u128 *ufid)
     e2e_cache_flow_free(dp_flow_data);
 }
 
-static inline void
+static inline int
 e2e_cache_merged_flow_db_put(struct e2e_cache_ufid_to_flow_item *merged_flow)
 {
     uint32_t hash =
         hash_bytes(&merged_flow->ufid, sizeof merged_flow->ufid, 0);
+    struct e2e_cache_ufid_to_flow_item *node;
+
+    node = e2e_cache_merged_flow_find(&merged_flow->ufid);
+    /* In case the merged flow exists do nothing. */
+    if (node && (node->actions_size == merged_flow->actions_size) &&
+       !memcmp(node->actions, merged_flow->actions,
+       sizeof *merged_flow->actions)) {
+           return -1;
+    }
+
+    /* In case it's a flow modification delete the current flow
+     * before inserting the updated one.
+     */
+    if (node) {
+        e2e_cache_merged_flow_db_del(&node->ufid);
+    }
 
     hmap_insert(&merged_flows_map, &merged_flow->node.in_hmap, hash);
+    return 0;
 }
 
 /* Find dp_flow_data with @ufid. */
@@ -8095,6 +8111,7 @@ e2e_cache_process_trace_info(const struct e2e_cache_trace_info *trc_info)
     struct ofpbuf merged_actions;
     struct e2e_cache_ufid_to_flow_item *mt_flows[E2E_CACHE_MAX_TRACE];
     uint64_t merged_actions_buf[1024 / sizeof(uint64_t)];
+    int err;
 
     merged_flow = xzalloc(sizeof *merged_flow);
     if (OVS_UNLIKELY(!merged_flow)) {
@@ -8125,12 +8142,12 @@ e2e_cache_process_trace_info(const struct e2e_cache_trace_info *trc_info)
     memcpy(merged_flow->actions, actions, actions_len);
     merged_flow->actions_size = actions_len;
 
-    e2e_cache_merged_flow_db_put(merged_flow);
-
+    err = e2e_cache_merged_flow_db_put(merged_flow);
+    if (OVS_UNLIKELY(err)) {
+        goto out;
+    }
     /* TODO: placeholder for dispatch merged flow to offload thread */
-
     return 0;
-
 out:
     if (merged_flow) {
         e2e_cache_flow_free(merged_flow);
