@@ -8240,6 +8240,7 @@ e2e_cache_process_trace_info(struct dp_netdev *dp,
 
 remove_flow_from_db:
     e2e_cache_merged_flow_db_del(merged_flow);
+    return err;
 free_merged_flow:
     e2e_cache_flow_free(merged_flow);
     return err;
