@@ -7829,15 +7829,8 @@ e2e_cache_flow_free(void *arg)
 }
 
 static void
-e2e_cache_merged_flow_db_del(const ovs_u128 *ufid)
+e2e_cache_merged_flow_db_del(struct e2e_cache_ufid_to_flow_item *dp_flow_data)
 {
-    struct e2e_cache_ufid_to_flow_item *dp_flow_data =
-        e2e_cache_merged_flow_find(ufid);
-
-    if (OVS_UNLIKELY(!dp_flow_data)) {
-        return;
-    }
-
     hmap_remove(&merged_flows_map, &dp_flow_data->node.in_hmap);
     /* TODO: Add statistic counter */
 
@@ -7863,7 +7856,7 @@ e2e_cache_merged_flow_db_put(struct e2e_cache_ufid_to_flow_item *merged_flow)
      * before inserting the updated one.
      */
     if (node) {
-        e2e_cache_merged_flow_db_del(&node->ufid);
+        e2e_cache_merged_flow_db_del(node);
     }
 
     hmap_insert(&merged_flows_map, &merged_flow->node.in_hmap, hash);
@@ -8246,7 +8239,7 @@ e2e_cache_process_trace_info(struct dp_netdev *dp,
     return 0;
 
 remove_flow_from_db:
-    e2e_cache_merged_flow_db_del(&merged_flow->ufid);
+    e2e_cache_merged_flow_db_del(merged_flow);
 free_merged_flow:
     e2e_cache_flow_free(merged_flow);
     return err;
