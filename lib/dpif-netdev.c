@@ -7846,6 +7846,90 @@ e2e_cache_thread_wait_on_queues(void)
     ovs_mutex_unlock(&e2e_cache_thread_msg_queues.mutex);
 }
 
+static inline void
+e2e_cache_populate_offload_item(struct dp_offload_thread_item *offload_item,
+                                int op,
+                                struct dp_netdev *dp,
+                                struct dp_netdev_flow *flow)
+{
+    memset(offload_item, 0, sizeof *offload_item);
+    offload_item->type = DP_FLOW_OFFLOAD_ITEM;
+    offload_item->dp = dp;
+    offload_item->data->flow_offload.flow = flow;
+    offload_item->data->flow_offload.op = op;
+    offload_item->data->flow_offload.is_e2e_cache_flow = true;
+}
+
+OVS_UNUSED
+static int
+e2e_cache_merged_flow_offload_del(struct e2e_cache_ufid_to_flow_item *mflow)
+{
+    struct dp_offload_thread_item *offload_item;
+    struct dp_netdev *dp = mflow->dp;
+    struct dp_netdev_flow *flow = mflow->offloaded_flow;
+    int rv;
+
+    ovs_assert(dp);
+    ovs_assert(flow);
+
+    offload_item = xmalloc(sizeof *offload_item +
+                           sizeof offload_item->data->flow_offload);
+    e2e_cache_populate_offload_item(offload_item,
+                                    DP_NETDEV_FLOW_OFFLOAD_OP_DEL, dp, flow);
+
+    mflow->dp = NULL;
+    mflow->offloaded_flow = NULL;
+    rv = dp_netdev_flow_offload_del(offload_item);
+    free(offload_item);
+    return rv;
+}
+
+static int
+e2e_cache_merged_flow_offload_put(struct dp_netdev *dp,
+                                  struct e2e_cache_ufid_to_flow_item *mflow)
+{
+    struct dp_offload_thread_item *offload_item;
+    struct dp_flow_offload_item *flow_offload;
+    struct dp_netdev_flow *flow;
+    int err;
+
+    flow = (struct dp_netdev_flow *) xzalloc(sizeof *flow);
+    if (OVS_UNLIKELY(!flow)) {
+        return -1;
+    }
+
+    flow->mark = INVALID_FLOW_MARK;
+    flow->dead = false;
+    *CONST_CAST(ovs_u128 *, &flow->mega_ufid) = mflow->ufid;
+    CONST_CAST(struct flow *, &flow->flow)->in_port =
+        mflow->match.flow.in_port;
+    ovs_refcount_init(&flow->ref_cnt);
+    ovsrcu_set(&flow->actions, dp_netdev_actions_create(mflow->actions,
+                                                        mflow->actions_size));
+    flow->dp_extra_info = xstrdup("merged_flow");
+
+    offload_item = xmalloc(sizeof *offload_item +
+                           sizeof offload_item->data->flow_offload);
+    e2e_cache_populate_offload_item(offload_item,
+                                    DP_NETDEV_FLOW_OFFLOAD_OP_ADD, dp, flow);
+
+    flow_offload = &offload_item->data->flow_offload;
+    memcpy(&flow_offload->match, &mflow->match, sizeof mflow->match);
+    flow_offload->actions = mflow->actions;
+    flow_offload->actions_len = mflow->actions_size;
+
+    err = dp_netdev_flow_offload_put(offload_item);
+    free(offload_item);
+    if (OVS_UNLIKELY(err != 0)) {
+        dp_netdev_flow_free(flow);
+        return err;
+    }
+
+    mflow->dp = dp;
+    mflow->offloaded_flow = flow;
+    return 0;
+}
+
 /* Associate the merged flow to each of its composing flows,
  * to allow accessing:
  * - From the merged flow to all its composing flows.
@@ -8224,90 +8308,6 @@ e2e_cache_trace_info_to_flows(const struct e2e_cache_trace_info *trc_info,
             return -1;
         }
     }
-    return 0;
-}
-
-static inline void
-e2e_cache_populate_offload_item(struct dp_offload_thread_item *offload_item,
-                                int op,
-                                struct dp_netdev *dp,
-                                struct dp_netdev_flow *flow)
-{
-    memset(offload_item, 0, sizeof *offload_item);
-    offload_item->type = DP_FLOW_OFFLOAD_ITEM;
-    offload_item->dp = dp;
-    offload_item->data->flow_offload.flow = flow;
-    offload_item->data->flow_offload.op = op;
-    offload_item->data->flow_offload.is_e2e_cache_flow = true;
-}
-
-OVS_UNUSED
-static int
-e2e_cache_merged_flow_offload_del(struct e2e_cache_ufid_to_flow_item *mflow)
-{
-    struct dp_offload_thread_item *offload_item;
-    struct dp_netdev *dp = mflow->dp;
-    struct dp_netdev_flow *flow = mflow->offloaded_flow;
-    int rv;
-
-    ovs_assert(dp);
-    ovs_assert(flow);
-
-    offload_item = xmalloc(sizeof *offload_item +
-                           sizeof offload_item->data->flow_offload);
-    e2e_cache_populate_offload_item(offload_item,
-                                    DP_NETDEV_FLOW_OFFLOAD_OP_DEL, dp, flow);
-
-    mflow->dp = NULL;
-    mflow->offloaded_flow = NULL;
-    rv = dp_netdev_flow_offload_del(offload_item);
-    free(offload_item);
-    return rv;
-}
-
-static int
-e2e_cache_merged_flow_offload_put(struct dp_netdev *dp,
-                                  struct e2e_cache_ufid_to_flow_item *mflow)
-{
-    struct dp_offload_thread_item *offload_item;
-    struct dp_flow_offload_item *flow_offload;
-    struct dp_netdev_flow *flow;
-    int err;
-
-    flow = (struct dp_netdev_flow *) xzalloc(sizeof *flow);
-    if (OVS_UNLIKELY(!flow)) {
-        return -1;
-    }
-
-    flow->mark = INVALID_FLOW_MARK;
-    flow->dead = false;
-    *CONST_CAST(ovs_u128 *, &flow->mega_ufid) = mflow->ufid;
-    CONST_CAST(struct flow *, &flow->flow)->in_port =
-        mflow->match.flow.in_port;
-    ovs_refcount_init(&flow->ref_cnt);
-    ovsrcu_set(&flow->actions, dp_netdev_actions_create(mflow->actions,
-                                                        mflow->actions_size));
-    flow->dp_extra_info = xstrdup("merged_flow");
-
-    offload_item = xmalloc(sizeof *offload_item +
-                           sizeof offload_item->data->flow_offload);
-    e2e_cache_populate_offload_item(offload_item,
-                                    DP_NETDEV_FLOW_OFFLOAD_OP_ADD, dp, flow);
-
-    flow_offload = &offload_item->data->flow_offload;
-    memcpy(&flow_offload->match, &mflow->match, sizeof mflow->match);
-    flow_offload->actions = mflow->actions;
-    flow_offload->actions_len = mflow->actions_size;
-
-    err = dp_netdev_flow_offload_put(offload_item);
-    free(offload_item);
-    if (OVS_UNLIKELY(err != 0)) {
-        dp_netdev_flow_free(flow);
-        return err;
-    }
-
-    mflow->dp = dp;
-    mflow->offloaded_flow = flow;
     return 0;
 }
 
