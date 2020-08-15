@@ -1018,6 +1018,13 @@ static inline bool
 pmd_perf_metrics_enabled(const struct dp_netdev_pmd_thread *pmd);
 static void queue_netdev_flow_del(struct dp_netdev_pmd_thread *pmd,
                                   struct dp_netdev_flow *flow);
+static void
+e2e_cache_get_merged_flows_stats(struct netdev *netdev,
+                                 struct match *match,
+                                 struct nlattr **actions,
+                                 const ovs_u128 *mt_ufid,
+                                 struct dpif_flow_stats *stats,
+                                 struct ofpbuf *buf);
 
 static void
 dp_netdev_offload_init(void)
@@ -4018,6 +4025,12 @@ dpif_netdev_get_flow_offload_status(const struct dp_netdev *dp,
         /* Storing statistics and attributes from the last request for
          * later use on mutex contention. */
         dp_netdev_flow_set_last_stats_attrs(netdev_flow, stats, attrs, ret);
+        /* get merged flow stats and update it to mt flow stats */
+        if (e2e_cache_enabled && !ret) {
+            e2e_cache_get_merged_flows_stats(netdev, &match, &actions,
+                                             &netdev_flow->mega_ufid, stats,
+                                             &buf);
+        }
         ovs_rwlock_unlock(&dp->port_rwlock);
     } else {
         dp_netdev_flow_get_last_stats_attrs(netdev_flow, stats, attrs, &ret);
@@ -8289,6 +8302,47 @@ free_merged_flow:
     return err;
 }
 
+static void
+e2e_cache_get_merged_flows_stats(struct netdev *netdev,
+                                 struct match *match,
+                                 struct nlattr **actions,
+                                 const ovs_u128 *mt_ufid,
+                                 struct dpif_flow_stats *stats,
+                                 struct ofpbuf *buf)
+{
+    struct e2e_cache_ufid_to_flow_item *merged_flow, *dp_flow_data;
+    struct flow2flow_item *affected_flow_item;
+    struct dpif_flow_attrs merged_attr;
+    struct dpif_flow_stats merged_stats;
+    size_t hash = hash_bytes(mt_ufid, sizeof *mt_ufid, 0);
+    static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 10);
+    int ret;
+
+    ovs_mutex_lock(&ufid_to_flow_map_mutex);
+    dp_flow_data = e2e_cache_ufid_to_flow_data_find_protected(mt_ufid, hash);
+    if (OVS_UNLIKELY(!dp_flow_data)) {
+        ovs_mutex_unlock(&ufid_to_flow_map_mutex);
+        return;
+    }
+    LIST_FOR_EACH (affected_flow_item, list,
+                  &dp_flow_data->associated_flows[0].list) {
+        merged_flow = CONTAINER_OF(affected_flow_item,
+                               struct e2e_cache_ufid_to_flow_item,
+                               associated_flows[affected_flow_item->index]);
+        ret = netdev_flow_get(netdev, match, actions, &merged_flow->ufid,
+                              &merged_stats, &merged_attr, buf);
+        if (ret) {
+            VLOG_ERR_RL(&rl, "Failed to get merged flow ufid "UUID_FMT"",
+                        UUID_ARGS((struct uuid *) &merged_flow->ufid));
+            continue;
+        }
+        stats->n_bytes += merged_stats.n_bytes;
+        stats->n_packets += merged_stats.n_packets;
+        stats->used = MAX(stats->used, merged_stats.used);
+    }
+    ovs_mutex_unlock(&ufid_to_flow_map_mutex);
+}
+
 static void *
 dp_netdev_e2e_cache_main(void *arg OVS_UNUSED)
 {
@@ -8340,6 +8394,15 @@ static int
 e2e_cache_flow_del(const ovs_u128 *ufid OVS_UNUSED)
 {
     return 0;
+}
+static void
+e2e_cache_get_merged_flows_stats(struct netdev *netdev OVS_UNUSED,
+                                 struct match *match OVS_UNUSED,
+                                 struct nlattr **actions OVS_UNUSED,
+                                 const ovs_u128 *mt_ufid OVS_UNUSED,
+                                 struct dpif_flow_stats *stats OVS_UNUSED,
+                                 sturct ofpbuf *buf OVS_UNUSED)
+{
 }
 #endif /* E2E_CACHE_ENABLED */
 
