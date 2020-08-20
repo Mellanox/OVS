@@ -7681,22 +7681,31 @@ struct e2e_cache_trace_msg_item {
     struct e2e_cache_trace_message *msg;
 };
 
-struct e2e_cache_del_ufid_msg {
+enum {
+    E2E_UFID_MSG_PUT = 1,
+    E2E_UFID_MSG_DEL = 2
+};
+
+struct e2e_cache_ufid_msg {
     struct ovs_list node;
     ovs_u128 ufid;
+    int op;
+    struct match match;
+    struct nlattr *actions;
+    size_t actions_len;
 };
 
 struct e2e_cache_thread_msg_queues {
     struct ovs_mutex mutex;
-    struct ovs_list del_ufid_msg_list;
+    struct ovs_list ufid_msg_list;
     struct ovs_list trace_msg_list;
     pthread_cond_t cond;
 };
 
 static struct e2e_cache_thread_msg_queues e2e_cache_thread_msg_queues = {
     .mutex = OVS_MUTEX_INITIALIZER,
-    .del_ufid_msg_list =
-        OVS_LIST_INITIALIZER(&e2e_cache_thread_msg_queues.del_ufid_msg_list),
+    .ufid_msg_list =
+        OVS_LIST_INITIALIZER(&e2e_cache_thread_msg_queues.ufid_msg_list),
     .trace_msg_list =
         OVS_LIST_INITIALIZER(&e2e_cache_thread_msg_queues.trace_msg_list)
 };
@@ -7785,7 +7794,7 @@ static inline void
 e2e_cache_thread_wait_on_queues(void)
 {
     ovs_mutex_lock(&e2e_cache_thread_msg_queues.mutex);
-    if (ovs_list_is_empty(&e2e_cache_thread_msg_queues.del_ufid_msg_list) &&
+    if (ovs_list_is_empty(&e2e_cache_thread_msg_queues.ufid_msg_list) &&
         ovs_list_is_empty(&e2e_cache_thread_msg_queues.trace_msg_list)) {
         ovsrcu_quiesce_start();
         ovs_mutex_cond_wait(&e2e_cache_thread_msg_queues.cond,
@@ -7962,13 +7971,29 @@ e2e_cache_flow_db_del(const ovs_u128 *ufid)
     ovs_mutex_unlock(&ufid_to_flow_map_mutex);
 }
 
-static void
-e2e_cache_flow_db_put(struct e2e_cache_ufid_to_flow_item *dp_flow_data)
+static int
+e2e_cache_flow_db_put(struct e2e_cache_ufid_msg *ufid_msg)
 {
-    size_t hash;
     struct e2e_cache_ufid_to_flow_item *dp_flow_data_prev;
-    const ovs_u128 *ufid = &dp_flow_data->ufid;
+    struct e2e_cache_ufid_to_flow_item *dp_flow_data;
+    const ovs_u128 *ufid;
+    size_t hash;
 
+    dp_flow_data = (struct e2e_cache_ufid_to_flow_item *)
+        xzalloc(sizeof *dp_flow_data +
+                sizeof dp_flow_data->associated_flows[0]);
+    if (OVS_UNLIKELY(!dp_flow_data)) {
+        goto err;
+    }
+
+    dp_flow_data->ufid = ufid_msg->ufid;
+    dp_flow_data->match = ufid_msg->match;
+    dp_flow_data->actions = ufid_msg->actions;
+    ufid_msg->actions = NULL;
+    dp_flow_data->actions_size = ufid_msg->actions_len;
+    ovs_list_init(&dp_flow_data->associated_flows[0].list);
+
+    ufid = &dp_flow_data->ufid;
     hash = hash_bytes(ufid, sizeof *ufid, 0);
 
     ovs_mutex_lock(&ufid_to_flow_map_mutex);
@@ -7979,25 +8004,35 @@ e2e_cache_flow_db_put(struct e2e_cache_ufid_to_flow_item *dp_flow_data)
     }
 
     cmap_insert(&ufid_to_flow_map, &dp_flow_data->node.in_cmap, hash);
+
     ovs_mutex_unlock(&ufid_to_flow_map_mutex);
+    return 0;
+
+err:
+    if (ufid_msg->actions) {
+        free(ufid_msg->actions);
+        ufid_msg->actions = NULL;
+    }
+    return -1;
 }
 
 static int
 e2e_cache_flow_del(const ovs_u128 *ufid)
 {
-    struct e2e_cache_del_ufid_msg *del_msg =
-        (struct e2e_cache_del_ufid_msg *) xmalloc(sizeof *del_msg);
+    struct e2e_cache_ufid_msg *del_msg =
+        (struct e2e_cache_ufid_msg *) xmalloc(sizeof *del_msg);
 
     if (OVS_UNLIKELY(!del_msg)) {
         return -1;
     }
     del_msg->ufid = *ufid;
+    del_msg->op = E2E_UFID_MSG_DEL;
 
-    /* Insert message into queue, e2e_cache_del_ufid_msg_dequeue()
+    /* Insert message into queue, e2e_cache_ufid_msg_dequeue()
      * is used to dequeue it from there.
      */
     ovs_mutex_lock(&e2e_cache_thread_msg_queues.mutex);
-    ovs_list_push_back(&e2e_cache_thread_msg_queues.del_ufid_msg_list,
+    ovs_list_push_back(&e2e_cache_thread_msg_queues.ufid_msg_list,
                        &del_msg->node);
     xpthread_cond_signal(&e2e_cache_thread_msg_queues.cond);
     ovs_mutex_unlock(&e2e_cache_thread_msg_queues.mutex);
@@ -8009,27 +8044,34 @@ static int
 e2e_cache_flow_put(const ovs_u128 *ufid, struct match *match,
                    const struct nlattr *actions, size_t actions_len)
 {
-    struct e2e_cache_ufid_to_flow_item *dp_flow_data;
+    struct e2e_cache_ufid_msg *put_msg =
+        (struct e2e_cache_ufid_msg *) xmalloc(sizeof *put_msg);
 
-    dp_flow_data = (struct e2e_cache_ufid_to_flow_item *)
-        xzalloc(sizeof *dp_flow_data +
-                sizeof dp_flow_data->associated_flows[0]);
-    if (OVS_UNLIKELY(!dp_flow_data)) {
-        return -1;
-    }
-    ovs_list_init(&dp_flow_data->associated_flows[0].list);
-    dp_flow_data->actions = (struct nlattr *) xmalloc(actions_len);
-    if (OVS_UNLIKELY(!dp_flow_data->actions)) {
-        free(dp_flow_data);
+    if (OVS_UNLIKELY(!put_msg)) {
         return -1;
     }
 
-    dp_flow_data->ufid = *ufid;
-    dp_flow_data->match = *match;
-    memcpy(dp_flow_data->actions, actions, actions_len);
-    dp_flow_data->actions_size = actions_len;
+    put_msg->actions = (struct nlattr *) xmalloc(actions_len);
+    if (OVS_UNLIKELY(!put_msg->actions)) {
+        free(put_msg);
+        return -1;
+    }
 
-    e2e_cache_flow_db_put(dp_flow_data);
+    put_msg->ufid = *ufid;
+    put_msg->op = E2E_UFID_MSG_PUT;
+    put_msg->match = *match;
+    memcpy(put_msg->actions, actions, actions_len);
+    put_msg->actions_len = actions_len;
+
+    /* Insert message into queue, e2e_cache_ufid_msg_dequeue()
+     * is used to dequeue it from there.
+     */
+    ovs_mutex_lock(&e2e_cache_thread_msg_queues.mutex);
+    ovs_list_push_back(&e2e_cache_thread_msg_queues.ufid_msg_list,
+                       &put_msg->node);
+    xpthread_cond_signal(&e2e_cache_thread_msg_queues.cond);
+    ovs_mutex_unlock(&e2e_cache_thread_msg_queues.mutex);
+
     return 0;
 }
 
@@ -8041,21 +8083,21 @@ dp_netdev_ct_e2e_add_cb(struct ct_flow_offload_item *offload,
     return e2e_cache_flow_put(&offload->ufid, match, actions, actions_len);
 }
 
-static struct e2e_cache_del_ufid_msg *
-e2e_cache_del_ufid_msg_dequeue(void)
+static struct e2e_cache_ufid_msg *
+e2e_cache_ufid_msg_dequeue(void)
 {
+    struct e2e_cache_ufid_msg *ufid_msg;
     struct ovs_list *list;
-    struct e2e_cache_del_ufid_msg *del_msg;
 
-    if (ovs_list_is_empty(&e2e_cache_thread_msg_queues.del_ufid_msg_list)) {
+    if (ovs_list_is_empty(&e2e_cache_thread_msg_queues.ufid_msg_list)) {
         return NULL;
     }
     ovs_mutex_lock(&e2e_cache_thread_msg_queues.mutex);
-    list = ovs_list_pop_front(&e2e_cache_thread_msg_queues.del_ufid_msg_list);
+    list = ovs_list_pop_front(&e2e_cache_thread_msg_queues.ufid_msg_list);
     ovs_mutex_unlock(&e2e_cache_thread_msg_queues.mutex);
 
-    del_msg = CONTAINER_OF(list, struct e2e_cache_del_ufid_msg, node);
-    return del_msg;
+    ufid_msg = CONTAINER_OF(list, struct e2e_cache_ufid_msg, node);
+    return ufid_msg;
 }
 
 static void
@@ -8346,16 +8388,20 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev,
 static void *
 dp_netdev_e2e_cache_main(void *arg OVS_UNUSED)
 {
-    struct e2e_cache_del_ufid_msg *del_msg;
     struct e2e_cache_trace_message *trace_msg;
+    struct e2e_cache_ufid_msg *ufid_msg;
     uint32_t i, num_elements;
 
     for (;;) {
         e2e_cache_thread_wait_on_queues();
 
-        while ((del_msg = e2e_cache_del_ufid_msg_dequeue()) != NULL) {
-            e2e_cache_flow_db_del(&del_msg->ufid);
-            free(del_msg);
+        while ((ufid_msg = e2e_cache_ufid_msg_dequeue()) != NULL) {
+            if (ufid_msg->op == E2E_UFID_MSG_PUT) {
+                e2e_cache_flow_db_put(ufid_msg);
+            } else {
+                e2e_cache_flow_db_del(&ufid_msg->ufid);
+            }
+            free(ufid_msg);
         }
 
         trace_msg = e2e_cache_trace_msg_dequeue();
