@@ -866,6 +866,7 @@ struct e2e_cache_ufid_to_flow_item {
     union {
         struct cmap_node in_cmap;
         struct hmap_node in_hmap;
+        struct ovs_list  in_list;
     } node;
     ovs_u128 ufid;
     struct dp_netdev *dp;
@@ -7948,13 +7949,18 @@ e2e_cache_flow_free(void *arg)
 }
 
 static void
-e2e_cache_merged_flow_db_del(struct e2e_cache_ufid_to_flow_item *dp_flow_data)
+e2e_cache_merged_flow_db_rem(struct e2e_cache_ufid_to_flow_item *dp_flow_data)
 {
     e2e_cache_disassociate_merged_flow(dp_flow_data);
 
     hmap_remove(&merged_flows_map, &dp_flow_data->node.in_hmap);
     /* TODO: Add statistic counter */
+}
 
+static void
+e2e_cache_merged_flow_db_del(struct e2e_cache_ufid_to_flow_item *dp_flow_data)
+{
+    e2e_cache_merged_flow_db_rem(dp_flow_data);
     e2e_cache_flow_free(dp_flow_data);
 }
 
@@ -8016,7 +8022,8 @@ e2e_cache_ufid_to_flow_data_find_protected(const ovs_u128 *ufid, uint32_t hash)
 }
 
 static void
-e2e_cache_del_associated_merged_flows(struct e2e_cache_ufid_to_flow_item *flow)
+e2e_cache_del_associated_merged_flows(struct e2e_cache_ufid_to_flow_item *flow,
+                                      struct ovs_list *merged_flows_to_delete)
 {
     struct flow2flow_item *associated_flow_item, *next_item;
     struct e2e_cache_ufid_to_flow_item *merged_flow;
@@ -8027,12 +8034,31 @@ e2e_cache_del_associated_merged_flows(struct e2e_cache_ufid_to_flow_item *flow)
             CONTAINER_OF(associated_flow_item,
                          struct e2e_cache_ufid_to_flow_item,
                          associated_flows[associated_flow_item->index]);
-        e2e_cache_merged_flow_db_del(merged_flow);
+
+        e2e_cache_merged_flow_db_rem(merged_flow);
+        ovs_list_push_back(merged_flows_to_delete, &merged_flow->node.in_list);
     }
 }
 
 static void
-e2e_cache_flow_db_del_protected(const ovs_u128 *ufid, uint32_t hash)
+e2e_cache_del_merged_flows(struct ovs_list *merged_flows_to_delete)
+{
+    struct e2e_cache_ufid_to_flow_item *merged_flow;
+    struct ovs_list *l;
+
+    while (!ovs_list_is_empty(merged_flows_to_delete)) {
+        l = ovs_list_pop_front(merged_flows_to_delete);
+
+        merged_flow =
+            CONTAINER_OF(l, struct e2e_cache_ufid_to_flow_item, node.in_list);
+
+        e2e_cache_flow_free(merged_flow);
+    }
+}
+
+static void
+e2e_cache_flow_db_del_protected(const ovs_u128 *ufid, uint32_t hash,
+                                struct ovs_list *merged_flows_to_delete)
 {
     struct e2e_cache_ufid_to_flow_item *dp_flow_data;
 
@@ -8040,7 +8066,8 @@ e2e_cache_flow_db_del_protected(const ovs_u128 *ufid, uint32_t hash)
     if (OVS_UNLIKELY(!dp_flow_data)) {
         return;
     }
-    e2e_cache_del_associated_merged_flows(dp_flow_data);
+    e2e_cache_del_associated_merged_flows(dp_flow_data,
+                                          merged_flows_to_delete);
     cmap_remove(&ufid_to_flow_map, &dp_flow_data->node.in_cmap, hash);
     ovsrcu_postpone(e2e_cache_flow_free, dp_flow_data);
 }
@@ -8048,11 +8075,15 @@ e2e_cache_flow_db_del_protected(const ovs_u128 *ufid, uint32_t hash)
 static void
 e2e_cache_flow_db_del(const ovs_u128 *ufid)
 {
+    struct ovs_list merged_flows_to_delete =
+        OVS_LIST_INITIALIZER(&merged_flows_to_delete);
     size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
 
     ovs_mutex_lock(&ufid_to_flow_map_mutex);
-    e2e_cache_flow_db_del_protected(ufid, hash);
+    e2e_cache_flow_db_del_protected(ufid, hash, &merged_flows_to_delete);
     ovs_mutex_unlock(&ufid_to_flow_map_mutex);
+
+    e2e_cache_del_merged_flows(&merged_flows_to_delete);
 }
 
 static int
@@ -8060,6 +8091,8 @@ e2e_cache_flow_db_put(struct e2e_cache_ufid_msg *ufid_msg)
 {
     struct e2e_cache_ufid_to_flow_item *dp_flow_data_prev;
     struct e2e_cache_ufid_to_flow_item *dp_flow_data;
+    struct ovs_list merged_flows_to_delete =
+        OVS_LIST_INITIALIZER(&merged_flows_to_delete);
     const ovs_u128 *ufid;
     size_t hash;
 
@@ -8084,12 +8117,14 @@ e2e_cache_flow_db_put(struct e2e_cache_ufid_msg *ufid_msg)
 
     dp_flow_data_prev = e2e_cache_ufid_to_flow_data_find_protected(ufid, hash);
     if (dp_flow_data_prev) {
-        e2e_cache_flow_db_del_protected(ufid, hash);
+        e2e_cache_flow_db_del_protected(ufid, hash, &merged_flows_to_delete);
     }
 
     cmap_insert(&ufid_to_flow_map, &dp_flow_data->node.in_cmap, hash);
 
     ovs_mutex_unlock(&ufid_to_flow_map_mutex);
+
+    e2e_cache_del_merged_flows(&merged_flows_to_delete);
     return 0;
 
 err:
