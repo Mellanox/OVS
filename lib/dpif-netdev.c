@@ -7977,6 +7977,7 @@ e2e_cache_disassociate_counters(struct e2e_cache_ufid_to_flow_item *mflow)
     struct ovs_list *next_counter;
     size_t i;
 
+    ovs_mutex_lock(&ufid_to_flow_map_mutex);
     for (i = 0; i < mflow->associated_flows_len; i++) {
         mt_flow = mflow->associated_flows[i].mt_flow;
         HMAP_FOR_EACH_SAFE (counter_item, counter_next, node,
@@ -8003,6 +8004,7 @@ e2e_cache_disassociate_counters(struct e2e_cache_ufid_to_flow_item *mflow)
         hmap_remove(&counter_map, &counter_item->node);
         free(counter_item);
     }
+    ovs_mutex_unlock(&ufid_to_flow_map_mutex);
 }
 
 static void
@@ -8015,6 +8017,7 @@ e2e_cache_associate_counters(struct e2e_cache_ufid_to_flow_item *mflow,
     bool counter_found;
     uint16_t mt_index;
 
+    ovs_mutex_lock(&ufid_to_flow_map_mutex);
     for (mt_index = 0; mt_index < trc_info->num_elements; mt_index++) {
         counter_found = false;
         counter_hash = trc_info->e2e_trace_ct_ufids & (1 << mt_index)
@@ -8058,6 +8061,7 @@ e2e_cache_associate_counters(struct e2e_cache_ufid_to_flow_item *mflow,
     }
     /* Add the merged flow to the counter item. */
     ovs_list_push_back(&counter_item->merged_flows, &mflow->flow_counter_list);
+    ovs_mutex_unlock(&ufid_to_flow_map_mutex);
 }
 
 static int
@@ -8716,15 +8720,15 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev,
                                  const ovs_u128 *mt_ufid,
                                  struct dpif_flow_stats *stats,
                                  struct ofpbuf *buf,
-                                 long long now OVS_UNUSED,
-                                 long long prev_now OVS_UNUSED)
+                                 long long now,
+                                 long long prev_now)
 {
-    struct e2e_cache_ufid_to_flow_item *merged_flow, *dp_flow_data;
-    struct flow2flow_item *affected_flow_item;
-    struct dpif_flow_attrs merged_attr;
-    struct dpif_flow_stats merged_stats;
-    size_t hash = hash_bytes(mt_ufid, sizeof *mt_ufid, 0);
+    struct e2e_cache_counter_item *mt_counter_item, *mapped_counter_item;
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 10);
+    struct e2e_cache_ufid_to_flow_item *merged_flow, *dp_flow_data;
+    size_t hash = hash_bytes(mt_ufid, sizeof *mt_ufid, 0);
+    struct dpif_flow_stats merged_stats;
+    struct dpif_flow_attrs merged_attr;
     int ret;
 
     ovs_mutex_lock(&ufid_to_flow_map_mutex);
@@ -8733,21 +8737,35 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev,
         ovs_mutex_unlock(&ufid_to_flow_map_mutex);
         return;
     }
-    LIST_FOR_EACH (affected_flow_item, list,
-                  &dp_flow_data->associated_flows[0].list) {
-        merged_flow = CONTAINER_OF(affected_flow_item,
-                               struct e2e_cache_ufid_to_flow_item,
-                               associated_flows[affected_flow_item->index]);
-        ret = netdev_flow_get(netdev, match, actions, &merged_flow->ufid,
-                              &merged_stats, &merged_attr, buf);
-        if (ret) {
-            VLOG_ERR_RL(&rl, "Failed to get merged flow ufid "UUID_FMT"",
-                        UUID_ARGS((struct uuid *) &merged_flow->ufid));
+    HMAP_FOR_EACH (mt_counter_item, node, &dp_flow_data->merged_counters) {
+        /* Get the counter item from the global map. */
+        mapped_counter_item = e2e_cache_counter_find(mt_counter_item->hash);
+        if (!mapped_counter_item) {
+            VLOG_ERR_RL(&rl, "Failed to get counter item for ufid "UUID_FMT,
+                        UUID_ARGS((struct uuid *) &dp_flow_data->ufid));
             continue;
         }
-        stats->n_bytes += merged_stats.n_bytes;
-        stats->n_packets += merged_stats.n_packets;
-        stats->used = MAX(stats->used, merged_stats.used);
+        if (!dp_flow_data->ct_counter) {
+            /* Get one of the merged flows using this counter. */
+            merged_flow =
+                CONTAINER_OF(ovs_list_front(&mapped_counter_item->merged_flows),
+                             struct e2e_cache_ufid_to_flow_item,
+                             flow_counter_list);
+            /* Query the counter. */
+            ret = netdev_flow_get(netdev, match, actions, &merged_flow->ufid,
+                                  &merged_stats, &merged_attr, buf);
+            if (ret) {
+                VLOG_ERR_RL(&rl, "Failed to get merged flow ufid "UUID_FMT,
+                            UUID_ARGS((struct uuid *) &merged_flow->ufid));
+                continue;
+            }
+            stats->n_bytes += merged_stats.n_bytes;
+            stats->n_packets += merged_stats.n_packets;
+            stats->used = MAX(stats->used, merged_stats.used);
+        } else {
+            netdev_counter_query(netdev, mapped_counter_item->hash, now,
+                                 prev_now, stats);
+        }
     }
     ovs_mutex_unlock(&ufid_to_flow_map_mutex);
 }
