@@ -8055,20 +8055,25 @@ e2e_cache_associate_counters(struct e2e_cache_ufid_to_flow_item *mflow,
                              const struct e2e_cache_trace_info *trc_info)
 {
     struct e2e_cache_counter_item *counter_item;
+    uint16_t mt_index, flows_index;
     uint32_t counter_hash;
     bool counter_found;
-    uint16_t mt_index;
 
     ovs_mutex_lock(&ufid_to_flow_map_mutex);
-    for (mt_index = 0; mt_index < trc_info->num_elements; mt_index++) {
+    for (mt_index = 0, flows_index = 0; mt_index < trc_info->num_elements;
+         mt_index++) {
+        if ((mt_index > 0) && (trc_info->e2e_trace_ct_ufids & (1 << mt_index))
+            && (trc_info->e2e_trace_ct_ufids & (1 << (mt_index - 1)))) {
+            continue;
+        }
         counter_found = false;
         counter_hash = trc_info->e2e_trace_ct_ufids & (1 << mt_index)
                        ? mflow->ct_counter : mflow->flows_counter;
-        mt_flows[mt_index]->ct_counter =
+        mt_flows[flows_index]->ct_counter =
             trc_info->e2e_trace_ct_ufids & (1 << mt_index);
         /* Search if this counter is already used by this flow. */
         HMAP_FOR_EACH_WITH_HASH (counter_item, node, counter_hash,
-                                 &mt_flows[mt_index]->merged_counters) {
+                                 &mt_flows[flows_index]->merged_counters) {
             if (counter_item->hash == counter_hash) {
                 counter_found = true;
                 break;
@@ -8078,9 +8083,10 @@ e2e_cache_associate_counters(struct e2e_cache_ufid_to_flow_item *mflow,
         if (!counter_found) {
             counter_item = xmalloc(sizeof *counter_item);
             counter_item->hash = counter_hash;
-            hmap_insert(&mt_flows[mt_index]->merged_counters,
+            hmap_insert(&mt_flows[flows_index]->merged_counters,
                         &counter_item->node, counter_hash);
         }
+        flows_index++;
     }
 
     /* Search for an already existing CT counter item, or create if not. */
@@ -8144,6 +8150,13 @@ e2e_cache_calc_counters(struct e2e_cache_ufid_to_flow_item *mflow,
     for (mt_index = 0, flows_index = 0, ct_index = 0;
          mt_index < trc_info->num_elements; mt_index++) {
         if (trc_info->e2e_trace_ct_ufids & (1 << mt_index)) {
+            /* In case there is another adjacent CT UFID, it is the opposite
+             * direction flow, that was already assigned with a counter. Take
+             * it for counter calculation instead of this one.
+             */
+            if (trc_info->e2e_trace_ct_ufids & (1 << (mt_index + 1))) {
+                continue;
+            }
             ct_ufids[ct_index++] = trc_info->ufids[mt_index];
         } else {
             flow_ufids[flows_index++] = trc_info->ufids[mt_index];
@@ -8603,6 +8616,8 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
         if (packet->e2e_trace_flags & E2E_CACHE_TRACE_FLAG_TNL_POP) {
             cur_trace_info->num_elements = 1;
             cur_trace_info->port = packet->e2e_trace_port;
+            cur_trace_info->e2e_trace_ct_ufids = 0;
+            packet->e2e_trace_ct_ufids >>= 1;
 
             memcpy(&cur_trace_info->ufids[0], e2e_trace, sizeof *e2e_trace);
 
@@ -8657,20 +8672,32 @@ e2e_cache_trace_tnl_pop(struct dp_packet *packet)
 
 static int
 e2e_cache_trace_info_to_flows(const struct e2e_cache_trace_info *trc_info,
-                              struct e2e_cache_ufid_to_flow_item *flows[])
+                              struct e2e_cache_ufid_to_flow_item *flows[],
+                              uint16_t *num_flows)
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 10);
-    int32_t i, num_elements = (int32_t) trc_info->num_elements;
+    uint16_t i, num_elements;
 
-    for (i = 0; i < num_elements; i++) {
-        flows[i] = e2e_cache_ufid_to_flow_data_find(&trc_info->ufids[i]);
+    for (i = 0, num_elements = 0; i < trc_info->num_elements; i++) {
+        /* In case it is another adjacent CT UFID, it is the opposite
+         * direction flow, that is used only to assign shared counters, so
+         * skip it.
+         */
+        if ((i > 0) && (trc_info->e2e_trace_ct_ufids & (1 << i)) &&
+            (trc_info->e2e_trace_ct_ufids & (1 << (i - 1)))) {
+            continue;
+        }
+        flows[num_elements] =
+            e2e_cache_ufid_to_flow_data_find(&trc_info->ufids[i]);
         VLOG_DBG_RL(&rl, "%s: ufids[%d]="UUID_FMT" flows[%d]=%p", __FUNCTION__,
-                    i, UUID_ARGS((struct uuid *)&trc_info->ufids[i]), i,
-                    flows[i]);
-        if (OVS_UNLIKELY(!flows[i])) {
+                    i, UUID_ARGS((struct uuid *)&trc_info->ufids[i]),
+                    num_elements, flows[num_elements]);
+        if (OVS_UNLIKELY(!flows[num_elements])) {
             return -1;
         }
+        num_elements++;
     }
+    *num_flows = num_elements;
     return 0;
 }
 
@@ -8690,8 +8717,13 @@ e2e_cache_process_trace_info(struct dp_netdev *dp,
     struct ofpbuf merged_actions;
     struct e2e_cache_ufid_to_flow_item *mt_flows[E2E_CACHE_MAX_TRACE];
     uint64_t merged_actions_buf[1024 / sizeof(uint64_t)];
-    uint32_t i, num_flows = trc_info->num_elements;
-    int err = -1;
+    uint16_t i, num_flows;
+    int err;
+
+    err = e2e_cache_trace_info_to_flows(trc_info, mt_flows, &num_flows);
+    if (OVS_UNLIKELY(err)) {
+        return -1;
+    }
 
     merged_flow = xzalloc(sizeof *merged_flow +
                           num_flows * sizeof merged_flow->associated_flows[0]);
@@ -8700,11 +8732,6 @@ e2e_cache_process_trace_info(struct dp_netdev *dp,
     }
     for (i = 0; i < num_flows; i++) {
         ovs_list_init(&merged_flow->associated_flows[i].list);
-    }
-
-    err = e2e_cache_trace_info_to_flows(trc_info, mt_flows);
-    if (OVS_UNLIKELY(err)) {
-        goto free_merged_flow;
     }
 
     ofpbuf_use_stack(&merged_actions, &merged_actions_buf,
