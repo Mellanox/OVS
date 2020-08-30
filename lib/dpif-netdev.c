@@ -8073,7 +8073,13 @@ e2e_cache_merged_flow_db_rem(struct e2e_cache_ufid_to_flow_item *dp_flow_data)
 static void
 e2e_cache_merged_flow_db_del(struct e2e_cache_ufid_to_flow_item *dp_flow_data)
 {
+    /* Lock/unlock to prevent race condition with
+     * e2e_cache_get_merged_flows_stats()
+     */
+    ovs_mutex_lock(&ufid_to_flow_map_mutex);
     e2e_cache_merged_flow_db_rem(dp_flow_data);
+    ovs_mutex_unlock(&ufid_to_flow_map_mutex);
+
     e2e_cache_flow_free(dp_flow_data);
 }
 
@@ -8490,7 +8496,12 @@ remove_flow_from_db:
     e2e_cache_merged_flow_db_del(merged_flow);
     return err;
 disassociate_merged_flow:
+    /* Lock/unlock to prevent race condition with
+     * e2e_cache_get_merged_flows_stats()
+     */
+    ovs_mutex_lock(&ufid_to_flow_map_mutex);
     e2e_cache_disassociate_merged_flow(merged_flow);
+    ovs_mutex_unlock(&ufid_to_flow_map_mutex);
 free_merged_flow:
     e2e_cache_flow_free(merged_flow);
     return err;
