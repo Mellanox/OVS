@@ -133,6 +133,8 @@ struct udpif {
     struct revalidator *revalidators;  /* Flow revalidators. */
     size_t n_revalidators;
 
+    struct handler phandler;           /* psample handler */
+
     struct latch exit_latch;           /* Tells child threads to exit. */
 
     /* Revalidation. */
@@ -339,6 +341,7 @@ static void udpif_start_threads(struct udpif *, size_t n_handlers,
 static void udpif_pause_revalidators(struct udpif *);
 static void udpif_resume_revalidators(struct udpif *);
 static void *udpif_upcall_handler(void *);
+static void *udpif_psample_handler(void *);
 static void *udpif_revalidator(void *);
 static unsigned long udpif_get_n_flows(struct udpif *);
 static void revalidate(struct revalidator *);
@@ -530,6 +533,9 @@ udpif_stop_threads(struct udpif *udpif, bool delete_flows)
         for (i = 0; i < udpif->n_revalidators; i++) {
             xpthread_join(udpif->revalidators[i].thread, NULL);
         }
+        if (dpif_psample_enabled(udpif->dpif)) {
+                xpthread_join(udpif->phandler.thread, NULL);
+        }
         dpif_disable_upcall(udpif->dpif);
         ovsrcu_quiesce_end();
 
@@ -593,6 +599,14 @@ udpif_start_threads(struct udpif *udpif, size_t n_handlers_,
             revalidator->udpif = udpif;
             revalidator->thread = ovs_thread_create(
                 "revalidator", udpif_revalidator, revalidator);
+        }
+
+        if (dpif_psample_enabled(udpif->dpif)) {
+            struct handler *phandler = &udpif->phandler;
+
+            phandler->udpif = udpif;
+            phandler->thread = ovs_thread_create(
+                "psample_handler", udpif_psample_handler, phandler);
         }
         ovsrcu_quiesce_end();
     }
@@ -855,6 +869,70 @@ free_dupcall:
     }
 
     return n_upcalls;
+}
+
+static int
+recv_psample(struct handler *handler)
+{
+    struct dpif *dpif = handler->udpif->dpif;
+    const struct dpif_sflow_attr *sflow_attr;
+    struct dpif_upcall_psample dupcall;
+    int ret;
+
+    memset(&dupcall, 0, sizeof dupcall);
+    ret = dpif_psample_poll(dpif, &dupcall);
+    if (ret) {
+        VLOG_WARN_RL(&rl, "dpif_psample_poll err: %d", ret);
+        return ret;
+    }
+
+    sflow_attr = dupcall.sflow_attr;
+    if (sflow_attr) {
+        struct user_action_cookie *cookie;
+        struct ofproto_dpif *ofproto;
+        struct dpif_sflow *sflow;
+        uint32_t iifindex;
+        struct flow flow;
+
+        cookie = sflow_attr->userdata;
+        ofproto = ofproto_dpif_lookup_by_uuid(&cookie->ofproto_uuid);
+        if (!ofproto) {
+            VLOG_WARN_RL(&rl, "upcall could not find ofproto");
+            return ENODEV;
+        }
+        sflow = ofproto->sflow;
+        if (!sflow) {
+            VLOG_WARN_RL(&rl, "upcall could not find sflow");
+            return ENODEV;
+        }
+
+        memset(&flow, 0, sizeof flow);
+        if (sflow_attr->tunnel) {
+            memcpy(&flow.tunnel, sflow_attr->tunnel, sizeof flow.tunnel);
+        }
+        iifindex = dupcall.iifindex;
+        dpif_sflow_received(sflow, &dupcall.packet, &flow,
+                            netdev_ifindex_to_odp_port(iifindex),
+                            cookie, NULL);
+    }
+
+    return 0;
+}
+
+static void *
+udpif_psample_handler(void *arg)
+{
+    struct handler *handler = arg;
+    struct udpif *udpif = handler->udpif;
+
+    while (!latch_is_set(&handler->udpif->exit_latch)) {
+        recv_psample(handler);
+        dpif_psample_poll_wait(udpif->dpif);
+        latch_wait(&udpif->exit_latch);
+        poll_block();
+    }
+
+    return NULL;
 }
 
 static void
