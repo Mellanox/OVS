@@ -1083,7 +1083,8 @@ static struct context_metadata table_id_md = {
 
 static int
 get_table_id(uint16_t phys_port, odp_port_t vport, uint32_t recirc_id,
-             enum table_type table_type, uint32_t *table_id)
+             enum table_type table_type, bool is_e2e_cache_flow OVS_UNUSED,
+             uint32_t *table_id)
 {
     struct table_id_data table_id_data = {
         .phys_port = phys_port,
@@ -1995,6 +1996,7 @@ struct act_vars {
     struct flow_tnl tnl_mask;
     uint32_t ctid;
     struct rte_flow_action_jump *jump;
+    bool is_e2e_cache_flow;
 };
 
 static int
@@ -2078,7 +2080,8 @@ create_offload_flow(struct netdev *netdev,
         (group_id == 0 && (act_vars->ct_mode == CT_MODE_CT ||
                            act_vars->ct_mode == CT_MODE_CT_NAT))) {
         if (get_table_id(phys_port, act_vars->vport, act_vars->recirc_id,
-                         TABLE_TYPE_FLOW, &self_table_id)) {
+                         TABLE_TYPE_FLOW, act_vars->is_e2e_cache_flow,
+                         &self_table_id)) {
             return -1;
         }
         attr.group = self_table_id;
@@ -2091,7 +2094,7 @@ create_offload_flow(struct netdev *netdev,
         find_flow_miss_ctx(act_resources->flow_miss_ctx_id, &flow_miss_ctx);
         if (get_table_id(phys_port, flow_miss_ctx.vport,
                          flow_miss_ctx.recirc_id, TABLE_TYPE_FLOW,
-                         &next_table_id)) {
+                         act_vars->is_e2e_cache_flow, &next_table_id)) {
             goto err;
         }
         devargs = netdev_dpdk_get_port_devargs(netdev);
@@ -3502,7 +3505,7 @@ parse_ct_actions(struct flow_actions *actions,
             act_vars->ct_mode = CT_MODE_CT_CONN;
             act_vars->pre_ct_tuple_rewrite = false;
             if (!act_resources->next_table_id &&
-                get_table_id(0, act_vars->vport, 0, TABLE_TYPE_POST_CT,
+                get_table_id(0, act_vars->vport, 0, TABLE_TYPE_POST_CT, false,
                              &act_resources->next_table_id)) {
                 return -1;
             }
@@ -3570,7 +3573,7 @@ create_ct_conn(struct netdev *netdev,
     int ret = -1;
 
     if (!act_resources->ct_nat_table_id &&
-        get_table_id(0, act_vars->vport, 0, TABLE_TYPE_CT_NAT,
+        get_table_id(0, act_vars->vport, 0, TABLE_TYPE_CT_NAT, false,
                      &act_resources->ct_nat_table_id)) {
         return -1;
     }
@@ -3584,7 +3587,7 @@ create_ct_conn(struct netdev *netdev,
     }
 
     if (!act_resources->self_table_id &&
-        get_table_id(0, act_vars->vport, 0, TABLE_TYPE_CT,
+        get_table_id(0, act_vars->vport, 0, TABLE_TYPE_CT, false,
                      &act_resources->self_table_id)) {
         ret = -1;
         goto ct_err;
@@ -3651,7 +3654,7 @@ create_pre_post_ct(struct netdev *netdev,
     /* post-ct */
     post_ct_mark.id = act_resources->flow_id;
     if (!act_resources->post_ct_table_id &&
-        get_table_id(0, act_vars->vport, 0, TABLE_TYPE_POST_CT,
+        get_table_id(0, act_vars->vport, 0, TABLE_TYPE_POST_CT, false,
                      &act_resources->post_ct_table_id)) {
         return -1;
     }
@@ -3667,7 +3670,7 @@ create_pre_post_ct(struct netdev *netdev,
 
     /* pre-ct */
     if (!act_resources->ct_table_id &&
-        get_table_id(0, act_vars->vport, 0, tbl_type,
+        get_table_id(0, act_vars->vport, 0, tbl_type, false,
                      &act_resources->ct_table_id)) {
         ret = -1;
         goto pre_ct_err;
@@ -3942,6 +3945,7 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
     bool actions_offloaded = true;
     int ret;
 
+    act_vars.is_e2e_cache_flow = info->is_e2e_cache_flow;
     ret = parse_flow_match(netdev, &patterns, match, &act_resources,
                            &act_vars);
     if (ret) {
