@@ -4016,6 +4016,133 @@ probe_broken_meters(struct dpif *dpif)
     }
     return broken_meters;
 }
+
+struct dpif_netlink_psample {
+    struct nlattr *packet;      /* packet data */
+    int dp_group_id;            /* mapping id for sFlow offload */
+    int iifindex;               /* input ifindex */
+    int group_seq;              /* group sequence */
+};
+
+static bool
+dpif_netlink_psample_enabled(const struct dpif *dpif_)
+{
+    struct dpif_netlink *dpif = dpif_netlink_cast(dpif_);
+
+    return dpif->psample_sock != NULL;
+}
+
+static int
+dpif_netlink_psample_from_ofpbuf(struct dpif_netlink_psample *psample,
+                                 const struct ofpbuf *buf)
+{
+    static const struct nl_policy ovs_psample_policy[] = {
+        [PSAMPLE_ATTR_IIFINDEX] = { .type = NL_A_U16 },
+        [PSAMPLE_ATTR_SAMPLE_GROUP] = { .type = NL_A_U32 },
+        [PSAMPLE_ATTR_GROUP_SEQ] = { .type = NL_A_U32 },
+        [PSAMPLE_ATTR_DATA] = { .type = NL_A_UNSPEC },
+    };
+    struct nlattr *a[ARRAY_SIZE(ovs_psample_policy)];
+    struct genlmsghdr *genl;
+    struct nlmsghdr *nlmsg;
+    struct ofpbuf b;
+
+    b = ofpbuf_const_initializer(buf->data, buf->size);
+    nlmsg = ofpbuf_try_pull(&b, sizeof *nlmsg);
+    genl = ofpbuf_try_pull(&b, sizeof *genl);
+    if (!nlmsg || !genl || nlmsg->nlmsg_type != psample_family
+        || !nl_policy_parse(&b, 0, ovs_psample_policy, a,
+                            ARRAY_SIZE(ovs_psample_policy))) {
+        return EINVAL;
+    }
+
+    psample->iifindex = nl_attr_get_u16(a[PSAMPLE_ATTR_IIFINDEX]);
+    psample->dp_group_id = nl_attr_get_u32(a[PSAMPLE_ATTR_SAMPLE_GROUP]);
+    psample->group_seq = nl_attr_get_u16(a[PSAMPLE_ATTR_GROUP_SEQ]);
+    psample->packet = a[PSAMPLE_ATTR_DATA];
+
+    return 0;
+}
+
+static int
+parse_psample_packet(struct dpif_netlink *dpif,
+                     struct dpif_netlink_psample *psample,
+                     struct dpif_upcall_psample *dupcall)
+{
+    const char *dpif_type_str = dpif_normalize_type(dpif_type(&dpif->dpif));
+    struct netdev *dev;
+    odp_port_t port;
+
+    dp_packet_use_stub(&dupcall->packet,
+                       CONST_CAST(struct nlattr *,
+                                  nl_attr_get(psample->packet)) - 1,
+                       nl_attr_get_size(psample->packet) +
+                       sizeof(struct nlattr));
+    dp_packet_set_data(&dupcall->packet,
+                       (char *)dp_packet_data(&dupcall->packet) +
+                       sizeof(struct nlattr));
+    dp_packet_set_size(&dupcall->packet, nl_attr_get_size(psample->packet));
+
+    dupcall->iifindex = psample->iifindex;
+    port = netdev_ifindex_to_odp_port(dupcall->iifindex);
+    dev = netdev_ports_get(port, dpif_type_str);
+    if (!dev) {
+        return EOPNOTSUPP;
+    }
+    dupcall->sflow_attr = netdev_sflow_attr_get(dev, psample->dp_group_id);
+    netdev_close(dev);
+
+    return 0;
+}
+
+static int
+dpif_netlink_psample_poll(const struct dpif *dpif_,
+                          struct dpif_upcall_psample *dupcall)
+{
+    for (;;) {
+        static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
+        struct dpif_netlink *dpif = dpif_netlink_cast(dpif_);
+        struct dpif_netlink_psample psample;
+        uint64_t buf_stub[4096 / 8];
+        struct ofpbuf buf;
+        int error;
+
+        ofpbuf_use_stub(&buf, buf_stub, sizeof buf_stub);
+        error = nl_sock_recv(dpif->psample_sock, &buf, NULL, false);
+
+        if (!error) {
+            error = dpif_netlink_psample_from_ofpbuf(&psample, &buf);
+            if (!error) {
+                    ofpbuf_uninit(&buf);
+                    error = parse_psample_packet(dpif, &psample, dupcall);
+                    return error;
+            }
+        } else if (error != EAGAIN) {
+            VLOG_WARN_RL(&rl, "error reading or parsing netlink (%s)",
+                         ovs_strerror(error));
+            nl_sock_drain(dpif->psample_sock);
+            error = ENOBUFS;
+        }
+
+        ofpbuf_uninit(&buf);
+        if (error) {
+            return error;
+        }
+    }
+}
+
+static void
+dpif_netlink_psample_poll_wait(const struct dpif *dpif_)
+{
+    const struct dpif_netlink *dpif = dpif_netlink_cast(dpif_);
+
+    if (dpif->psample_sock) {
+        nl_sock_wait(dpif->psample_sock, POLLIN);
+    } else {
+        poll_immediate_wake();
+    }
+}
+
 
 const struct dpif_class dpif_netlink_class = {
     "system",
@@ -4094,9 +4221,9 @@ const struct dpif_class dpif_netlink_class = {
     NULL,                       /* bond_add */
     NULL,                       /* bond_del */
     NULL,                       /* bond_stats_get */
-    NULL,                       /* psample_enabled */
-    NULL,                       /* psample_poll */
-    NULL,                       /* psample_poll_wait */
+    dpif_netlink_psample_enabled,
+    dpif_netlink_psample_poll,
+    dpif_netlink_psample_poll_wait,
 };
 
 static int
