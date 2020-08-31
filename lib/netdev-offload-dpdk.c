@@ -1961,6 +1961,7 @@ struct act_vars {
     struct flow_tnl tnl_mask;
     bool explicit_netdev;
     uint32_t ctid;
+    struct rte_flow_action_jump *jump;
 };
 
 static int
@@ -3214,13 +3215,15 @@ parse_clone_actions(struct netdev *netdev,
     return 0;
 }
 
-static void
+static struct rte_flow_action_jump *
 add_jump_action(struct flow_actions *actions, uint32_t group)
 {
     struct rte_flow_action_jump *jump = xzalloc (sizeof *jump);
 
     jump->group = group;
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_JUMP, jump);
+
+    return jump;
 }
 
 static int
@@ -3275,7 +3278,8 @@ static int
 add_tnl_pop_action(struct netdev *netdev,
                    struct flow_actions *actions,
                    const struct nlattr *nla,
-                   struct act_resources *act_resources)
+                   struct act_resources *act_resources,
+                   struct act_vars *act_vars)
 {
     struct flow_miss_ctx miss_ctx;
     odp_port_t port;
@@ -3295,7 +3299,7 @@ add_tnl_pop_action(struct netdev *netdev,
                       act_resources->flow_miss_ctx_id)) {
         return -1;
     }
-    add_jump_action(actions, act_resources->next_table_id);
+    act_vars->jump = add_jump_action(actions, act_resources->next_table_id);
     return 0;
 }
 
@@ -3337,7 +3341,7 @@ add_recirc_action(struct netdev *netdev,
             return -1;
         }
     }
-    add_jump_action(actions, act_resources->next_table_id);
+    act_vars->jump = add_jump_action(actions, act_resources->next_table_id);
     return 0;
 }
 
@@ -3439,7 +3443,8 @@ parse_ct_actions(struct flow_actions *actions,
                                      ct_miss_ctx.state, 0xFF);
             add_action_set_reg_field(actions, REG_FIELD_CT_CTX,
                                      act_resources->ct_miss_ctx_id, 0xFFFFFFFF);
-            add_jump_action(actions, act_resources->next_table_id);
+            act_vars->jump = add_jump_action(actions,
+                                             act_resources->next_table_id);
         } else {
             VLOG_DBG_RL(&rl,
                         "Ignored nested action inside ct(), action type: %d",
@@ -3708,7 +3713,8 @@ parse_flow_actions(struct netdev *netdev,
                 return -1;
             }
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_TUNNEL_POP) {
-            if (add_tnl_pop_action(netdev, actions, nla, act_resources)) {
+            if (add_tnl_pop_action(netdev, actions, nla, act_resources,
+                                   act_vars)) {
                 return -1;
             }
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_RECIRC) {
