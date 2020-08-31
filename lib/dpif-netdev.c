@@ -11041,6 +11041,7 @@ e2e_cache_merge_flows(struct e2e_cache_ufid_to_flow_item **flows,
     }
     e2e_cache_merge_match(flows, num_flows, &merged_flow->match);
     dp_netdev_get_mega_ufid(&merged_flow->match, &merged_flow->ufid);
+    uuid_set_bits_v4((struct uuid *) &merged_flow->ufid, UUID_ATTR_3);
     e2e_cache_merge_actions(flows, num_flows, merged_actions);
     if (OVS_UNLIKELY(merged_actions->size < sizeof(struct nlattr))) {
         atomic_count_inc64(&e2e_stats.merge_rej_flows);
