@@ -8890,13 +8890,6 @@ handle_packet_upcall(struct dp_netdev_pmd_thread *pmd,
         match.wc.masks.vlans[0].tci = htons(0xffff);
     }
 
-    /* We can't allow the packet batching in the next loop to execute
-     * the actions.  Otherwise, if there are any slow path actions,
-     * we'll send the packet up twice. */
-    dp_packet_batch_init_packet(&b, packet);
-    dp_netdev_execute_actions(pmd, &b, true, &match.flow,
-                              actions->data, actions->size);
-
     add_actions = put_actions->size ? put_actions : actions;
     if (OVS_LIKELY(error != ENOSPC)) {
         struct dp_netdev_flow *netdev_flow;
@@ -8921,6 +8914,14 @@ handle_packet_upcall(struct dp_netdev_pmd_thread *pmd,
             e2e_cache_trace_add_flow(packet, &netdev_flow->mega_ufid);
         }
     }
+
+    /* We can't allow the packet batching in the next loop to execute
+     * the actions.  Otherwise, if there are any slow path actions,
+     * we'll send the packet up twice. */
+    dp_packet_batch_init_packet(&b, packet);
+    dp_netdev_execute_actions(pmd, &b, true, &match.flow,
+                              actions->data, actions->size);
+
     if (pmd_perf_metrics_enabled(pmd)) {
         /* Update upcall stats. */
         cycles = cycles_counter_update(&pmd->perf_stats) - cycles;
