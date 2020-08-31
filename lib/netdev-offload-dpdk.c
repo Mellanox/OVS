@@ -71,6 +71,8 @@ struct act_resources {
 struct flow_item {
     const char *devargs;
     unsigned int creation_tid;
+    uint32_t next_table_id;
+    uint32_t self_table_id;
     struct rte_flow *rte_flow[NUM_RTE_FLOWS_PER_PORT];
     bool has_count[NUM_RTE_FLOWS_PER_PORT];
 };
@@ -81,14 +83,32 @@ struct flows_handle {
     int current_max;
 };
 
+static void put_table_id(struct netdev *netdev, uint32_t table_id);
 static void
-free_flow_handle(struct flows_handle *flows)
+free_flow_handle(struct netdev *netdev, struct flows_handle *flows)
 {
+    struct netdev *flow_netdev;
     int i;
 
     for (i = 0; i < flows->cnt; i++) {
-        if (flows->items[i].devargs) {
-            free(CONST_CAST(void *, flows->items[i].devargs));
+        struct flow_item *fi = &flows->items[i];
+
+        if (fi->devargs) {
+            flow_netdev = netdev_dpdk_get_netdev_by_devargs(fi->devargs);
+            if (!flow_netdev) {
+                put_table_id(NULL, fi->self_table_id);
+                put_table_id(NULL, fi->next_table_id);
+                fi->self_table_id = 0;
+                fi->next_table_id = 0;
+            }
+        } else {
+            flow_netdev = netdev;
+            netdev_ref(flow_netdev);
+        }
+        put_table_id(flow_netdev, fi->self_table_id);
+        put_table_id(flow_netdev, fi->next_table_id);
+        if (fi->devargs) {
+            free(CONST_CAST(void *, fi->devargs));
         }
     }
     free(flows->items);
@@ -3988,7 +4008,7 @@ netdev_offload_dpdk_remove_flows(struct netdev *netdev,
     }
     ret = ufid_to_rte_flow_disassociate(netdev, ufid);
 out:
-    free_flow_handle(flows);
+    free_flow_handle(netdev, flows);
     return ret;
 }
 
