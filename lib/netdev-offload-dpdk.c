@@ -1012,7 +1012,7 @@ table_id_alloc(void *arg OVS_UNUSED)
 }
 
 static int
-table_id_ufid(const char *devargs, uint32_t table_id, ovs_u128 *ufid)
+table_id_ufid(const char *devargs, bool e2e, uint32_t table_id, ovs_u128 *ufid)
 {
     struct uuid *uuid = (struct uuid *)ufid;
     size_t devargs_len;
@@ -1029,6 +1029,7 @@ table_id_ufid(const char *devargs, uint32_t table_id, ovs_u128 *ufid)
     memcpy(buf, (void *)&table_id, sizeof table_id);
     memcpy(&buf[sizeof table_id], devargs, devargs_len);
     odp_flow_key_hash(buf, buf_len, ufid);
+    uuid_set_bits_v4(uuid, e2e ? UUID_ATTR_1 : UUID_ATTR_2);
     free(buf);
     return 0;
 }
@@ -1045,7 +1046,7 @@ table_id_free(const void *arg, uint32_t id)
 
     seq_pool_free_id(table_id_pool, tid, id);
 
-    if (arg && !table_id_ufid(arg, id, &table_ufid)) {
+    if (arg && !table_id_ufid(arg, false, id, &table_ufid)) {
         netdev = netdev_dpdk_get_netdev_by_devargs(arg);
         if (netdev) {
             netdev_offload_dpdk_flow_del(netdev, &table_ufid, NULL);
@@ -3361,7 +3362,7 @@ add_miss_flow(struct netdev *netdev,
     ovs_u128 ufid;
     int ret;
 
-    if (table_id_ufid(devargs, table_id, &ufid)) {
+    if (table_id_ufid(devargs, false, table_id, &ufid)) {
         return -1;
     }
     rte_flow_data = ufid_to_rte_flow_data_find(netdev, &ufid);
