@@ -366,7 +366,7 @@ struct context_metadata {
     struct cmap associated_i2d_map;
     bool has_associated_map;
     uint32_t (*id_alloc)(void *arg);
-    void (*id_free)(void *arg, uint32_t id);
+    void (*id_free)(const void *arg, uint32_t id);
     size_t data_size;
     bool delayed_release;
 };
@@ -516,7 +516,7 @@ struct context_release_item {
     struct ovs_list node;
     long long int timestamp;
     struct context_metadata *md;
-    void *arg;
+    const void *arg;
     uint32_t id;
     struct context_data *data;
     bool associated;
@@ -595,8 +595,9 @@ context_delayed_release_init(void)
 }
 
 static void
-context_delayed_release(struct context_metadata *md, void *arg, uint32_t id,
-                        struct context_data *data, bool associated)
+context_delayed_release(struct context_metadata *md, const void *arg,
+                        uint32_t id, struct context_data *data,
+                        bool associated)
 {
     struct context_release_item *item;
     struct ovs_list *context_release_list;
@@ -660,7 +661,8 @@ do_context_delayed_release(void)
 }
 
 static void
-put_context_data_by_id(struct context_metadata *md, void *arg, uint32_t id)
+put_context_data_by_id(struct context_metadata *md, const void *arg,
+                       uint32_t id)
 {
     struct context_data *data_cur;
     size_t ihash;
@@ -896,7 +898,7 @@ label_id_alloc(void *arg OVS_UNUSED)
 }
 
 static void
-label_id_free(void *arg OVS_UNUSED, uint32_t label_id)
+label_id_free(const void *arg OVS_UNUSED, uint32_t label_id)
 {
     unsigned int tid = netdev_offload_thread_id();
 
@@ -971,7 +973,7 @@ zone_id_alloc(void *arg OVS_UNUSED)
 }
 
 static void
-zone_id_free(void *arg OVS_UNUSED, uint32_t zone_id)
+zone_id_free(const void *arg OVS_UNUSED, uint32_t zone_id)
 {
     unsigned int tid = netdev_offload_thread_id();
 
@@ -1047,7 +1049,7 @@ static int
 netdev_offload_dpdk_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
                              struct dpif_flow_stats *stats);
 static void
-table_id_free(void *arg, uint32_t id)
+table_id_free(const void *arg, uint32_t id)
 {
     unsigned int tid = netdev_offload_thread_id();
     struct netdev *netdev;
@@ -1129,7 +1131,7 @@ ct_ctx_id_alloc(void *arg OVS_UNUSED)
 }
 
 static void
-ct_ctx_id_free(void *arg OVS_UNUSED, uint32_t id)
+ct_ctx_id_free(const void *arg OVS_UNUSED, uint32_t id)
 {
     unsigned int tid = netdev_offload_thread_id();
 
@@ -1214,7 +1216,7 @@ tnl_id_alloc(void *arg OVS_UNUSED)
 }
 
 static void
-tnl_id_free(void *arg OVS_UNUSED, uint32_t id)
+tnl_id_free(const void *arg OVS_UNUSED, uint32_t id)
 {
     unsigned int tid = netdev_offload_thread_id();
 
@@ -1313,7 +1315,7 @@ flow_miss_id_alloc(void *arg OVS_UNUSED)
 }
 
 static void
-flow_miss_id_free(void *arg OVS_UNUSED, uint32_t id)
+flow_miss_id_free(const void *arg OVS_UNUSED, uint32_t id)
 {
     netdev_offload_flow_mark_free(id);
 }
