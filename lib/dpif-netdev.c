@@ -8248,9 +8248,12 @@ err:
 static int
 e2e_cache_flow_del(const ovs_u128 *ufid)
 {
+    static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 10);
     struct e2e_cache_ufid_msg *del_msg =
         (struct e2e_cache_ufid_msg *) xmalloc(sizeof *del_msg);
 
+    VLOG_DBG_RL(&rl, "%s: ufid="UUID_FMT, __FUNCTION__,
+                UUID_ARGS((struct uuid *)ufid));
     if (OVS_UNLIKELY(!del_msg)) {
         return -1;
     }
@@ -8273,9 +8276,12 @@ static int
 e2e_cache_flow_put(const ovs_u128 *ufid, struct match *match,
                    const struct nlattr *actions, size_t actions_len)
 {
+    static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 10);
     struct e2e_cache_ufid_msg *put_msg =
         (struct e2e_cache_ufid_msg *) xmalloc(sizeof *put_msg);
 
+    VLOG_DBG_RL(&rl, "%s: ufid="UUID_FMT, __FUNCTION__,
+                UUID_ARGS((struct uuid *)ufid));
     if (OVS_UNLIKELY(!put_msg)) {
         return -1;
     }
@@ -8404,10 +8410,14 @@ static int
 e2e_cache_trace_info_to_flows(const struct e2e_cache_trace_info *trc_info,
                               struct e2e_cache_ufid_to_flow_item *flows[])
 {
+    static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 10);
     int32_t i, num_elements = (int32_t) trc_info->num_elements;
 
     for (i = 0; i < num_elements; i++) {
         flows[i] = e2e_cache_ufid_to_flow_data_find(&trc_info->ufids[i]);
+        VLOG_DBG_RL(&rl, "%s: ufids[%d]="UUID_FMT" flows[%d]=%p", __FUNCTION__,
+                    i, UUID_ARGS((struct uuid *)&trc_info->ufids[i]), i,
+                    flows[i]);
         if (OVS_UNLIKELY(!flows[i])) {
             return -1;
         }
