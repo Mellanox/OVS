@@ -802,6 +802,8 @@ enum table_type {
 };
 
 struct table_id_data {
+    uint16_t phys_port;
+    uint8_t pad[2];
     odp_port_t vport;
     uint32_t recirc_id;
     enum table_type table_type;
@@ -830,8 +832,9 @@ dump_table_id(struct ds *s, void *data)
         OVS_NOT_REACHED();
     }
 
-    ds_put_format(s, "(%s): vport=%"PRIu32", recirc_id=%"PRIu32,
-                  table_type_str, table_id_data->vport,
+    ds_put_format(s, "(%s): phys_port=%"PRIu32", vport=%"PRIu32
+                  ", recirc_id=%"PRIu32, table_type_str,
+                  table_id_data->phys_port, table_id_data->vport,
                   table_id_data->recirc_id);
     return s;
 }
@@ -1051,10 +1054,11 @@ static struct context_metadata table_id_md = {
 };
 
 static int
-get_table_id(odp_port_t vport, uint32_t recirc_id, enum table_type table_type,
-             uint32_t *table_id)
+get_table_id(uint16_t phys_port, odp_port_t vport, uint32_t recirc_id,
+             enum table_type table_type, uint32_t *table_id)
 {
     struct table_id_data table_id_data = {
+        .phys_port = phys_port,
         .vport = vport,
         .recirc_id = recirc_id,
         .table_type = table_type,
@@ -2465,8 +2469,8 @@ parse_flow_match(struct netdev *netdev,
         return -1;
     }
 
-    ret = get_table_id(act_vars->vport, match->flow.recirc_id, TABLE_TYPE_FLOW,
-                       &act_resources->self_table_id);
+    ret = get_table_id(0, act_vars->vport, match->flow.recirc_id,
+                       TABLE_TYPE_FLOW, &act_resources->self_table_id);
     if (ret) {
         return -1;
     }
@@ -3291,7 +3295,7 @@ add_tnl_pop_action(struct netdev *netdev,
     if (get_flow_miss_ctx_id(&miss_ctx, &act_resources->flow_miss_ctx_id)) {
         return -1;
     }
-    if (get_table_id(port, 0, TABLE_TYPE_FLOW,
+    if (get_table_id(0, port, 0, TABLE_TYPE_FLOW,
                      &act_resources->next_table_id)) {
         return -1;
     }
@@ -3323,7 +3327,7 @@ add_recirc_action(struct netdev *netdev,
     if (get_flow_miss_ctx_id(&miss_ctx, &act_resources->flow_miss_ctx_id)) {
         return -1;
     }
-    if (get_table_id(act_vars->vport, miss_ctx.recirc_id, TABLE_TYPE_FLOW,
+    if (get_table_id(0, act_vars->vport, miss_ctx.recirc_id, TABLE_TYPE_FLOW,
         &act_resources->next_table_id)) {
         return -1;
     }
@@ -3432,7 +3436,7 @@ parse_ct_actions(struct flow_actions *actions,
 
             act_vars->ct_mode = CT_MODE_CT_CONN;
             act_vars->pre_ct_tuple_rewrite = false;
-            if (get_table_id(act_vars->vport, 0, TABLE_TYPE_POST_CT,
+            if (get_table_id(0, act_vars->vport, 0, TABLE_TYPE_POST_CT,
                              &act_resources->next_table_id)) {
                 return -1;
             }
@@ -3499,7 +3503,7 @@ create_ct_conn(struct netdev *netdev,
     struct flow_actions ct_actions = { .actions = NULL, .cnt = 0 };
     int ret = -1;
 
-    if (get_table_id(act_vars->vport, 0, TABLE_TYPE_CT_NAT,
+    if (get_table_id(0, act_vars->vport, 0, TABLE_TYPE_CT_NAT,
                      &act_resources->ct_nat_table_id)) {
         return -1;
     }
@@ -3514,7 +3518,7 @@ create_ct_conn(struct netdev *netdev,
 
     put_table_id(NULL, act_resources->self_table_id);
     act_resources->self_table_id = 0;
-    if (get_table_id(act_vars->vport, 0, TABLE_TYPE_CT,
+    if (get_table_id(0, act_vars->vport, 0, TABLE_TYPE_CT,
                      &act_resources->self_table_id)) {
         ret = -1;
         goto ct_err;
@@ -3581,7 +3585,7 @@ create_pre_post_ct(struct netdev *netdev,
 
     /* post-ct */
     post_ct_mark.id = act_resources->flow_id;
-    if (get_table_id(act_vars->vport, 0, TABLE_TYPE_POST_CT,
+    if (get_table_id(0, act_vars->vport, 0, TABLE_TYPE_POST_CT,
                      &act_resources->post_ct_table_id)) {
         return -1;
     }
@@ -3596,7 +3600,7 @@ create_pre_post_ct(struct netdev *netdev,
     }
 
     /* pre-ct */
-    if (get_table_id(act_vars->vport, 0, tbl_type,
+    if (get_table_id(0, act_vars->vport, 0, tbl_type,
                      &act_resources->ct_table_id)) {
         ret = -1;
         goto pre_ct_err;
