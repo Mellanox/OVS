@@ -25,6 +25,7 @@
 #include <net/if.h>
 #include <linux/types.h>
 #include <linux/pkt_sched.h>
+#include <linux/psample.h>
 #include <poll.h>
 #include <stdlib.h>
 #include <strings.h>
@@ -208,6 +209,9 @@ struct dpif_netlink {
     /* Change notification. */
     struct nl_sock *port_notifier; /* vport multicast group subscriber. */
     bool refresh_channels;
+
+    /* receive sampled packets from psample */
+    struct nl_sock *psample_sock;
 };
 
 static void report_loss(struct dpif_netlink *, struct dpif_channel *,
@@ -224,11 +228,13 @@ static int ovs_flow_family;
 static int ovs_packet_family;
 static int ovs_meter_family;
 static int ovs_ct_limit_family;
+static int psample_family;
 
 /* Generic Netlink multicast groups for OVS.
  *
  * Initialized by dpif_netlink_init(). */
 static unsigned int ovs_vport_mcgroup;
+static unsigned int psample_mcgroup;
 
 /* If true, tunnel devices are created using OVS compat/genetlink.
  * If false, tunnel devices are created with rtnetlink and using light weight
@@ -372,12 +378,41 @@ dpif_netlink_open(const struct dpif_class *class OVS_UNUSED, const char *name,
 }
 
 static int
+open_dpif_psample(struct dpif_netlink *dpif)
+{
+    struct nl_sock *sock;
+    int error;
+
+    dpif->psample_sock = NULL;
+    if (!netdev_is_flow_api_enabled() || !psample_mcgroup) {
+        return 0;
+    }
+
+    error = nl_sock_create(NETLINK_GENERIC, &sock);
+    if (error) {
+        VLOG_WARN("%s: failed to create psample socket", __func__);
+        return error;
+    }
+
+    error = nl_sock_join_mcgroup(sock, psample_mcgroup);
+    if (error) {
+        VLOG_WARN("%s: failed to join psample mcgroup", __func__);
+        nl_sock_destroy(sock);
+        return error;
+    }
+    dpif->psample_sock = sock;
+
+    return 0;
+}
+
+static int
 open_dpif(const struct dpif_netlink_dp *dp, struct dpif **dpifp)
 {
     struct dpif_netlink *dpif;
 
     dpif = xzalloc(sizeof *dpif);
     dpif->port_notifier = NULL;
+    open_dpif_psample(dpif);
     fat_rwlock_init(&dpif->upcall_lock);
 
     dpif_init(&dpif->dpif, &dpif_netlink_class, dp->name,
@@ -615,6 +650,7 @@ dpif_netlink_close(struct dpif *dpif_)
     struct dpif_netlink *dpif = dpif_netlink_cast(dpif_);
 
     nl_sock_destroy(dpif->port_notifier);
+    nl_sock_destroy(dpif->psample_sock);
 
     fat_rwlock_wrlock(&dpif->upcall_lock);
     destroy_all_channels(dpif);
@@ -4098,6 +4134,18 @@ dpif_netlink_init(void)
             VLOG_INFO("Generic Netlink family '%s' does not exist. "
                       "Please update the Open vSwitch kernel module to enable "
                       "the conntrack limit feature.", OVS_CT_LIMIT_FAMILY);
+        }
+        if (nl_lookup_genl_family(PSAMPLE_GENL_NAME, &psample_family) < 0) {
+            VLOG_INFO("Generic Netlink family '%s' does not exist. "
+                      "Please make sure the kernel module psample is loaded",
+                      PSAMPLE_GENL_NAME);
+        }
+        if (nl_lookup_genl_mcgroup(PSAMPLE_GENL_NAME,
+                                   PSAMPLE_NL_MCGRP_SAMPLE_NAME,
+                                   &psample_mcgroup) < 0) {
+            VLOG_INFO("Failed to join multicast group '%s' for Generic "
+                      "Netlink family '%s'", PSAMPLE_NL_MCGRP_SAMPLE_NAME,
+                      PSAMPLE_GENL_NAME);
         }
 
         ovs_tunnels_out_of_tree = dpif_netlink_rtnl_probe_oot_tunnels();
