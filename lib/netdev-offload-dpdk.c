@@ -73,6 +73,8 @@ struct flow_item {
     unsigned int creation_tid;
     uint32_t next_table_id;
     uint32_t self_table_id;
+    uint32_t self_e2e_table_id;
+    uint32_t next_e2e_table_id;
     struct rte_flow *rte_flow[NUM_RTE_FLOWS_PER_PORT];
     bool has_count[NUM_RTE_FLOWS_PER_PORT];
 };
@@ -101,6 +103,8 @@ free_flow_handle(struct netdev *netdev, struct flows_handle *flows)
         }
         put_table_id(fi->devargs, fi->self_table_id);
         put_table_id(fi->devargs, fi->next_table_id);
+        put_table_id(fi->devargs, fi->self_e2e_table_id);
+        put_table_id(fi->devargs, fi->next_e2e_table_id);
         if (fi->devargs) {
             free(CONST_CAST(void *, fi->devargs));
         }
@@ -809,9 +813,11 @@ enum table_type {
     TABLE_TYPE_POST_CT,
 };
 
+BUILD_ASSERT_DECL(sizeof(bool) == sizeof(uint8_t));
 struct table_id_data {
     uint16_t phys_port;
-    uint8_t pad[2];
+    bool is_e2e_cache;
+    uint8_t pad[1];
     odp_port_t vport;
     uint32_t recirc_id;
     enum table_type table_type;
@@ -825,7 +831,7 @@ dump_table_id(struct ds *s, void *data)
 
     switch (table_id_data->table_type) {
     case TABLE_TYPE_FLOW:
-        table_type_str = "flow";
+        table_type_str = table_id_data->is_e2e_cache ? "e2e-flow" : "flow";
         break;
     case TABLE_TYPE_CT:
         table_type_str = "ct";
@@ -1050,6 +1056,8 @@ table_id_free(const void *arg, uint32_t id)
         netdev = netdev_dpdk_get_netdev_by_devargs(arg);
         if (netdev) {
             netdev_offload_dpdk_flow_del(netdev, &table_ufid, NULL);
+            table_id_ufid(arg, true, id, &table_ufid);
+            netdev_offload_dpdk_flow_del(netdev, &table_ufid, NULL);
             netdev_close(netdev);
         }
     }
@@ -1068,7 +1076,7 @@ static struct context_metadata table_id_md = {
 
 static int
 get_table_id(uint16_t phys_port, odp_port_t vport, uint32_t recirc_id,
-             enum table_type table_type, bool is_e2e_cache_flow OVS_UNUSED,
+             enum table_type table_type, bool is_e2e_cache_flow,
              uint32_t *table_id)
 {
     struct table_id_data table_id_data = {
@@ -1076,13 +1084,15 @@ get_table_id(uint16_t phys_port, odp_port_t vport, uint32_t recirc_id,
         .vport = vport,
         .recirc_id = recirc_id,
         .table_type = table_type,
+        .is_e2e_cache = netdev_is_e2e_cache_enabled() && is_e2e_cache_flow,
     };
     struct context_data table_id_context = {
         .data = &table_id_data,
     };
 
     if (vport == ODPP_NONE && recirc_id == 0 &&
-        table_type == TABLE_TYPE_FLOW) {
+        table_type == TABLE_TYPE_FLOW && !(netdev_is_e2e_cache_enabled() &&
+                                           !is_e2e_cache_flow)) {
         *table_id = 0;
         return 0;
     }
@@ -2035,6 +2045,55 @@ create_rte_flow(struct netdev *netdev,
 }
 
 static int
+add_e2e_miss_flow(struct netdev *netdev,
+                  const char *devargs,
+                  uint32_t e2e_table_id,
+                  uint32_t table_id)
+{
+    struct rte_flow_item miss_items[] = {
+        { .type = RTE_FLOW_ITEM_TYPE_ETH, },
+        { .type = RTE_FLOW_ITEM_TYPE_END, } };
+    struct rte_flow_action_jump miss_jump = { .group = table_id, };
+    const struct rte_flow_action miss_actions[] = {
+        { .type = RTE_FLOW_ACTION_TYPE_JUMP, .conf = &miss_jump },
+        { .type = RTE_FLOW_ACTION_TYPE_END, } };
+    struct act_resources act_resources = { .flow_id = INVALID_FLOW_MARK };
+    struct flows_handle flows = { .items = NULL, .cnt = 0 };
+    struct flow_item flow_item = { .devargs = devargs };
+    struct ufid_to_rte_flow_data *rte_flow_data;
+    struct rte_flow_attr attr = {
+        .transfer = 1,
+        .ingress = 1,
+        .group = e2e_table_id,
+        .priority = 1,
+    };
+    struct rte_flow_error error;
+    ovs_u128 ufid;
+    int ret;
+
+    if (table_id_ufid(devargs, true, table_id, &ufid)) {
+        return -1;
+    }
+    rte_flow_data = ufid_to_rte_flow_data_find(netdev, &ufid);
+    if (rte_flow_data) {
+        return 0;
+    }
+
+    ret = create_rte_flow(netdev, &attr, miss_items, miss_actions,
+                          &error, &flow_item, 0);
+    if (ret) {
+        return -1;
+    }
+
+    VLOG_DBG_RL(&rl, "%s: installed flow %p by ufid "UUID_FMT"\n",
+                netdev_get_name(netdev), flow_item.rte_flow[0],
+                UUID_ARGS((struct uuid *) &ufid));
+    add_flow_item(&flows, &flow_item);
+    ufid_to_rte_flow_associate(netdev, &ufid, &flows, true, &act_resources);
+    return 0;
+}
+
+static int
 add_miss_flow(struct netdev *netdev,
               const char *devargs,
               uint32_t table_id,
@@ -2057,10 +2116,10 @@ create_offload_flow(struct netdev *netdev,
     };
     uint32_t self_table_id = 0;
     uint32_t next_table_id = 0;
-    const char *devargs = NULL;
     uint16_t phys_port;
 
     phys_port = netdev_dpdk_get_port_id(netdev);
+    fi->devargs = netdev_dpdk_get_port_devargs(netdev);
     if (act_vars->ct_mode == CT_MODE_NONE ||
         (group_id == 0 && (act_vars->ct_mode == CT_MODE_CT ||
                            act_vars->ct_mode == CT_MODE_CT_NAT))) {
@@ -2070,25 +2129,51 @@ create_offload_flow(struct netdev *netdev,
             return -1;
         }
         attr.group = self_table_id;
-        fi->devargs = netdev_dpdk_get_port_devargs(netdev);
+
+        if (netdev_is_e2e_cache_enabled() && !act_vars->is_e2e_cache_flow &&
+            act_vars->recirc_id == 0) {
+            if (get_table_id(phys_port, act_vars->vport, 0, TABLE_TYPE_FLOW,
+                true, &fi->self_e2e_table_id)) {
+                goto err;
+            }
+            if (add_e2e_miss_flow(netdev, fi->devargs, fi->self_e2e_table_id,
+                                  self_table_id)) {
+                goto err;
+            }
+        }
     }
     if (!act_resources->associated_flow_id &&
         act_resources->flow_miss_ctx_id) {
         struct flow_miss_ctx flow_miss_ctx;
 
-        find_flow_miss_ctx(act_resources->flow_miss_ctx_id, &flow_miss_ctx);
+        if (find_flow_miss_ctx(act_resources->flow_miss_ctx_id,
+                               &flow_miss_ctx)) {
+            goto err;
+        }
         if (get_table_id(phys_port, flow_miss_ctx.vport,
                          flow_miss_ctx.recirc_id, TABLE_TYPE_FLOW,
                          act_vars->is_e2e_cache_flow, &next_table_id)) {
             goto err;
         }
-        devargs = netdev_dpdk_get_port_devargs(netdev);
-        if (add_miss_flow(netdev, devargs, next_table_id,
-                          act_resources->flow_miss_ctx_id)) {
-            goto err;
+        if (netdev_is_e2e_cache_enabled() && !act_vars->is_e2e_cache_flow) {
+            if (flow_miss_ctx.recirc_id == 0) {
+                if (get_table_id(phys_port, flow_miss_ctx.vport, 0,
+                                 TABLE_TYPE_FLOW, true,
+                                 &fi->next_e2e_table_id)) {
+                    goto err;
+                }
+                if (add_e2e_miss_flow(netdev, fi->devargs,
+                                      fi->next_e2e_table_id, next_table_id)) {
+                    goto err;
+                }
+            }
+            if (add_miss_flow(netdev, fi->devargs, next_table_id,
+                              act_resources->flow_miss_ctx_id)) {
+                goto err;
+            }
         }
-        act_vars->jump->group = next_table_id;
-        fi->devargs = devargs;
+        act_vars->jump->group = fi->next_e2e_table_id ? fi->next_e2e_table_id
+                                                      : next_table_id;
     }
     if (create_rte_flow(netdev, &attr, items, actions, error, fi, pos)) {
         goto err;
@@ -2105,10 +2190,16 @@ create_offload_flow(struct netdev *netdev,
 
 err:
     if (self_table_id) {
-        put_table_id(devargs, self_table_id);
+        put_table_id(fi->devargs, self_table_id);
     }
     if (next_table_id) {
-        put_table_id(devargs, next_table_id);
+        put_table_id(fi->devargs, next_table_id);
+    }
+    if (fi->self_e2e_table_id) {
+        put_table_id(fi->devargs, fi->self_e2e_table_id);
+    }
+    if (fi->next_e2e_table_id) {
+        put_table_id(fi->devargs, fi->next_e2e_table_id);
     }
     return -1;
 }
@@ -3345,8 +3436,8 @@ add_miss_flow(struct netdev *netdev,
     struct rte_flow_action_jump miss_jump = { .group = MISS_TABLE_ID, };
     struct rte_flow_action_mark miss_mark;
     const struct rte_flow_action miss_actions[] = {
-        { .type = RTE_FLOW_ACTION_TYPE_MARK, &miss_mark },
-        { .type = RTE_FLOW_ACTION_TYPE_JUMP, &miss_jump },
+        { .type = RTE_FLOW_ACTION_TYPE_MARK, .conf = &miss_mark },
+        { .type = RTE_FLOW_ACTION_TYPE_JUMP, .conf = &miss_jump },
         { .type = RTE_FLOW_ACTION_TYPE_END, } };
     struct act_resources act_resources = { .flow_id = INVALID_FLOW_MARK };
     struct flows_handle flows = { .items = NULL, .cnt = 0 };
