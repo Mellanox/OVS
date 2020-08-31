@@ -83,7 +83,7 @@ bool uuid_from_string(struct uuid *, const char *);
 bool uuid_from_string_prefix(struct uuid *, const char *);
 int uuid_is_partial_string(const char *);
 int uuid_is_partial_match(const struct uuid *, const char *match);
-void uuid_set_bits_v4(struct uuid *);
+void uuid_set_bits_v4(struct uuid *, uint8_t attr);
 
 #ifdef __cplusplus
 }
