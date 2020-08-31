@@ -83,7 +83,7 @@ struct flows_handle {
     int current_max;
 };
 
-static void put_table_id(struct netdev *netdev, uint32_t table_id);
+static void put_table_id(const char *devargs, uint32_t table_id);
 static void
 free_flow_handle(struct netdev *netdev, struct flows_handle *flows)
 {
@@ -95,18 +95,12 @@ free_flow_handle(struct netdev *netdev, struct flows_handle *flows)
 
         if (fi->devargs) {
             flow_netdev = netdev_dpdk_get_netdev_by_devargs(fi->devargs);
-            if (!flow_netdev) {
-                put_table_id(NULL, fi->self_table_id);
-                put_table_id(NULL, fi->next_table_id);
-                fi->self_table_id = 0;
-                fi->next_table_id = 0;
-            }
         } else {
             flow_netdev = netdev;
             netdev_ref(flow_netdev);
         }
-        put_table_id(flow_netdev, fi->self_table_id);
-        put_table_id(flow_netdev, fi->next_table_id);
+        put_table_id(fi->devargs, fi->self_table_id);
+        put_table_id(fi->devargs, fi->next_table_id);
         if (fi->devargs) {
             free(CONST_CAST(void *, fi->devargs));
         }
@@ -1033,16 +1027,26 @@ table_id_alloc(void *arg OVS_UNUSED)
     return 0;
 }
 
-static void
-table_id_ufid(uint32_t table_id, ovs_u128 *ufid)
+static int
+table_id_ufid(const char *devargs, uint32_t table_id, ovs_u128 *ufid)
 {
     struct uuid *uuid = (struct uuid *)ufid;
+    size_t devargs_len;
+    size_t buf_len;
+    uint8_t *buf;
 
     uuid_zero(uuid);
-    /* Flow UUIDs have reserved bits on to indicate a random UUID. See
-     * RFC 4122 section 4.4. Here they won't conflict as those bits are off.
-     */
-    uuid->parts[0] = table_id;
+    if (!devargs) {
+        return -1;
+    }
+    devargs_len = strlen(devargs);
+    buf_len = sizeof table_id + devargs_len;
+    buf = xmalloc(buf_len);
+    memcpy(buf, (void *)&table_id, sizeof table_id);
+    memcpy(&buf[sizeof table_id], devargs, devargs_len);
+    odp_flow_key_hash(buf, buf_len, ufid);
+    free(buf);
+    return 0;
 }
 
 static int
@@ -1057,10 +1061,12 @@ table_id_free(const void *arg, uint32_t id)
 
     seq_pool_free_id(table_id_pool, tid, id);
 
-    if (arg) {
-        table_id_ufid(id, &table_ufid);
-        netdev = (struct netdev *)arg;
-        netdev_offload_dpdk_flow_del(netdev, &table_ufid, NULL);
+    if (arg && !table_id_ufid(arg, id, &table_ufid)) {
+        netdev = netdev_dpdk_get_netdev_by_devargs(arg);
+        if (netdev) {
+            netdev_offload_dpdk_flow_del(netdev, &table_ufid, NULL);
+            netdev_close(netdev);
+        }
     }
 }
 
@@ -1100,9 +1106,9 @@ get_table_id(uint16_t phys_port, odp_port_t vport, uint32_t recirc_id,
 }
 
 static void
-put_table_id(struct netdev *netdev, uint32_t table_id)
+put_table_id(const char *devargs, uint32_t table_id)
 {
-    put_context_data_by_id(&table_id_md, netdev, table_id);
+    put_context_data_by_id(&table_id_md, devargs, table_id);
 }
 
 #define MIN_CT_CTX_ID 1
@@ -1381,8 +1387,10 @@ static void
 put_action_resources(struct netdev *netdev,
                      struct act_resources *act_resources)
 {
-    put_table_id(netdev, act_resources->self_table_id);
-    put_table_id(netdev, act_resources->next_table_id);
+    const char *devargs = netdev_dpdk_get_port_devargs(netdev);
+
+    put_table_id(devargs, act_resources->self_table_id);
+    put_table_id(devargs, act_resources->next_table_id);
     put_flow_miss_ctx_id(act_resources->flow_miss_ctx_id);
     put_tnl_id(act_resources->tnl_id);
     put_table_id(NULL, act_resources->ct_table_id);
@@ -1985,7 +1993,6 @@ struct act_vars {
     uint32_t recirc_id;
     struct flow_tnl *tnl_key;
     struct flow_tnl tnl_mask;
-    bool explicit_netdev;
     uint32_t ctid;
     struct rte_flow_action_jump *jump;
 };
@@ -2041,13 +2048,18 @@ create_rte_flow(struct netdev *netdev,
 }
 
 static int
+add_miss_flow(struct netdev *netdev,
+              const char *devargs,
+              uint32_t table_id,
+              uint32_t mark_id);
+static int
 create_offload_flow(struct netdev *netdev,
                     const uint32_t group_id,
                     const struct rte_flow_item *items,
                     const struct rte_flow_action *actions,
                     struct rte_flow_error *error,
                     struct act_resources *act_resources,
-                    struct act_vars *act_vars OVS_UNUSED,
+                    struct act_vars *act_vars,
                     struct flow_item *fi,
                     int pos)
 {
@@ -2055,10 +2067,62 @@ create_offload_flow(struct netdev *netdev,
         .transfer = 1,
         .ingress = 1,
         .group = group_id,
-        .priority = !act_resources,
     };
+    uint32_t self_table_id = 0;
+    uint32_t next_table_id = 0;
+    const char *devargs = NULL;
+    uint16_t phys_port;
 
-    return create_rte_flow(netdev, &attr, items, actions, error, fi, pos);
+    phys_port = netdev_dpdk_get_port_id(netdev);
+    if (act_vars->ct_mode == CT_MODE_NONE ||
+        (group_id == 0 && (act_vars->ct_mode == CT_MODE_CT ||
+                           act_vars->ct_mode == CT_MODE_CT_NAT))) {
+        if (get_table_id(phys_port, act_vars->vport, act_vars->recirc_id,
+                         TABLE_TYPE_FLOW, &self_table_id)) {
+            return -1;
+        }
+        attr.group = self_table_id;
+        fi->devargs = netdev_dpdk_get_port_devargs(netdev);
+    }
+    if (!act_resources->associated_flow_id &&
+        act_resources->flow_miss_ctx_id) {
+        struct flow_miss_ctx flow_miss_ctx;
+
+        find_flow_miss_ctx(act_resources->flow_miss_ctx_id, &flow_miss_ctx);
+        if (get_table_id(phys_port, flow_miss_ctx.vport,
+                         flow_miss_ctx.recirc_id, TABLE_TYPE_FLOW,
+                         &next_table_id)) {
+            goto err;
+        }
+        devargs = netdev_dpdk_get_port_devargs(netdev);
+        if (add_miss_flow(netdev, devargs, next_table_id,
+                          act_resources->flow_miss_ctx_id)) {
+            goto err;
+        }
+        act_vars->jump->group = next_table_id;
+        fi->devargs = devargs;
+    }
+    if (create_rte_flow(netdev, &attr, items, actions, error, fi, pos)) {
+        goto err;
+    }
+    if (self_table_id) {
+        fi->self_table_id = self_table_id;
+        act_resources->self_table_id = 0;
+    }
+    if (next_table_id) {
+        fi->next_table_id = next_table_id;
+        act_resources->next_table_id = 0;
+    }
+    return 0;
+
+err:
+    if (self_table_id) {
+        put_table_id(devargs, self_table_id);
+    }
+    if (next_table_id) {
+        put_table_id(devargs, next_table_id);
+    }
+    return -1;
 }
 
 static void
@@ -2468,7 +2532,6 @@ parse_flow_match(struct netdev *netdev,
 {
     struct flow *consumed_masks;
     uint8_t proto = 0;
-    int ret = 0;
 
     consumed_masks = &match->wc.masks;
 
@@ -2491,13 +2554,7 @@ parse_flow_match(struct netdev *netdev,
         return -1;
     }
 
-    ret = get_table_id(0, act_vars->vport, match->flow.recirc_id,
-                       TABLE_TYPE_FLOW, &act_resources->self_table_id);
-    if (ret) {
-        return -1;
-    }
     act_vars->recirc_id = match->flow.recirc_id;
-
     memset(&consumed_masks->in_port, 0, sizeof consumed_masks->in_port);
     consumed_masks->recirc_id = 0;
     consumed_masks->packet_type = 0;
@@ -3253,17 +3310,8 @@ add_jump_action(struct flow_actions *actions, uint32_t group)
 }
 
 static int
-create_highnetdev_flow(struct netdev *netdev,
-                       const uint32_t group_id,
-                       const struct rte_flow_item *items,
-                       const struct rte_flow_action *actions,
-                       const ovs_u128 *ufid,
-                       struct act_resources *act_resources,
-                       struct act_vars *act_vars,
-                       struct flows_handle *flows);
-
-static int
 add_miss_flow(struct netdev *netdev,
+              const char *devargs,
               uint32_t table_id,
               uint32_t mark_id)
 {
@@ -3277,32 +3325,44 @@ add_miss_flow(struct netdev *netdev,
         { .type = RTE_FLOW_ACTION_TYPE_JUMP, &miss_jump },
         { .type = RTE_FLOW_ACTION_TYPE_END, } };
     struct act_resources act_resources = { .flow_id = INVALID_FLOW_MARK };
-    struct act_vars act_vars = { .explicit_netdev = true, };
     struct flows_handle flows = { .items = NULL, .cnt = 0 };
+    struct flow_item flow_item = { .devargs = devargs };
     struct ufid_to_rte_flow_data *rte_flow_data;
+    struct rte_flow_attr attr = {
+        .transfer = 1,
+        .ingress = 1,
+        .group = table_id,
+        .priority = 1,
+    };
+    struct rte_flow_error error;
     ovs_u128 ufid;
     int ret;
 
-    table_id_ufid(table_id, &ufid);
+    if (table_id_ufid(devargs, table_id, &ufid)) {
+        return -1;
+    }
     rte_flow_data = ufid_to_rte_flow_data_find(netdev, &ufid, false);
     if (rte_flow_data) {
         return 0;
     }
 
     miss_mark.id = mark_id;
-    ret = create_highnetdev_flow(netdev, table_id, miss_items, miss_actions,
-                                 &ufid, NULL, &act_vars, &flows);
+    ret = create_rte_flow(netdev, &attr, miss_items, miss_actions,
+                          &error, &flow_item, 0);
     if (ret) {
         return -1;
     }
 
+    VLOG_DBG_RL(&rl, "%s: installed flow %p by ufid "UUID_FMT"\n",
+                netdev_get_name(netdev), flow_item.rte_flow[0],
+                UUID_ARGS((struct uuid *) &ufid));
+    add_flow_item(&flows, &flow_item);
     ufid_to_rte_flow_associate(&ufid, netdev, &flows, true, &act_resources);
     return 0;
 }
 
 static int
-add_tnl_pop_action(struct netdev *netdev,
-                   struct flow_actions *actions,
+add_tnl_pop_action(struct flow_actions *actions,
                    const struct nlattr *nla,
                    struct act_resources *act_resources,
                    struct act_vars *act_vars)
@@ -3317,21 +3377,12 @@ add_tnl_pop_action(struct netdev *netdev,
     if (get_flow_miss_ctx_id(&miss_ctx, &act_resources->flow_miss_ctx_id)) {
         return -1;
     }
-    if (get_table_id(0, port, 0, TABLE_TYPE_FLOW,
-                     &act_resources->next_table_id)) {
-        return -1;
-    }
-    if (add_miss_flow(netdev, act_resources->next_table_id,
-                      act_resources->flow_miss_ctx_id)) {
-        return -1;
-    }
-    act_vars->jump = add_jump_action(actions, act_resources->next_table_id);
+    act_vars->jump = add_jump_action(actions, 0);
     return 0;
 }
 
 static int
-add_recirc_action(struct netdev *netdev,
-                  struct flow_actions *actions,
+add_recirc_action(struct flow_actions *actions,
                   const struct nlattr *nla,
                   struct act_resources *act_resources,
                   struct act_vars *act_vars)
@@ -3349,14 +3400,6 @@ add_recirc_action(struct netdev *netdev,
     if (get_flow_miss_ctx_id(&miss_ctx, &act_resources->flow_miss_ctx_id)) {
         return -1;
     }
-    if (get_table_id(0, act_vars->vport, miss_ctx.recirc_id, TABLE_TYPE_FLOW,
-        &act_resources->next_table_id)) {
-        return -1;
-    }
-    if (add_miss_flow(netdev, act_resources->next_table_id,
-                      act_resources->flow_miss_ctx_id)) {
-        return -1;
-    }
     if (act_vars->vport != ODPP_NONE && act_vars->recirc_id == 0) {
         if (get_tnl_id(act_vars->tnl_key, &act_vars->tnl_mask,
                        &act_resources->tnl_id)) {
@@ -3367,7 +3410,7 @@ add_recirc_action(struct netdev *netdev,
             return -1;
         }
     }
-    act_vars->jump = add_jump_action(actions, act_resources->next_table_id);
+    act_vars->jump = add_jump_action(actions, 0);
     return 0;
 }
 
@@ -3458,7 +3501,8 @@ parse_ct_actions(struct flow_actions *actions,
 
             act_vars->ct_mode = CT_MODE_CT_CONN;
             act_vars->pre_ct_tuple_rewrite = false;
-            if (get_table_id(0, act_vars->vport, 0, TABLE_TYPE_POST_CT,
+            if (!act_resources->next_table_id &&
+                get_table_id(0, act_vars->vport, 0, TABLE_TYPE_POST_CT,
                              &act_resources->next_table_id)) {
                 return -1;
             }
@@ -3525,7 +3569,8 @@ create_ct_conn(struct netdev *netdev,
     struct flow_actions ct_actions = { .actions = NULL, .cnt = 0 };
     int ret = -1;
 
-    if (get_table_id(0, act_vars->vport, 0, TABLE_TYPE_CT_NAT,
+    if (!act_resources->ct_nat_table_id &&
+        get_table_id(0, act_vars->vport, 0, TABLE_TYPE_CT_NAT,
                      &act_resources->ct_nat_table_id)) {
         return -1;
     }
@@ -3538,9 +3583,8 @@ create_ct_conn(struct netdev *netdev,
         goto out;
     }
 
-    put_table_id(NULL, act_resources->self_table_id);
-    act_resources->self_table_id = 0;
-    if (get_table_id(0, act_vars->vport, 0, TABLE_TYPE_CT,
+    if (!act_resources->self_table_id &&
+        get_table_id(0, act_vars->vport, 0, TABLE_TYPE_CT,
                      &act_resources->self_table_id)) {
         ret = -1;
         goto ct_err;
@@ -3582,7 +3626,6 @@ split_pre_post_ct_actions(const struct rte_flow_action *actions,
 
 static int
 create_pre_post_ct(struct netdev *netdev,
-                   const uint32_t group_id,
                    const struct rte_flow_item *items,
                    const struct rte_flow_action *actions,
                    struct rte_flow_error *error,
@@ -3607,7 +3650,8 @@ create_pre_post_ct(struct netdev *netdev,
 
     /* post-ct */
     post_ct_mark.id = act_resources->flow_id;
-    if (get_table_id(0, act_vars->vport, 0, TABLE_TYPE_POST_CT,
+    if (!act_resources->post_ct_table_id &&
+        get_table_id(0, act_vars->vport, 0, TABLE_TYPE_POST_CT,
                      &act_resources->post_ct_table_id)) {
         return -1;
     }
@@ -3622,7 +3666,8 @@ create_pre_post_ct(struct netdev *netdev,
     }
 
     /* pre-ct */
-    if (get_table_id(0, act_vars->vport, 0, tbl_type,
+    if (!act_resources->ct_table_id &&
+        get_table_id(0, act_vars->vport, 0, tbl_type,
                      &act_resources->ct_table_id)) {
         ret = -1;
         goto pre_ct_err;
@@ -3644,8 +3689,8 @@ create_pre_post_ct(struct netdev *netdev,
     pre_ct_jump.group = act_resources->ct_table_id;
     add_flow_action(&pre_ct_actions, RTE_FLOW_ACTION_TYPE_JUMP, &pre_ct_jump);
     add_flow_action(&pre_ct_actions, RTE_FLOW_ACTION_TYPE_END, NULL);
-    ret = create_offload_flow(netdev, group_id, items, pre_ct_actions.actions,
-                              error, act_resources, act_vars, fi, 0);
+    ret = create_offload_flow(netdev, 0, items, pre_ct_actions.actions, error,
+                              act_resources, act_vars, fi, 0);
     if (ret) {
         goto pre_ct_err;
     }
@@ -3662,7 +3707,6 @@ out:
 
 static int
 netdev_offload_dpdk_flow_create(struct netdev *netdev,
-                                const uint32_t group_id,
                                 const struct rte_flow_item *items,
                                 const struct rte_flow_action *actions,
                                 struct rte_flow_error *error,
@@ -3673,12 +3717,12 @@ netdev_offload_dpdk_flow_create(struct netdev *netdev,
     switch (act_vars->ct_mode) {
     case CT_MODE_NONE:
         fi->has_count[0] = true;
-        return create_offload_flow(netdev, group_id, items, actions, error,
+        return create_offload_flow(netdev, 0, items, actions, error,
                                    act_resources, act_vars, fi, 0);
     case CT_MODE_CT:
         /* fallthrough */
     case CT_MODE_CT_NAT:
-        return create_pre_post_ct(netdev, group_id, items, actions, error,
+        return create_pre_post_ct(netdev, items, actions, error,
                                   act_resources, act_vars, fi);
     case CT_MODE_CT_CONN:
         return create_ct_conn(netdev, items, actions, error, act_resources,
@@ -3739,13 +3783,11 @@ parse_flow_actions(struct netdev *netdev,
                 return -1;
             }
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_TUNNEL_POP) {
-            if (add_tnl_pop_action(netdev, actions, nla, act_resources,
-                                   act_vars)) {
+            if (add_tnl_pop_action(actions, nla, act_resources, act_vars)) {
                 return -1;
             }
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_RECIRC) {
-            if (add_recirc_action(netdev, actions, nla, act_resources,
-                                  act_vars)) {
+            if (add_recirc_action(actions, nla, act_resources, act_vars)) {
                 return -1;
             }
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_CT) {
@@ -3778,7 +3820,6 @@ parse_flow_actions(struct netdev *netdev,
 
 static int
 netdev_offload_dpdk_create_tnl_flows(struct netdev *netdev,
-                                     const uint32_t group_id,
                                      const struct rte_flow_item *items,
                                      const struct rte_flow_action *actions,
                                      const ovs_u128 *ufid,
@@ -3799,10 +3840,9 @@ netdev_offload_dpdk_create_tnl_flows(struct netdev *netdev,
         if (!netdev_dpdk_is_uplink_port(netdev_dumps[i]->netdev)) {
             continue;
         }
-        ret = netdev_offload_dpdk_flow_create(netdev_dumps[i]->netdev,
-                                              group_id, items,actions,
-                                              &error, act_resources, act_vars,
-                                              &flow_item);
+        ret = netdev_offload_dpdk_flow_create(netdev_dumps[i]->netdev, items,
+                                              actions, &error, act_resources,
+                                              act_vars, &flow_item);
         if (ret) {
             continue;
         }
@@ -3828,7 +3868,6 @@ netdev_offload_dpdk_create_tnl_flows(struct netdev *netdev,
 
 static int
 create_highnetdev_flow(struct netdev *netdev,
-                       const uint32_t group_id,
                        const struct rte_flow_item *items,
                        const struct rte_flow_action *actions,
                        const ovs_u128 *ufid,
@@ -3841,19 +3880,15 @@ create_highnetdev_flow(struct netdev *netdev,
     int ret;
 
     if (netdev_vport_is_vport_class(netdev->netdev_class)) {
-        ret = netdev_offload_dpdk_create_tnl_flows(netdev, group_id, items,
-                                                   actions, ufid,
-                                                   act_resources, act_vars,
-                                                   flows);
+        ret = netdev_offload_dpdk_create_tnl_flows(netdev, items, actions,
+                                                   ufid, act_resources,
+                                                   act_vars, flows);
     } else {
-        ret = netdev_offload_dpdk_flow_create(netdev, group_id, items, actions,
+        ret = netdev_offload_dpdk_flow_create(netdev, items, actions,
                                               &error, act_resources, act_vars,
                                               &flow_item);
         if (ret) {
             goto out;
-        }
-        if (act_vars->explicit_netdev) {
-            flow_item.devargs = netdev_dpdk_get_port_devargs(netdev);
         }
         VLOG_DBG_RL(&rl, "%s: installed flow %p/%p by ufid "UUID_FMT,
                     netdev_get_name(netdev), flow_item.rte_flow[0],
@@ -3883,9 +3918,8 @@ netdev_offload_dpdk_actions(struct netdev *netdev,
     if (ret) {
         goto out;
     }
-    ret = create_highnetdev_flow(netdev, act_resources->self_table_id,
-                                 patterns->items, actions.actions, ufid,
-                                 act_resources, act_vars, flows);
+    ret = create_highnetdev_flow(netdev, patterns->items, actions.actions,
+                                 ufid, act_resources, act_vars, flows);
 out:
     free_flow_actions(&actions, true);
     return ret;
@@ -3924,9 +3958,13 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
          * actions.
          */
         actions_offloaded = false;
-        flow_item.rte_flow[0] = act_resources.self_table_id == 0 ?
-            netdev_offload_dpdk_mark_rss(&patterns, netdev, info->flow_mark) :
-            NULL;
+        if (act_vars.vport == ODPP_NONE && act_vars.recirc_id == 0) {
+            flow_item.rte_flow[0] =
+                netdev_offload_dpdk_mark_rss(&patterns, netdev,
+                                             info->flow_mark);
+        } else {
+            flow_item.rte_flow[0] = NULL;
+        }
         ret = flow_item.rte_flow[0] ? 0 : -1;
         if (ret) {
             goto out;
