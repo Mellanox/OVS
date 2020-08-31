@@ -3223,14 +3223,14 @@ add_jump_action(struct flow_actions *actions, uint32_t group)
 }
 
 static int
-create_offload_flow(struct netdev *netdev,
-                    struct rte_flow_attr *attr,
-                    const struct rte_flow_item *items,
-                    const struct rte_flow_action *actions,
-                    const ovs_u128 *ufid,
-                    struct act_resources *act_resources,
-                    struct act_vars *act_vars,
-                    struct flows_handle *flows);
+create_highnetdev_flow(struct netdev *netdev,
+                       struct rte_flow_attr *attr,
+                       const struct rte_flow_item *items,
+                       const struct rte_flow_action *actions,
+                       const ovs_u128 *ufid,
+                       struct act_resources *act_resources,
+                       struct act_vars *act_vars,
+                       struct flows_handle *flows);
 
 static int
 add_miss_flow(struct netdev *netdev,
@@ -3263,8 +3263,8 @@ add_miss_flow(struct netdev *netdev,
 
     miss_attr.group = table_id;
     miss_mark.id = mark_id;
-    ret = create_offload_flow(netdev, &miss_attr, miss_items, miss_actions,
-                              &ufid, NULL, &act_vars, &flows);
+    ret = create_highnetdev_flow(netdev, &miss_attr, miss_items, miss_actions,
+                                 &ufid, NULL, &act_vars, &flows);
     if (ret) {
         return -1;
     }
@@ -3795,14 +3795,14 @@ netdev_offload_dpdk_create_tnl_flows(struct netdev *netdev,
 }
 
 static int
-create_offload_flow(struct netdev *netdev,
-                    struct rte_flow_attr *attr,
-                    const struct rte_flow_item *items,
-                    const struct rte_flow_action *actions,
-                    const ovs_u128 *ufid,
-                    struct act_resources *act_resources,
-                    struct act_vars *act_vars,
-                    struct flows_handle *flows)
+create_highnetdev_flow(struct netdev *netdev,
+                       struct rte_flow_attr *attr,
+                       const struct rte_flow_item *items,
+                       const struct rte_flow_action *actions,
+                       const ovs_u128 *ufid,
+                       struct act_resources *act_resources,
+                       struct act_vars *act_vars,
+                       struct flows_handle *flows)
 {
     struct flow_item flow_item = { .devargs = NULL };
     struct rte_flow_error error;
@@ -3852,9 +3852,9 @@ netdev_offload_dpdk_actions(struct netdev *netdev,
         goto out;
     }
     flow_attr.group = act_resources->self_table_id;
-    ret = create_offload_flow(netdev, &flow_attr, patterns->items,
-                              actions.actions, ufid, act_resources,
-                              act_vars, flows);
+    ret = create_highnetdev_flow(netdev, &flow_attr, patterns->items,
+                                 actions.actions, ufid, act_resources,
+                                 act_vars, flows);
 out:
     free_flow_actions(&actions, true);
     return ret;
