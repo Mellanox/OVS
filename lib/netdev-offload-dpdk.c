@@ -1997,6 +1997,27 @@ create_rte_flow(struct netdev *netdev,
     return fi->rte_flow[pos] ? 0 : -1;
 }
 
+static int
+create_offload_flow(struct netdev *netdev,
+                    const uint32_t group_id,
+                    const struct rte_flow_item *items,
+                    const struct rte_flow_action *actions,
+                    struct rte_flow_error *error,
+                    struct act_resources *act_resources,
+                    struct act_vars *act_vars OVS_UNUSED,
+                    struct flow_item *fi,
+                    int pos)
+{
+    struct rte_flow_attr attr = {
+        .transfer = 1,
+        .ingress = 1,
+        .group = group_id,
+        .priority = !act_resources,
+    };
+
+    return create_rte_flow(netdev, &attr, items, actions, error, fi, pos);
+}
+
 static void
 add_flow_pattern(struct flow_patterns *patterns, enum rte_flow_item_type type,
                  const void *spec, const void *mask, const void *last)
@@ -3224,7 +3245,7 @@ add_jump_action(struct flow_actions *actions, uint32_t group)
 
 static int
 create_highnetdev_flow(struct netdev *netdev,
-                       struct rte_flow_attr *attr,
+                       const uint32_t group_id,
                        const struct rte_flow_item *items,
                        const struct rte_flow_action *actions,
                        const ovs_u128 *ufid,
@@ -3237,8 +3258,6 @@ add_miss_flow(struct netdev *netdev,
               uint32_t table_id,
               uint32_t mark_id)
 {
-    struct rte_flow_attr miss_attr = { .ingress = 1, .transfer = 1,
-                                       .priority = 1, };
     struct rte_flow_item miss_items[] = {
         { .type = RTE_FLOW_ITEM_TYPE_ETH, },
         { .type = RTE_FLOW_ITEM_TYPE_END, } };
@@ -3261,9 +3280,8 @@ add_miss_flow(struct netdev *netdev,
         return 0;
     }
 
-    miss_attr.group = table_id;
     miss_mark.id = mark_id;
-    ret = create_highnetdev_flow(netdev, &miss_attr, miss_items, miss_actions,
+    ret = create_highnetdev_flow(netdev, table_id, miss_items, miss_actions,
                                  &ufid, NULL, &act_vars, &flows);
     if (ret) {
         return -1;
@@ -3490,7 +3508,6 @@ create_ct_conn(struct netdev *netdev,
 {
     struct flow_actions nat_actions = { .actions = NULL, .cnt = 0 };
     struct flow_actions ct_actions = { .actions = NULL, .cnt = 0 };
-    struct rte_flow_attr attr = { .ingress = 1, .transfer = 1 };
     int ret = -1;
 
     if (get_table_id(act_vars->vport, 0, TABLE_TYPE_CT_NAT,
@@ -3498,10 +3515,10 @@ create_ct_conn(struct netdev *netdev,
         return -1;
     }
     split_ct_conn_actions(actions, &ct_actions, &nat_actions, act_vars->ctid);
-    attr.group = act_resources->ct_nat_table_id;
     fi->has_count[0] = true;
-    ret = create_rte_flow(netdev, &attr, items, nat_actions.actions, error, fi,
-                          1);
+    ret = create_offload_flow(netdev, act_resources->ct_nat_table_id, items,
+                              nat_actions.actions, error,
+                              act_resources, act_vars, fi, 1);
     if (ret) {
         goto out;
     }
@@ -3513,10 +3530,10 @@ create_ct_conn(struct netdev *netdev,
         ret = -1;
         goto ct_err;
     }
-    attr.group = act_resources->self_table_id;
     fi->has_count[1] = true;
-    ret = create_rte_flow(netdev, &attr, items, ct_actions.actions, error, fi,
-                          0);
+    ret = create_offload_flow(netdev, act_resources->self_table_id, items,
+                              nat_actions.actions, error, act_resources,
+                              act_vars, fi, 0);
     if (ret) {
         goto ct_err;
     }
@@ -3550,7 +3567,7 @@ split_pre_post_ct_actions(const struct rte_flow_action *actions,
 
 static int
 create_pre_post_ct(struct netdev *netdev,
-                   const struct rte_flow_attr *attr,
+                   const uint32_t group_id,
                    const struct rte_flow_item *items,
                    const struct rte_flow_action *actions,
                    struct rte_flow_error *error,
@@ -3567,7 +3584,6 @@ create_pre_post_ct(struct netdev *netdev,
     struct rte_flow_action_mark pre_ct_mark;
     struct rte_flow_action_jump pre_ct_jump;
     struct flow_miss_ctx pre_ct_miss_ctx;
-    struct rte_flow_attr post_ct_attr;
     enum table_type tbl_type;
     int ret;
 
@@ -3576,16 +3592,15 @@ create_pre_post_ct(struct netdev *netdev,
 
     /* post-ct */
     post_ct_mark.id = act_resources->flow_id;
-    memcpy(&post_ct_attr, attr, sizeof post_ct_attr);
     if (get_table_id(act_vars->vport, 0, TABLE_TYPE_POST_CT,
                      &act_resources->post_ct_table_id)) {
         return -1;
     }
-    post_ct_attr.group = act_resources->post_ct_table_id;
     split_pre_post_ct_actions(actions, &pre_ct_actions, &post_ct_actions);
     add_flow_action(&post_ct_actions, RTE_FLOW_ACTION_TYPE_END, NULL);
-    ret = create_rte_flow(netdev, &post_ct_attr, post_ct_items,
-                          post_ct_actions.actions, error, fi, 1);
+    ret = create_offload_flow(netdev, act_resources->post_ct_table_id,
+                              post_ct_items, post_ct_actions.actions, error,
+                              act_resources, act_vars, fi, 1);
     fi->has_count[1] = true;
     if (ret) {
         goto out;
@@ -3614,8 +3629,8 @@ create_pre_post_ct(struct netdev *netdev,
     pre_ct_jump.group = act_resources->ct_table_id;
     add_flow_action(&pre_ct_actions, RTE_FLOW_ACTION_TYPE_JUMP, &pre_ct_jump);
     add_flow_action(&pre_ct_actions, RTE_FLOW_ACTION_TYPE_END, NULL);
-    ret = create_rte_flow(netdev, attr, items, pre_ct_actions.actions, error,
-                          fi, 0);
+    ret = create_offload_flow(netdev, group_id, items, pre_ct_actions.actions,
+                              error, act_resources, act_vars, fi, 0);
     if (ret) {
         goto pre_ct_err;
     }
@@ -3632,7 +3647,7 @@ out:
 
 static int
 netdev_offload_dpdk_flow_create(struct netdev *netdev,
-                                const struct rte_flow_attr *attr,
+                                const uint32_t group_id,
                                 const struct rte_flow_item *items,
                                 const struct rte_flow_action *actions,
                                 struct rte_flow_error *error,
@@ -3643,11 +3658,12 @@ netdev_offload_dpdk_flow_create(struct netdev *netdev,
     switch (act_vars->ct_mode) {
     case CT_MODE_NONE:
         fi->has_count[0] = true;
-        return create_rte_flow(netdev, attr, items, actions, error, fi, 0);
+        return create_offload_flow(netdev, group_id, items, actions, error,
+                                   act_resources, act_vars, fi, 0);
     case CT_MODE_CT:
         /* fallthrough */
     case CT_MODE_CT_NAT:
-        return create_pre_post_ct(netdev, attr, items, actions, error,
+        return create_pre_post_ct(netdev, group_id, items, actions, error,
                                   act_resources, act_vars, fi);
     case CT_MODE_CT_CONN:
         return create_ct_conn(netdev, items, actions, error, act_resources,
@@ -3746,7 +3762,7 @@ parse_flow_actions(struct netdev *netdev,
 
 static int
 netdev_offload_dpdk_create_tnl_flows(struct netdev *netdev,
-                                     struct rte_flow_attr *flow_attr,
+                                     const uint32_t group_id,
                                      const struct rte_flow_item *items,
                                      const struct rte_flow_action *actions,
                                      const ovs_u128 *ufid,
@@ -3768,7 +3784,7 @@ netdev_offload_dpdk_create_tnl_flows(struct netdev *netdev,
             continue;
         }
         ret = netdev_offload_dpdk_flow_create(netdev_dumps[i]->netdev,
-                                              flow_attr, items,actions,
+                                              group_id, items,actions,
                                               &error, act_resources, act_vars,
                                               &flow_item);
         if (ret) {
@@ -3796,7 +3812,7 @@ netdev_offload_dpdk_create_tnl_flows(struct netdev *netdev,
 
 static int
 create_highnetdev_flow(struct netdev *netdev,
-                       struct rte_flow_attr *attr,
+                       const uint32_t group_id,
                        const struct rte_flow_item *items,
                        const struct rte_flow_action *actions,
                        const ovs_u128 *ufid,
@@ -3809,11 +3825,12 @@ create_highnetdev_flow(struct netdev *netdev,
     int ret;
 
     if (netdev_vport_is_vport_class(netdev->netdev_class)) {
-        ret = netdev_offload_dpdk_create_tnl_flows(netdev, attr, items, actions,
-                                                   ufid, act_resources,
-                                                   act_vars, flows);
+        ret = netdev_offload_dpdk_create_tnl_flows(netdev, group_id, items,
+                                                   actions, ufid,
+                                                   act_resources, act_vars,
+                                                   flows);
     } else {
-        ret = netdev_offload_dpdk_flow_create(netdev, attr, items, actions,
+        ret = netdev_offload_dpdk_flow_create(netdev, group_id, items, actions,
                                               &error, act_resources, act_vars,
                                               &flow_item);
         if (ret) {
@@ -3842,7 +3859,6 @@ netdev_offload_dpdk_actions(struct netdev *netdev,
                             struct act_vars *act_vars,
                             struct flows_handle *flows)
 {
-    struct rte_flow_attr flow_attr = { .ingress = 1, .transfer = 1 };
     struct flow_actions actions = { .actions = NULL, .cnt = 0 };
     int ret;
 
@@ -3851,10 +3867,9 @@ netdev_offload_dpdk_actions(struct netdev *netdev,
     if (ret) {
         goto out;
     }
-    flow_attr.group = act_resources->self_table_id;
-    ret = create_highnetdev_flow(netdev, &flow_attr, patterns->items,
-                                 actions.actions, ufid, act_resources,
-                                 act_vars, flows);
+    ret = create_highnetdev_flow(netdev, act_resources->self_table_id,
+                                 patterns->items, actions.actions, ufid,
+                                 act_resources, act_vars, flows);
 out:
     free_flow_actions(&actions, true);
     return ret;
