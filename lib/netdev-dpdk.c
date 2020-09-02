@@ -5561,6 +5561,65 @@ netdev_dpdk_rte_flow_query_count(struct netdev *netdev,
     return ret;
 }
 
+struct rte_flow_shared_action *
+netdev_dpdk_rte_flow_shared_action_create(struct netdev *netdev,
+                                          const struct rte_flow_action *action,
+                                          struct rte_flow_error *error)
+{
+    struct rte_flow_shared_action_conf conf = { .ingress = 1, };
+    struct rte_flow_shared_action *s_act;
+    struct netdev_dpdk *dev;
+
+    if (!is_dpdk_class(netdev->netdev_class)) {
+        return NULL;
+    }
+
+    dev = netdev_dpdk_cast(netdev);
+    ovs_mutex_lock(&dev->mutex);
+    s_act = rte_flow_shared_action_create(dev->port_id, &conf, action, error);
+    ovs_mutex_unlock(&dev->mutex);
+    return s_act;
+}
+
+int
+netdev_dpdk_rte_flow_shared_action_destroy(struct netdev *netdev,
+                                           struct rte_flow_shared_action *s_act,
+                                           struct rte_flow_error *error)
+{
+    struct netdev_dpdk *dev;
+    int ret;
+
+    if (!is_dpdk_class(netdev->netdev_class)) {
+        return -1;
+    }
+
+    dev = netdev_dpdk_cast(netdev);
+    ovs_mutex_lock(&dev->mutex);
+    ret = rte_flow_shared_action_destroy(dev->port_id, s_act, error);
+    ovs_mutex_unlock(&dev->mutex);
+    return ret;
+}
+
+int
+netdev_dpdk_rte_flow_shared_action_query(struct netdev *netdev,
+                                         struct rte_flow_shared_action *s_act,
+                                         void *data,
+                                         struct rte_flow_error *error)
+{
+    struct netdev_dpdk *dev;
+    int ret;
+
+    if (!is_dpdk_class(netdev->netdev_class)) {
+        return -1;
+    }
+
+    dev = netdev_dpdk_cast(netdev);
+    ovs_mutex_lock(&dev->mutex);
+    ret = rte_flow_shared_action_query(dev->port_id, s_act, data, error);
+    ovs_mutex_unlock(&dev->mutex);
+    return ret;
+}
+
 #define NETDEV_DPDK_CLASS_COMMON                            \
     .is_pmd = true,                                         \
     .alloc = netdev_dpdk_alloc,                             \
