@@ -47,7 +47,8 @@ ovs_pyfiles = \
 EXTRA_DIST += \
 	python/build/__init__.py \
 	python/build/nroff.py \
-	python/build/soutil.py
+	python/build/soutil.py \
+	python/build/pkgcfg.py
 
 # PyPI support.
 EXTRA_DIST += \

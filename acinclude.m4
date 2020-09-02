@@ -334,8 +334,10 @@ dnl
 dnl Configure DPDK source tree
 AC_DEFUN([OVS_CHECK_DPDK], [
   AC_ARG_WITH([dpdk],
-              [AC_HELP_STRING([--with-dpdk=/path/to/dpdk],
-                              [Specify the DPDK build directory])],
+              [AC_HELP_STRING([--with-dpdk=static|shared|/path/to/dpdk],
+                              [Specify "static" or "shared" depending on the
+                              DPDK libraries to use only if built using Meson
+                              OR the DPDK build directory in case of Make])],
               [have_dpdk=true])
 
   AC_MSG_CHECKING([whether dpdk is enabled])
@@ -345,13 +347,24 @@ AC_DEFUN([OVS_CHECK_DPDK], [
   else
     AC_MSG_RESULT([yes])
     case "$with_dpdk" in
-      yes)
+      "shared" | "static" | "yes")
         DPDK_AUTO_DISCOVER="true"
-        PKG_CHECK_MODULES_STATIC([DPDK], [libdpdk], [
-            DPDK_INCLUDE="$DPDK_CFLAGS"
-            DPDK_LIB="$DPDK_LIBS"], [
-            DPDK_INCLUDE="-I/usr/local/include/dpdk -I/usr/include/dpdk"
-            DPDK_LIB="-ldpdk"])
+        case "$with_dpdk" in
+          "shared" | "yes")
+             PKG_CHECK_MODULES([DPDK], [libdpdk], [
+                 DPDK_INCLUDE="$DPDK_CFLAGS"
+                 DPDK_LIB="$DPDK_LIBS"], [
+                 DPDK_INCLUDE="-I/usr/local/include/dpdk -I/usr/include/dpdk"
+                 DPDK_LIB="-ldpdk"])
+                 ;;
+           "static")
+             PKG_CHECK_MODULES_STATIC([DPDK], [libdpdk], [
+                 DPDK_INCLUDE="$DPDK_CFLAGS"
+                 DPDK_LIB="$DPDK_LIBS"], [
+                 DPDK_INCLUDE="-I/usr/local/include/dpdk -I/usr/include/dpdk"
+                 DPDK_LIB="-ldpdk"])
+                ;;
+        esac
         ;;
       *)
         DPDK_AUTO_DISCOVER="false"
@@ -428,8 +441,9 @@ AC_DEFUN([OVS_CHECK_DPDK], [
       [AC_MSG_RESULT([no])
        if test "$DPDK_AUTO_DISCOVER" = "true"; then
          AC_MSG_ERROR(m4_normalize([
-            Could not find DPDK library in default search path, Use --with-dpdk
-            to specify the DPDK library installed in non-standard location]))
+            Could not find DPDK library in default search path, update
+            PKG_CONFIG_PATH for pkg-config to find the .pc file in
+            non-standard location]))
        else
          AC_MSG_ERROR([Could not find DPDK libraries in $DPDK_LIB_DIR])
        fi
@@ -455,10 +469,12 @@ AC_DEFUN([OVS_CHECK_DPDK], [
     # OTOH newer versions of dpdk pkg-config (generated with Meson)
     # will already have flagged just the right set of libs with
     # --whole-archive - in those cases do not wrap it once more.
-    case "$DPDK_LIB" in
-      *whole-archive*) DPDK_vswitchd_LDFLAGS=$DPDK_LIB;;
-      *) DPDK_vswitchd_LDFLAGS=-Wl,--whole-archive,$DPDK_LIB,--no-whole-archive
-    esac
+    if [[ "$pkg_failed" != "no" ]];then
+      DPDK_vswitchd_LDFLAGS=-Wl,--whole-archive,$DPDK_LIB,--no-whole-archive
+    else
+      DPDK_vswitchd_LDFLAGS=`python3 ${srcdir}/python/build/pkgcfg.py $DPDK_LIB`
+    fi
+
     AC_SUBST([DPDK_vswitchd_LDFLAGS])
     AC_DEFINE([DPDK_NETDEV], [1], [System uses the DPDK module.])
   fi
