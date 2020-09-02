@@ -8,6 +8,7 @@ v2.14.1 - xx xxx xxxx
      * Add hardware offload support VXLAN vports.
      * 'dpdkvdpa' port type.
      * Add hardware offload support for CT flows.
+     * Removed support for vhost-user dequeue zero-copy.
    - 'ovs-appctl dpctl/dump-conntrack' can now show the offloaded status
      for CT flows per direction.
 
