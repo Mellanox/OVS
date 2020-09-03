@@ -1395,6 +1395,177 @@ disassociate_flow_id(uint32_t flow_id)
     return disassociate_id_data(&flow_miss_ctx_md, flow_id);
 }
 
+#define MAX_DEVARGS_LEN 64
+struct shared_age_ctx_data {
+    char devargs[MAX_DEVARGS_LEN];
+    struct rte_flow_shared_action *shared_action;
+};
+
+static struct ds *
+dump_shared_age_ctx(struct ds *s, void *data)
+{
+    struct shared_age_ctx_data *shared_age_ctx_data =
+        (struct shared_age_ctx_data *) data;
+
+    ds_put_format(s, "devargs=%s, shared_action=%p",
+                  shared_age_ctx_data->devargs,
+                  shared_age_ctx_data->shared_action);
+    return s;
+}
+
+static struct context_metadata shared_age_ctx_md = {
+    .name = "shared_age_ctx",
+    .dump_context_data = dump_shared_age_ctx,
+    .maps_lock = OVS_MUTEX_INITIALIZER,
+    .associated_i2d_map = CMAP_INITIALIZER,
+    .has_associated_map = true,
+    .data_size = sizeof(struct shared_age_ctx_data),
+};
+
+static struct ds *
+dump_shared_age_id(struct ds *s, void *data)
+{
+    uint32_t shared_age_id = *(uint32_t *) data;
+
+    ds_put_format(s, "shared_age_id=%d", shared_age_id);
+    return s;
+}
+
+#define MIN_SHARED_AGE_ID     1
+#define MAX_SHARED_AGE_ID     (UINT32_MAX - 1)
+
+static struct seq_pool *shared_age_id_pool = NULL;
+
+static uint32_t
+shared_age_id_alloc(void *arg)
+{
+    static struct ovsthread_once shared_age_id_init = OVSTHREAD_ONCE_INITIALIZER;
+    struct shared_age_ctx_data shared_age_ctx_data;
+    unsigned int tid = netdev_offload_thread_id();
+    const char *devargs = (const char *) arg;
+    struct rte_flow_action_age age_conf = {
+        .timeout = 0xFFFFFF,
+    };
+    struct context_data shared_age_ctx;
+    struct rte_flow_action action = {
+        .type = RTE_FLOW_ACTION_TYPE_AGE,
+        .conf = &age_conf,
+    };
+    struct rte_flow_error error;
+    uint32_t shared_age_id;
+    struct netdev *netdev;
+
+    if (ovsthread_once_start(&shared_age_id_init)) {
+        shared_age_id_pool = seq_pool_create(netdev_offload_thread_nb(),
+                                             MIN_SHARED_AGE_ID,
+                                             MAX_SHARED_AGE_ID);
+        ovsthread_once_done(&shared_age_id_init);
+    }
+    if (!seq_pool_new_id(shared_age_id_pool, tid, &shared_age_id)) {
+        return 0;
+    }
+    strncpy(shared_age_ctx_data.devargs, devargs,
+            sizeof shared_age_ctx_data.devargs);
+    netdev = netdev_dpdk_get_netdev_by_devargs(devargs);
+    shared_age_ctx_data.shared_action =
+        netdev_dpdk_rte_flow_shared_action_create(netdev, &action, &error);
+    if (!shared_age_ctx_data.shared_action) {
+        goto shared_action_create_err;
+    }
+    shared_age_ctx.data = &shared_age_ctx_data;
+    shared_age_ctx.id = shared_age_id;
+    if (associate_id_data(&shared_age_ctx_md, &shared_age_ctx)) {
+        goto associate_err;
+    }
+    netdev_close(netdev);
+    return shared_age_id;
+
+associate_err:
+    netdev_dpdk_rte_flow_shared_action_destroy
+        (netdev, shared_age_ctx_data.shared_action, &error);
+shared_action_create_err:
+    netdev_close(netdev);
+    seq_pool_free_id(shared_age_id_pool, tid, shared_age_id);
+    return 0;
+}
+
+static void
+shared_age_id_free(const void *arg OVS_UNUSED, uint32_t shared_age_id)
+{
+    struct shared_age_ctx_data shared_age_ctx_data;
+    unsigned int tid = netdev_offload_thread_id();
+    struct rte_flow_error error;
+    struct netdev *netdev;
+
+    seq_pool_free_id(shared_age_id_pool, tid, shared_age_id);
+    if (get_context_data_by_id(&shared_age_ctx_md, shared_age_id,
+                               &shared_age_ctx_data)) {
+        return;
+    }
+
+    netdev = netdev_dpdk_get_netdev_by_devargs(shared_age_ctx_data.devargs);
+    if (!netdev) {
+        return;
+    }
+    netdev_dpdk_rte_flow_shared_action_destroy(netdev,
+                                               shared_age_ctx_data.shared_action,
+                                               &error);
+    netdev_close(netdev);
+    disassociate_id_data(&shared_age_ctx_md, shared_age_id);
+}
+
+static struct context_metadata shared_age_id_md = {
+    .name = "shared_age_id",
+    .dump_context_data = dump_shared_age_id,
+    .maps_lock = OVS_MUTEX_INITIALIZER,
+    .d2i_map = CMAP_INITIALIZER,
+    .i2d_map = CMAP_INITIALIZER,
+    .id_alloc = shared_age_id_alloc,
+    .id_free = shared_age_id_free,
+    .data_size = sizeof(uint32_t),
+};
+
+OVS_UNUSED
+static int
+get_shared_age_id(struct netdev *netdev,
+                  uint32_t app_counter_id,
+                  uint32_t *shared_age_id,
+                  struct rte_flow_shared_action **shared_action)
+{
+    const char *devargs = netdev_dpdk_get_port_devargs(netdev);
+    struct shared_age_ctx_data shared_age_ctx_data;
+    struct context_data shared_age_id_ctx = {
+        .data = &app_counter_id,
+    };
+    int ret;
+
+    if (get_context_data_id_by_data(&shared_age_id_md, &shared_age_id_ctx,
+                                    CONST_CAST(void *, devargs),
+                                    shared_age_id)) {
+        return -1;
+    }
+
+    ret = get_context_data_by_id(&shared_age_ctx_md, *shared_age_id,
+                                 &shared_age_ctx_data);
+    if (ret) {
+        goto out;
+    }
+
+    *shared_action = shared_age_ctx_data.shared_action;
+out:
+    if (ret) {
+        put_context_data_by_id(&shared_age_id_md, devargs, *shared_age_id);
+    }
+    return 0;
+}
+
+OVS_UNUSED
+static void
+put_shared_age_id(uint32_t shared_age_id)
+{
+    put_context_data_by_id(&shared_age_id_md, NULL, shared_age_id);
+}
+
 static void
 put_action_resources(struct netdev *netdev,
                      struct act_resources *act_resources)
