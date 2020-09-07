@@ -273,6 +273,7 @@ struct tcf_id {
     uint32_t chain;
     uint16_t prio;
     uint32_t handle;
+    uint32_t sflow_group_id;
 };
 
 static inline struct tcf_id
