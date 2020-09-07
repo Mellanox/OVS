@@ -212,6 +212,8 @@ void netdev_offload_flow_mark_free(uint32_t mark);
 
 extern bool netdev_offload_ct_on_ct_nat;
 
+const struct dpif_offload_sflow_attr *dpif_offload_sflow_attr_find(uint32_t id);
+
 #ifdef  __cplusplus
 }
 #endif
