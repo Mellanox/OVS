@@ -28,6 +28,14 @@ for dir in "$sbindir" "$bindir" /sbin /bin /usr/sbin /usr/bin; do
 done
 
 insert_mods () {
+    # Try loading psample kernel module.
+    modinfo psample > /dev/null 2>&1
+    if test $? = 0; then
+        action "Inserting psample module" modprobe psample
+    else
+        log_warning_msg "No psample module, can't offload sFlow action"
+    fi
+
     # Try loading openvswitch kernel module.
     action "Inserting openvswitch module" modprobe openvswitch
 }
@@ -94,6 +102,12 @@ remove_kmods() {
     fi
     if test -e /sys/module/vxlan; then
         action "Forcing removal of vxlan module" rmmod vxlan
+    fi
+    if test -e /sys/module/act_sample; then
+        action "Forcing removal of act_sample module" rmmod act_sample
+    fi
+    if test -e /sys/module/psample; then
+        action "Forcing removal of psample module" rmmod psample
     fi
 }
 
