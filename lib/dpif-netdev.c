@@ -2689,11 +2689,35 @@ dp_netdev_alloc_flow_offload(struct dp_netdev_pmd_thread *pmd,
 }
 
 static void
-dp_netdev_free_flow_offload(struct dp_flow_offload_item *offload)
+dp_netdev_flow_offload_free(struct dp_offload_thread_item *offload_item)
 {
-    dp_netdev_flow_unref(offload->flow);
+    struct dp_flow_offload_item *flow_offload =
+                                            &offload_item->flow_offload_item;
 
-    free(offload->actions);
+    free(flow_offload->actions);
+    free(offload_item);
+}
+
+static void
+dp_netdev_ct_offload_free(struct dp_offload_thread_item *offload_item)
+{
+    free(offload_item);
+}
+
+static void
+dp_netdev_offload_item_unref(struct dp_offload_thread_item *offload_item)
+{
+    switch (offload_item->type) {
+    case DP_FLOW_OFFLOAD_ITEM:
+        dp_netdev_flow_unref(offload_item->flow_offload_item.flow);
+        ovsrcu_postpone(dp_netdev_flow_offload_free, offload_item);
+        break;
+    case DP_CT_OFFLOAD_ITEM:
+        ovsrcu_postpone(dp_netdev_ct_offload_free, offload_item);
+        break;
+    default:
+        OVS_NOT_REACHED();
+    }
 }
 
 static void
@@ -3191,7 +3215,6 @@ dp_netdev_flow_offload_main(void *data OVS_UNUSED)
                 default:
                     OVS_NOT_REACHED();
                 }
-                dp_netdev_free_flow_offload(dp_offload);
                 VLOG_DBG("%s to %s netdev flow "UUID_FMT,
                          ret == 0 ? "succeed" : "failed", op,
                          UUID_ARGS(
@@ -3201,7 +3224,8 @@ dp_netdev_flow_offload_main(void *data OVS_UNUSED)
             } else {
                 OVS_NOT_REACHED();
             }
-            free(offload_item);
+
+            dp_netdev_offload_item_unref(offload_item);
 
             /* Do RCU synchronization at fixed interval. */
             if (time_msec() > next_rcu_quiesce) {
