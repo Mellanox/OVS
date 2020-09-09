@@ -630,6 +630,17 @@ struct dpif_class {
      * sufficient to store BOND_BUCKETS number of elements. */
     int (*bond_stats_get)(struct dpif *dpif, uint32_t bond_id,
                           uint64_t *n_bytes);
+
+    /* Check if psample thread should be created or not */
+    bool (*psample_enabled)(const struct dpif *dpif);
+
+    /* psample thread was created. Poll psample netlink to receive sampled
+     * packets */
+    int (*psample_poll)(const struct dpif *dpif,
+                        struct dpif_upcall_psample *dupcall);
+
+    /* Arranges for the poll loop to wake up when 'psample_poll' returns */
+    void (*psample_poll_wait)(const struct dpif *dpif);
 };
 
 extern const struct dpif_class dpif_netlink_class;

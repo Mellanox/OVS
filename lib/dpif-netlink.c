@@ -4094,6 +4094,9 @@ const struct dpif_class dpif_netlink_class = {
     NULL,                       /* bond_add */
     NULL,                       /* bond_del */
     NULL,                       /* bond_stats_get */
+    NULL,                       /* psample_enabled */
+    NULL,                       /* psample_poll */
+    NULL,                       /* psample_poll_wait */
 };
 
 static int

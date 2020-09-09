@@ -839,6 +839,33 @@ struct dpif_upcall {
     struct nlattr *actions;    /* Argument to OVS_ACTION_ATTR_USERSPACE. */
 };
 
+/* When offloading sample action to TC, userspace creates a unique ID
+ * to map sFlow action and tunnel info and passes this ID to kernel instead
+ * of the sFlow info. psample will send this ID and sampled packet to
+ * userspace. Using the ID, userspace can recover the sFlow info and send
+ * sampled packet to the right sFlow monitoring host.
+ */
+struct dpif_sflow_attr {
+    const struct nlattr *sflow; /* sFlow action */
+    size_t sflow_len;           /* Length of 'sflow' in bytes. */
+
+    void *userdata;             /* struct user_action_cookie */
+    size_t userdata_len;        /* struct user_action_cookie length */
+
+    struct flow_tnl *tunnel;    /* Tunnel info */
+};
+
+/* A sampled packet passed up from driver to userspace.
+ *
+ * After offloading sample action to TC, driver will send sampled packets
+ * to userspace using psample.
+ */
+struct dpif_upcall_psample {
+    struct dp_packet packet;    /* packet data */
+    uint32_t iifindex;          /* input ifindex */
+    const struct dpif_sflow_attr *sflow_attr;
+};
+
 /* A callback to notify higher layer of dpif about to be purged, so that
  * higher layer could try reacting to this (e.g. grabbing all flow stats
  * before they are gone).  This function is currently implemented only by
@@ -916,6 +943,11 @@ int dpif_bond_add(struct dpif *, uint32_t bond_id, odp_port_t *slave_map);
 int dpif_bond_del(struct dpif *, uint32_t bond_id);
 int dpif_bond_stats_get(struct dpif *, uint32_t bond_id, uint64_t *n_bytes);
 bool dpif_supports_lb_output_action(const struct dpif *);
+
+/* psample */
+int dpif_psample_poll(struct dpif *, struct dpif_upcall_psample *);
+void dpif_psample_poll_wait(struct dpif *);
+bool dpif_psample_enabled(struct dpif *);
 
 
 /* Miscellaneous. */

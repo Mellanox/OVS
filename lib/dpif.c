@@ -2026,3 +2026,27 @@ dpif_bond_stats_get(struct dpif *dpif, uint32_t bond_id,
            ? dpif->dpif_class->bond_stats_get(dpif, bond_id, n_bytes)
            : EOPNOTSUPP;
 }
+
+int
+dpif_psample_poll(struct dpif *dpif, struct dpif_upcall_psample *dupcall)
+{
+    return dpif->dpif_class->psample_poll
+           ? dpif->dpif_class->psample_poll(dpif, dupcall)
+           : EOPNOTSUPP;
+}
+
+void
+dpif_psample_poll_wait(struct dpif *dpif)
+{
+    if (dpif->dpif_class->psample_poll_wait) {
+        dpif->dpif_class->psample_poll_wait(dpif);
+    }
+}
+
+bool
+dpif_psample_enabled(struct dpif *dpif)
+{
+    return dpif->dpif_class->psample_enabled
+           ? dpif->dpif_class->psample_enabled(dpif)
+           : false;
+}
