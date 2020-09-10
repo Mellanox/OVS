@@ -293,6 +293,8 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/sat-math.h \
 	lib/seq.c \
 	lib/seq.h \
+	lib/seq-pool.c \
+	lib/seq-pool.h \
 	lib/sha1.c \
 	lib/sha1.h \
 	lib/shash.c \
