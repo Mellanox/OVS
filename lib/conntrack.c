@@ -1540,8 +1540,22 @@ e2e_cache_trace_add_ct(struct conntrack *ct,
     conntrack_offload_fill_item_add(&item, conn, dir, mark, label);
     item.odp_port = p->md.in_port.odp_port;
 
+    if (conn->nat_conn &&
+        conn->nat_conn->offloads.dir_info[dir].dp) {
+        conn = conn->nat_conn;
+    } else if (conn->master_conn &&
+               conn->master_conn->offloads.dir_info[dir].dp) {
+        conn = conn->master_conn;
+    }
+
     p->e2e_trace_ct_ufids |= 1 << e2e_trace_size;
-    ct->offload_class->conn_get_ufid(&item, &p->e2e_trace[e2e_trace_size]);
+    if (!conn->offloads.dir_info[dir].e2e_flow) {
+        conn->offloads.dir_info[dir].e2e_flow = true;
+        ct->offload_class->conn_get_ufid(&item,
+                                         &conn->offloads.dir_info[dir].ufid);
+        ct->offload_class->conn_e2e_add(&item);
+    }
+    p->e2e_trace[e2e_trace_size] = conn->offloads.dir_info[dir].ufid;
     p->e2e_trace_size = e2e_trace_size + 1;
 }
 #else
