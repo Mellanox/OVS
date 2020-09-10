@@ -555,6 +555,17 @@ ovs_u128_and(const ovs_u128 a, const ovs_u128 b)
     return dst;
 }
 
+static inline ovs_u128
+ovs_u128_xor(const ovs_u128 a, const ovs_u128 b)
+{
+    ovs_u128 dst;
+
+    dst.u64.hi = a.u64.hi ^ b.u64.hi;
+    dst.u64.lo = a.u64.lo ^ b.u64.lo;
+
+    return dst;
+}
+
 static inline bool
 ovs_be128_is_superset(ovs_be128 super, ovs_be128 sub)
 {
