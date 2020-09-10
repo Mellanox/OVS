@@ -767,3 +767,14 @@ netdev_set_flow_api_enabled(const struct smap *ovs_other_config)
         }
     }
 }
+
+const struct dpif_sflow_attr *
+netdev_sflow_attr_get(struct netdev *netdev, uint32_t gid)
+{
+    const struct netdev_flow_api *flow_api =
+        ovsrcu_get(const struct netdev_flow_api *, &netdev->flow_api);
+
+    return (flow_api && flow_api->sflow_attr_get)
+           ? flow_api->sflow_attr_get(gid)
+           : NULL;
+}

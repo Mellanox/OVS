@@ -92,6 +92,11 @@ struct netdev_flow_api {
     /* Initializies the netdev flow api.
      * Return 0 if successful, otherwise returns a positive errno value. */
     int (*init_flow_api)(struct netdev *);
+
+    /* Query sFlow attribute by group ID.
+     *
+     * On success returns a const pointer, on failure returns NULL */
+    const struct dpif_sflow_attr *(*sflow_attr_get)(uint32_t gid);
 };
 
 int netdev_register_flow_api_provider(const struct netdev_flow_api *);
