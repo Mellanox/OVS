@@ -76,6 +76,7 @@ struct ct_dir_info {
     void *dp;
     int status;
     uint8_t pkt_ct_state;
+    bool e2e_flow;
 };
 
 enum ct_offload_flag {
