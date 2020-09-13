@@ -4582,6 +4582,61 @@ netdev_offload_dpdk_flow_dump_destroy(struct netdev_flow_dump *dump)
     return 0;
 }
 
+static int
+netdev_offload_dpdk_counter_query(struct netdev *netdev OVS_UNUSED,
+                                  uint32_t app_counter_id,
+                                  long long now,
+                                  long long prev_now,
+                                  struct dpif_flow_stats *stats)
+{
+    struct shared_age_ctx_data shared_age_ctx_data;
+    struct context_data shared_age_id_ctx = {
+        .data = &app_counter_id,
+    };
+    struct rte_flow_query_age query_age;
+    struct netdev *shared_age_netdev;
+    struct rte_flow_error error;
+    uint32_t shared_age_id;
+    int ret;
+
+    memset(stats, 0, sizeof *stats);
+    if (get_context_data_id_by_data(&shared_age_id_md, &shared_age_id_ctx,
+                                    CONST_CAST(void *,
+                                               shared_age_ctx_data.devargs),
+                                    &shared_age_id)) {
+        VLOG_ERR_RL(&rl, "Could not get shared age id for "
+                    "app_counter_id=0x%08x", app_counter_id);
+        return -1;
+    }
+    ret = get_context_data_by_id(&shared_age_ctx_md, shared_age_id,
+                                 &shared_age_ctx_data);
+    if (ret) {
+        VLOG_ERR_RL(&rl, "Could not find data for shared_age_id=%d",
+                    shared_age_id);
+        goto err;
+    }
+    shared_age_netdev =
+        netdev_dpdk_get_netdev_by_devargs(shared_age_ctx_data.devargs);
+    if (!shared_age_netdev) {
+        VLOG_ERR_RL(&rl, "Could not get netdev for devargs=%s",
+                    shared_age_ctx_data.devargs);
+        ret = -1;
+        goto err;
+    }
+    ret = netdev_dpdk_rte_flow_shared_action_query
+        (shared_age_netdev, shared_age_ctx_data.shared_action, &query_age,
+         &error);
+    if (!ret && query_age.sec_since_last_hit_valid &&
+        (query_age.sec_since_last_hit * 1000) <= (now - prev_now)) {
+        stats->used = now;
+    }
+    netdev_close(shared_age_netdev);
+err:
+    put_context_data_by_id(&shared_age_id_md, shared_age_ctx_data.devargs,
+                           shared_age_id);
+    return ret;
+}
+
 const struct netdev_flow_api netdev_offload_dpdk = {
     .type = "dpdk_flow_api",
     .flow_put = netdev_offload_dpdk_flow_put,
@@ -4594,4 +4649,5 @@ const struct netdev_flow_api netdev_offload_dpdk = {
     .hw_offload_stats_get = netdev_offload_dpdk_hw_offload_stats_get,
     .flow_dump_create = netdev_offload_dpdk_flow_dump_create,
     .flow_dump_destroy = netdev_offload_dpdk_flow_dump_destroy,
+    .counter_query = netdev_offload_dpdk_counter_query,
 };
