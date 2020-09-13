@@ -454,6 +454,21 @@ netdev_uninit_flow_api(struct netdev *netdev)
     ovs_refcount_unref(&rfa->refcnt);
 }
 
+int
+netdev_counter_query(struct netdev *netdev,
+                     uint32_t counter,
+                     long long now,
+                     long long prev_now,
+                     struct dpif_flow_stats *stats)
+{
+    const struct netdev_flow_api *flow_api =
+        ovsrcu_get(const struct netdev_flow_api *, &netdev->flow_api);
+
+    return (flow_api && flow_api->counter_query)
+           ? flow_api->counter_query(netdev, counter, now, prev_now, stats)
+           : EOPNOTSUPP;
+}
+
 uint32_t
 netdev_get_block_id(struct netdev *netdev)
 {
