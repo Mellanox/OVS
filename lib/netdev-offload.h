@@ -131,6 +131,8 @@ int netdev_flow_del(struct netdev *, const ovs_u128 *,
                     struct dpif_flow_stats *);
 int netdev_hw_offload_stats_get(struct netdev *, uint64_t *counters);
 int netdev_init_flow_api(struct netdev *);
+int netdev_counter_query(struct netdev *, uint32_t, long long, long long,
+                         struct dpif_flow_stats *);
 void netdev_uninit_flow_api(struct netdev *);
 uint32_t netdev_get_block_id(struct netdev *);
 int netdev_get_hw_info(struct netdev *, int);
