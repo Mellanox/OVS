@@ -1538,6 +1538,7 @@ e2e_cache_trace_add_ct(struct conntrack *ct,
 
     dir = ct_get_packet_dir(reply);
     conntrack_offload_fill_item_add(&item, conn, dir, mark, label);
+    item.odp_port = p->md.in_port.odp_port;
 
     p->e2e_trace_ct_ufids |= 1 << e2e_trace_size;
     ct->offload_class->conn_get_ufid(&item, &p->e2e_trace[e2e_trace_size]);
