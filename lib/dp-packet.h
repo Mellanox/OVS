@@ -122,7 +122,8 @@ enum e2e_cache_trace_flags {
 
 OVS_PACKED(
 struct e2e_cache_trace_info {
-    uint32_t num_elements;
+    uint16_t num_elements;
+    uint16_t e2e_trace_ct_ufids;
     odp_port_t port;
     ovs_u128 ufids[E2E_CACHE_MAX_TRACE];
 });
