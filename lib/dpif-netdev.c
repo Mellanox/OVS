@@ -444,6 +444,8 @@ struct dp_flow_offload_item {
     struct match match;
     struct nlattr *actions;
     size_t actions_len;
+    uint32_t flows_counter;
+    uint32_t ct_counter;
 };
 
 union dp_offload_thread_data {
@@ -2970,6 +2972,8 @@ dp_netdev_flow_offload_put(struct dp_offload_thread_item *offload_item)
     }
     info.flow_mark = mark;
     info.is_e2e_cache_flow = offload->is_e2e_cache_flow;
+    info.flows_counter = offload->flows_counter;
+    info.ct_counter = offload->ct_counter;
 
     port = netdev_ports_get(in_port, dpif_type_str);
     if (!port) {
@@ -8210,7 +8214,8 @@ e2e_cache_merged_flow_offload_put(struct dp_netdev *dp,
 
     memcpy(flow_offload->actions, mflow->actions, mflow->actions_size);
     flow_offload->actions_len = mflow->actions_size;
-
+    offload_item->data->flow_offload.flows_counter = mflow->flows_counter;
+    offload_item->data->flow_offload.ct_counter = mflow->ct_counter;
     err = dp_netdev_flow_offload_put(offload_item);
     free(flow_offload->actions);
     free(offload_item);
