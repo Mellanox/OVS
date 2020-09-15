@@ -116,10 +116,8 @@ enum dp_packet_offload_mask {
 #define E2E_CACHE_MAX_TRACE   (10u)
 
 enum e2e_cache_trace_flags {
-    E2E_CACHE_TRACE_FLAG_NONE        = 0x0u,
-    E2E_CACHE_TRACE_FLAG_TNL_POP     = 0x1u,
-    E2E_CACHE_TRACE_FLAG_CT          = 0x2u,
-    E2E_CACHE_TRACE_FLAG_OVERFLOW    = 0x4u
+    E2E_CACHE_TRACE_FLAG_TNL_POP     = 1 << 0,
+    E2E_CACHE_TRACE_FLAG_OVERFLOW    = 1 << 1,
 };
 
 OVS_PACKED(
@@ -172,8 +170,10 @@ struct dp_packet {
         uint64_t data[DP_PACKET_CONTEXT_SIZE / 8];
     };
 #ifdef E2E_CACHE_ENABLED
+BUILD_ASSERT_DECL(E2E_CACHE_MAX_TRACE <= 16);
     uint32_t   e2e_trace_size;
-    uint32_t   e2e_trace_flags;
+    uint16_t   e2e_trace_flags;
+    uint16_t   e2e_trace_ct_ufids;
     odp_port_t e2e_trace_port;
     ovs_u128   e2e_trace[E2E_CACHE_MAX_TRACE];
 #endif

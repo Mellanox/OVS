@@ -7862,7 +7862,8 @@ static inline void
 e2e_cache_trace_init(struct dp_packet *p)
 {
     p->e2e_trace_size = 0;
-    p->e2e_trace_flags = E2E_CACHE_TRACE_FLAG_NONE;
+    p->e2e_trace_flags = 0;
+    p->e2e_trace_ct_ufids = 0;
     p->e2e_trace_port = ODPP_NONE;
 }
 
@@ -8427,7 +8428,7 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
             packet->e2e_trace_flags &= ~E2E_CACHE_TRACE_FLAG_TNL_POP;
         }
         /* Send only traces for packet that passed conntrack */
-        if (!(packet->e2e_trace_flags & E2E_CACHE_TRACE_FLAG_CT)) {
+        if (!packet->e2e_trace_ct_ufids) {
             atomic_count_inc64(&e2e_stats.discarded_msgs);
             continue;
         }
