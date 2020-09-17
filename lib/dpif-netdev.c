@@ -438,7 +438,7 @@ struct dp_flow_offload_item {
     size_t actions_len;
 };
 
-struct dp_offload_item {
+struct dp_offload_thread_item {
     struct ovs_list node;
     int type;
     struct dp_netdev *dp;
@@ -448,7 +448,7 @@ struct dp_offload_item {
     };
 };
 
-struct dp_flow_offload {
+struct dp_offload_thread {
     struct ovs_mutex mutex;
     struct ovs_list list;
     uint64_t enqueued_item;
@@ -456,9 +456,9 @@ struct dp_flow_offload {
     pthread_cond_t cond;
 };
 
-static struct dp_flow_offload dp_flow_offload = {
+static struct dp_offload_thread dp_offload_thread = {
     .mutex = OVS_MUTEX_INITIALIZER,
-    .list  = OVS_LIST_INITIALIZER(&dp_flow_offload.list),
+    .list  = OVS_LIST_INITIALIZER(&dp_offload_thread.list),
     .enqueued_item = 0,
     .ct_connections = 0,
 };
@@ -945,7 +945,7 @@ static void queue_netdev_flow_del(struct dp_netdev_pmd_thread *pmd,
 static void
 dp_netdev_append_ct_offload(struct ct_flow_offload_item *offload)
 {
-    struct dp_offload_item *offload_item;
+    struct dp_offload_thread_item *offload_item;
 
     if (!netdev_is_flow_api_enabled()) {
         return;
@@ -957,11 +957,11 @@ dp_netdev_append_ct_offload(struct ct_flow_offload_item *offload)
            sizeof offload_item->ct_offload_item);
     offload_item->dp = offload->dp;
 
-    ovs_mutex_lock(&dp_flow_offload.mutex);
-    ovs_list_push_back(&dp_flow_offload.list, &offload_item->node);
-    dp_flow_offload.enqueued_item++;
-    xpthread_cond_signal(&dp_flow_offload.cond);
-    ovs_mutex_unlock(&dp_flow_offload.mutex);
+    ovs_mutex_lock(&dp_offload_thread.mutex);
+    ovs_list_push_back(&dp_offload_thread.list, &offload_item->node);
+    dp_offload_thread.enqueued_item++;
+    xpthread_cond_signal(&dp_offload_thread.cond);
+    ovs_mutex_unlock(&dp_offload_thread.mutex);
 }
 
 static void
@@ -2595,7 +2595,7 @@ flow_mark_has_no_ref(uint32_t mark)
 }
 
 static int
-mark_to_flow_disassociate(struct dp_offload_item *offload_item)
+mark_to_flow_disassociate(struct dp_offload_thread_item *offload_item)
 {
     const char *dpif_type_str = dpif_normalize_type(offload_item->dp->class->type);
     struct dp_netdev_flow *flow = offload_item->flow_offload_item.flow;
@@ -2676,8 +2676,8 @@ dp_netdev_alloc_flow_offload(struct dp_netdev_pmd_thread *pmd,
                              struct dp_netdev_flow *flow,
                              int op)
 {
+    struct dp_offload_thread_item *offload_item;
     struct dp_flow_offload_item *offload;
-    struct dp_offload_item *offload_item;
 
     offload_item = xzalloc(sizeof *offload_item);
     offload_item->dp = pmd->dp;
@@ -2703,18 +2703,18 @@ dp_netdev_free_flow_offload(struct dp_flow_offload_item *offload)
 static void
 dp_netdev_append_flow_offload(struct dp_flow_offload_item *offload)
 {
-    struct dp_offload_item *offload_item = CONTAINER_OF(offload,
-            struct dp_offload_item, flow_offload_item);
+    struct dp_offload_thread_item *offload_item = CONTAINER_OF(offload,
+            struct dp_offload_thread_item, flow_offload_item);
 
-    ovs_mutex_lock(&dp_flow_offload.mutex);
-    dp_flow_offload.enqueued_item++;
-    ovs_list_push_back(&dp_flow_offload.list, &offload_item->node);
-    xpthread_cond_signal(&dp_flow_offload.cond);
-    ovs_mutex_unlock(&dp_flow_offload.mutex);
+    ovs_mutex_lock(&dp_offload_thread.mutex);
+    dp_offload_thread.enqueued_item++;
+    ovs_list_push_back(&dp_offload_thread.list, &offload_item->node);
+    xpthread_cond_signal(&dp_offload_thread.cond);
+    ovs_mutex_unlock(&dp_offload_thread.mutex);
 }
 
 static int
-dp_netdev_flow_offload_del(struct dp_offload_item *offload_item)
+dp_netdev_flow_offload_del(struct dp_offload_thread_item *offload_item)
 {
     return mark_to_flow_disassociate(offload_item);
 }
@@ -2731,7 +2731,7 @@ dp_netdev_flow_offload_del(struct dp_offload_item *offload_item)
  * valid, thus only item 2 needed.
  */
 static int
-dp_netdev_flow_offload_put(struct dp_offload_item *offload_item)
+dp_netdev_flow_offload_put(struct dp_offload_thread_item *offload_item)
 {
     struct dp_flow_offload_item *offload = &offload_item->flow_offload_item;
     struct dp_netdev_flow *flow = offload->flow;
@@ -2958,7 +2958,7 @@ dp_netdev_create_ct_actions(struct ofpbuf *buf,
 }
 
 static int
-dp_netdev_ct_offload_add(struct dp_offload_item *offload_item, int dir)
+dp_netdev_ct_offload_add(struct dp_offload_thread_item *offload_item, int dir)
 {
     const char *dpif_type_str = dpif_normalize_type(offload_item->dp->class->type);
     struct ct_flow_offload_item offload = offload_item->ct_offload_item[dir];
@@ -3023,7 +3023,7 @@ dp_netdev_ct_offload_add(struct dp_offload_item *offload_item, int dir)
 }
 
 static int
-dp_netdev_ct_offload_del(struct dp_offload_item *offload_item, int dir)
+dp_netdev_ct_offload_del(struct dp_offload_thread_item *offload_item, int dir)
 {
     const char *dpif_type_str = dpif_normalize_type(offload_item->dp->class->type);
     struct ct_flow_offload_item offload = offload_item->ct_offload_item[dir];
@@ -3070,7 +3070,7 @@ dp_release_ctid(uint32_t ctid)
 }
 
 static void
-dp_netdev_ct_offload_handle(struct dp_offload_item *offload_item)
+dp_netdev_ct_offload_handle(struct dp_offload_thread_item *offload_item)
 {
     struct ct_flow_offload_item *ct_offload = offload_item->ct_offload_item;
     int ret[CT_DIR_NUM];
@@ -3110,9 +3110,9 @@ dp_netdev_ct_offload_handle(struct dp_offload_item *offload_item)
     if (!ret[CT_DIR_INIT] && !ret[CT_DIR_REP]) {
         if (ct_offload[CT_DIR_INIT].op ==
             DP_NETDEV_FLOW_OFFLOAD_OP_ADD) {
-            dp_flow_offload.ct_connections++;
+            dp_offload_thread.ct_connections++;
         } else {
-            dp_flow_offload.ct_connections--;
+            dp_offload_thread.ct_connections--;
         }
     }
     if (ct_offload[CT_DIR_INIT].op == DP_NETDEV_FLOW_OFFLOAD_OP_ADD &&
@@ -3129,23 +3129,23 @@ dp_netdev_ct_offload_handle(struct dp_offload_item *offload_item)
 static void *
 dp_netdev_flow_offload_main(void *data OVS_UNUSED)
 {
-    struct dp_offload_item *offload_item;
+    struct dp_offload_thread_item *offload_item;
     struct ovs_list *list;
     const char *op;
     int ret;
 
     for (;;) {
-        ovs_mutex_lock(&dp_flow_offload.mutex);
-        if (ovs_list_is_empty(&dp_flow_offload.list)) {
+        ovs_mutex_lock(&dp_offload_thread.mutex);
+        if (ovs_list_is_empty(&dp_offload_thread.list)) {
             ovsrcu_quiesce_start();
-            ovs_mutex_cond_wait(&dp_flow_offload.cond,
-                                &dp_flow_offload.mutex);
+            ovs_mutex_cond_wait(&dp_offload_thread.cond,
+                                &dp_offload_thread.mutex);
             ovsrcu_quiesce_end();
         }
-        dp_flow_offload.enqueued_item--;
-        list = ovs_list_pop_front(&dp_flow_offload.list);
-        offload_item = CONTAINER_OF(list, struct dp_offload_item, node);
-        ovs_mutex_unlock(&dp_flow_offload.mutex);
+        dp_offload_thread.enqueued_item--;
+        list = ovs_list_pop_front(&dp_offload_thread.list);
+        offload_item = CONTAINER_OF(list, struct dp_offload_thread_item, node);
+        ovs_mutex_unlock(&dp_offload_thread.mutex);
 
         if (offload_item->type == DP_FLOW_OFFLOAD_ITEM) {
             struct dp_flow_offload_item *dp_offload =
@@ -3194,7 +3194,7 @@ queue_netdev_flow_del(struct dp_netdev_pmd_thread *pmd,
     }
 
     if (ovsthread_once_start(&offload_thread_once)) {
-        xpthread_cond_init(&dp_flow_offload.cond, NULL);
+        xpthread_cond_init(&dp_offload_thread.cond, NULL);
         ovs_thread_create("hw_offload", dp_netdev_flow_offload_main, NULL);
         ovsthread_once_done(&offload_thread_once);
     }
@@ -3217,7 +3217,7 @@ queue_netdev_flow_put(struct dp_netdev_pmd_thread *pmd,
     }
 
     if (ovsthread_once_start(&offload_thread_once)) {
-        xpthread_cond_init(&dp_flow_offload.cond, NULL);
+        xpthread_cond_init(&dp_offload_thread.cond, NULL);
         ovs_thread_create("hw_offload", dp_netdev_flow_offload_main, NULL);
         ovsthread_once_done(&offload_thread_once);
     }
@@ -4649,10 +4649,10 @@ dpif_netdev_offload_stats_get(struct dpif *dpif,
     ovs_mutex_unlock(&dp->port_mutex);
 
     stats->counters[DP_NETDEV_HW_OFFLOADS_STATS_ENQUEUED].value =
-                                                 dp_flow_offload.enqueued_item;
+                                               dp_offload_thread.enqueued_item;
     stats->counters[DP_NETDEV_HW_OFFLOADS_STATS_INSERTED].value = nb_offloads;
     stats->counters[DP_NETDEV_HW_OFFLOADS_STATS_CT_CONNS].value =
-                                                dp_flow_offload.ct_connections;
+                                              dp_offload_thread.ct_connections;
 
     for (i = 0; i < ARRAY_SIZE(names); i++) {
         snprintf(stats->counters[i].name, sizeof(stats->counters[i].name),
