@@ -2398,7 +2398,7 @@ add_flow_pattern(struct flow_patterns *patterns, enum rte_flow_item_type type,
     patterns->cnt++;
 }
 
-static void
+static struct rte_flow_action *
 add_flow_action(struct flow_actions *actions, enum rte_flow_action_type type,
                 const void *conf)
 {
@@ -2417,6 +2417,7 @@ add_flow_action(struct flow_actions *actions, enum rte_flow_action_type type,
     actions->actions[cnt].type = type;
     actions->actions[cnt].conf = conf;
     actions->cnt++;
+    return &actions->actions[cnt];
 }
 
 static void
