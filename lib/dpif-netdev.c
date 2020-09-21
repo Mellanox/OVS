@@ -8876,6 +8876,7 @@ dp_netdev_e2e_cache_main(void *arg OVS_UNUSED)
         }
 
         free_cacheline(trace_msg);
+        ovsrcu_quiesce();
     }
 
     return NULL;
