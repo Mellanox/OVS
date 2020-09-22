@@ -33,7 +33,6 @@
 #include "openvswitch/dynamic-string.h"
 #include "fatal-signal.h"
 #include "hash.h"
-#include "id-pool.h"
 #include "openvswitch/list.h"
 #include "netdev-offload-provider.h"
 #include "netdev-provider.h"
@@ -44,6 +43,7 @@
 #include "openvswitch/ofp-print.h"
 #include "openvswitch/poll-loop.h"
 #include "seq.h"
+#include "seq-pool.h"
 #include "openvswitch/shash.h"
 #include "smap.h"
 #include "socket-util.h"
@@ -60,7 +60,7 @@ VLOG_DEFINE_THIS_MODULE(netdev_offload);
 
 
 static bool netdev_flow_api_enabled = false;
-static struct id_pool *mark_pool = NULL;
+static struct seq_pool *mark_pool = NULL;
 static struct ovs_mutex mark_pool_mutex = OVS_MUTEX_INITIALIZER;
 static bool e2e_cache_enabled = false;
 
@@ -359,10 +359,10 @@ do_mark_delayed_release(void)
         if (now < item->timestamp + DELAYED_RELEASE_TIMEOUT_MS) {
             break;
         }
+        ovs_list_remove(list);
+        seq_pool_free_id(mark_pool, 0, item->mark);
         VLOG_DBG("%s: mark=%d, timestamp=%llu, now=%llu", __func__, item->mark,
                  item->timestamp, now);
-        id_pool_free_id(mark_pool, item->mark);
-        ovs_list_remove(list);
         free(item);
     }
 }
@@ -375,11 +375,11 @@ netdev_offload_flow_mark_alloc(void)
     ovs_mutex_lock(&mark_pool_mutex);
     if (!mark_pool) {
         /* Haven't initiated yet, do it here */
-        mark_pool = id_pool_create(1, MAX_FLOW_MARK);
+        mark_pool = seq_pool_create(1, 1, MAX_FLOW_MARK);
     }
 
     do_mark_delayed_release();
-    if (id_pool_alloc_id(mark_pool, &mark)) {
+    if (seq_pool_new_id(mark_pool, 0, &mark)) {
         ovs_mutex_unlock(&mark_pool_mutex);
         return mark;
     }
