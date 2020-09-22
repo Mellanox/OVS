@@ -29,7 +29,7 @@
 #include "openvswitch/vlog.h"
 #include "packets.h"
 #include "uuid.h"
-#include "id-pool.h"
+#include "seq-pool.h"
 #include "odp-util.h"
 
 VLOG_DEFINE_THIS_MODULE(netdev_offload_dpdk);
@@ -684,7 +684,7 @@ dump_label_id(struct ds *s, void *data)
 #define MIN_LABEL_ID     1
 #define MAX_LABEL_ID     (reg_fields[REG_FIELD_CT_LABEL_ID].mask - 1)
 
-static struct id_pool *label_id_pool = NULL;
+static struct seq_pool *label_id_pool = NULL;
 
 static uint32_t
 label_id_alloc(void *arg OVS_UNUSED)
@@ -692,10 +692,9 @@ label_id_alloc(void *arg OVS_UNUSED)
     uint32_t label_id;
 
     if (!label_id_pool) {
-        /* if not yet initialized, do it here */
-        label_id_pool = id_pool_create(MIN_LABEL_ID, MAX_LABEL_ID);
+        label_id_pool = seq_pool_create(1, MIN_LABEL_ID, MAX_LABEL_ID);
     }
-    if (id_pool_alloc_id(label_id_pool, &label_id)) {
+    if (seq_pool_new_id(label_id_pool, 0, &label_id)) {
         return label_id;
     }
     return 0;
@@ -704,7 +703,7 @@ label_id_alloc(void *arg OVS_UNUSED)
 static void
 label_id_free(void *arg OVS_UNUSED, uint32_t label_id)
 {
-    id_pool_free_id(label_id_pool, label_id);
+    seq_pool_free_id(label_id_pool, 0, label_id);
 }
 
 static struct context_metadata label_id_md = {
@@ -746,7 +745,7 @@ dump_zone_id(struct ds *s, void *data)
 #define MIN_ZONE_ID     1
 #define MAX_ZONE_ID     reg_fields[REG_FIELD_CT_ZONE].mask
 
-static struct id_pool *zone_id_pool = NULL;
+static struct seq_pool *zone_id_pool = NULL;
 
 static uint32_t
 zone_id_alloc(void *arg OVS_UNUSED)
@@ -754,11 +753,9 @@ zone_id_alloc(void *arg OVS_UNUSED)
     uint32_t zone_id;
 
     if (!zone_id_pool) {
-        /* if not yet initialized, do it here */
-        zone_id_pool = id_pool_create(MIN_ZONE_ID, MAX_ZONE_ID);
+        zone_id_pool = seq_pool_create(1, MIN_ZONE_ID, MAX_ZONE_ID);
     }
-
-    if (id_pool_alloc_id(zone_id_pool, &zone_id)) {
+    if (seq_pool_new_id(zone_id_pool, 0, &zone_id)) {
         return zone_id;
     }
     return 0;
@@ -767,7 +764,7 @@ zone_id_alloc(void *arg OVS_UNUSED)
 static void
 zone_id_free(void *arg OVS_UNUSED, uint32_t zone_id)
 {
-    id_pool_free_id(zone_id_pool, zone_id);
+    seq_pool_free_id(zone_id_pool, 0, zone_id);
 }
 
 static struct context_metadata zone_id_md = {
@@ -801,7 +798,7 @@ put_zone_id(uint32_t zone_id)
 #define MAX_TABLE_ID     (UINT32_MAX - 2)
 #define MISS_TABLE_ID    (UINT32_MAX - 1)
 
-static struct id_pool *table_id_pool = NULL;
+static struct seq_pool *table_id_pool = NULL;
 static uint32_t
 table_id_alloc(void *arg OVS_UNUSED)
 {
@@ -809,10 +806,10 @@ table_id_alloc(void *arg OVS_UNUSED)
 
     if (!table_id_pool) {
         /* Haven't initiated yet, do it here */
-        table_id_pool = id_pool_create(MIN_TABLE_ID, MAX_TABLE_ID);
+        table_id_pool = seq_pool_create(1, MIN_TABLE_ID, MAX_TABLE_ID);
     }
 
-    if (id_pool_alloc_id(table_id_pool, &id)) {
+    if (seq_pool_new_id(table_id_pool, 0, &id)) {
         return id;
     }
 
@@ -840,7 +837,7 @@ table_id_free(void *arg, uint32_t id)
     struct netdev *netdev;
     ovs_u128 table_ufid;
 
-    id_pool_free_id(table_id_pool, id);
+    seq_pool_free_id(table_id_pool, 0, id);
 
     if (arg) {
         table_id_ufid(id, &table_ufid);
@@ -891,7 +888,7 @@ put_table_id(struct netdev *netdev, uint32_t table_id)
 #define MIN_CT_CTX_ID 1
 #define MAX_CT_CTX_ID (reg_fields[REG_FIELD_CT_CTX].mask - 1)
 
-static struct id_pool *ct_ctx_pool = NULL;
+static struct seq_pool *ct_ctx_pool = NULL;
 
 static uint32_t
 ct_ctx_id_alloc(void *arg OVS_UNUSED)
@@ -899,21 +896,18 @@ ct_ctx_id_alloc(void *arg OVS_UNUSED)
     uint32_t id;
 
     if (!ct_ctx_pool) {
-        /* Haven't initiated yet, do it here */
-        ct_ctx_pool = id_pool_create(MIN_CT_CTX_ID, MAX_CT_CTX_ID);
+        ct_ctx_pool = seq_pool_create(1, MIN_CT_CTX_ID, MAX_CT_CTX_ID);
     }
-
-    if (id_pool_alloc_id(ct_ctx_pool, &id)) {
+    if (seq_pool_new_id(ct_ctx_pool, 0, &id)) {
         return id;
     }
-
     return 0;
 }
 
 static void
 ct_ctx_id_free(void *arg OVS_UNUSED, uint32_t id)
 {
-    id_pool_free_id(ct_ctx_pool, id);
+    seq_pool_free_id(ct_ctx_pool, 0, id);
 }
 
 struct ct_miss_ctx {
@@ -970,7 +964,7 @@ find_ct_miss_ctx(int ct_ctx_id, struct ct_miss_ctx *ctx)
 #define MIN_TUNNEL_ID 1
 #define MAX_TUNNEL_ID (reg_fields[REG_FIELD_TUN_INFO].mask - 1)
 
-static struct id_pool *tnl_id_pool = NULL;
+static struct seq_pool *tnl_id_pool = NULL;
 
 static uint32_t
 tnl_id_alloc(void *arg OVS_UNUSED)
@@ -979,10 +973,10 @@ tnl_id_alloc(void *arg OVS_UNUSED)
 
     if (!tnl_id_pool) {
         /* Haven't initiated yet, do it here */
-        tnl_id_pool = id_pool_create(MIN_TUNNEL_ID, MAX_TUNNEL_ID);
+        tnl_id_pool = seq_pool_create(1, MIN_TUNNEL_ID, MAX_TUNNEL_ID);
     }
 
-    if (id_pool_alloc_id(tnl_id_pool, &id)) {
+    if (seq_pool_new_id(tnl_id_pool, 0, &id)) {
         return id;
     }
 
@@ -992,7 +986,7 @@ tnl_id_alloc(void *arg OVS_UNUSED)
 static void
 tnl_id_free(void *arg OVS_UNUSED, uint32_t id)
 {
-    id_pool_free_id(tnl_id_pool, id);
+    seq_pool_free_id(tnl_id_pool, 0, id);
 }
 
 static struct ds *
