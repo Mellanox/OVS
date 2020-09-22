@@ -3196,6 +3196,10 @@ queue_netdev_flow_del(struct dp_netdev_pmd_thread *pmd,
 {
     struct dp_flow_offload_item *offload;
 
+    if (!netdev_is_flow_api_enabled()) {
+        return;
+    }
+
     if (ovsthread_once_start(&offload_thread_once)) {
         xpthread_cond_init(&dp_flow_offload.cond, NULL);
         ovs_thread_create("dp_netdev_flow_offload",
