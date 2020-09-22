@@ -1025,7 +1025,9 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev,
                                  struct nlattr **actions,
                                  const ovs_u128 *mt_ufid,
                                  struct dpif_flow_stats *stats,
-                                 struct ofpbuf *buf);
+                                 struct ofpbuf *buf,
+                                 long long now,
+                                 long long prev_now);
 
 static void
 dp_netdev_offload_init(void)
@@ -1139,10 +1141,12 @@ static bool
 dpif_netdev_get_flow_offload_status(const struct dp_netdev *dp,
                                     struct dp_netdev_flow *netdev_flow,
                                     struct dpif_flow_stats *stats,
-                                    struct dpif_flow_attrs *attrs);
+                                    struct dpif_flow_attrs *attrs,
+                                    long long now,
+                                    long long prev_now);
 static bool
 dp_netdev_ct_offload_active(struct ct_flow_offload_item *offload,
-                            long long now)
+                            long long now, long long prev_now)
 {
     struct dp_netdev_flow netdev_flow;
     struct dpif_flow_stats stats;
@@ -1156,7 +1160,7 @@ dp_netdev_ct_offload_active(struct ct_flow_offload_item *offload,
     *CONST_CAST(odp_port_t *, &netdev_flow.flow.in_port.odp_port) = offload->odp_port;
     *CONST_CAST(ovs_u128 *, &netdev_flow.mega_ufid) = offload->ufid;
     if (!dpif_netdev_get_flow_offload_status(offload->dp, &netdev_flow,
-                                             &stats, &attrs)) {
+                                             &stats, &attrs, now, prev_now)) {
         return false;
     }
 
@@ -3994,7 +3998,9 @@ static bool
 dpif_netdev_get_flow_offload_status(const struct dp_netdev *dp,
                                     struct dp_netdev_flow *netdev_flow,
                                     struct dpif_flow_stats *stats,
-                                    struct dpif_flow_attrs *attrs)
+                                    struct dpif_flow_attrs *attrs,
+                                    long long now,
+                                    long long prev_now)
 {
     uint64_t act_buf[1024 / 8];
     struct nlattr *actions;
@@ -4035,7 +4041,7 @@ dpif_netdev_get_flow_offload_status(const struct dp_netdev *dp,
         if (e2e_cache_enabled && !ret) {
             e2e_cache_get_merged_flows_stats(netdev, &match, &actions,
                                              &netdev_flow->mega_ufid, stats,
-                                             &buf);
+                                             &buf, now, prev_now);
         }
         ovs_rwlock_unlock(&dp->port_rwlock);
     } else {
@@ -4079,7 +4085,8 @@ get_dpif_flow_status(const struct dp_netdev *dp,
     stats->tcp_flags = flags;
 
     if (dpif_netdev_get_flow_offload_status(dp, netdev_flow,
-                                            &offload_stats, &offload_attrs)) {
+                                            &offload_stats, &offload_attrs, 0,
+                                            0)) {
         stats->n_packets += offload_stats.n_packets;
         stats->n_bytes += offload_stats.n_bytes;
         stats->used = MAX(stats->used, offload_stats.used);
@@ -8537,7 +8544,9 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev,
                                  struct nlattr **actions,
                                  const ovs_u128 *mt_ufid,
                                  struct dpif_flow_stats *stats,
-                                 struct ofpbuf *buf)
+                                 struct ofpbuf *buf,
+                                 long long now OVS_UNUSED,
+                                 long long prev_now OVS_UNUSED)
 {
     struct e2e_cache_ufid_to_flow_item *merged_flow, *dp_flow_data;
     struct flow2flow_item *affected_flow_item;
@@ -8638,7 +8647,9 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev OVS_UNUSED,
                                  struct nlattr **actions OVS_UNUSED,
                                  const ovs_u128 *mt_ufid OVS_UNUSED,
                                  struct dpif_flow_stats *stats OVS_UNUSED,
-                                 sturct ofpbuf *buf OVS_UNUSED)
+                                 sturct ofpbuf *buf OVS_UNUSED,
+                                 long long now OVS_UNUSED,
+                                 long long prev_now OVS_UNUSED)
 {
 }
 #endif /* E2E_CACHE_ENABLED */

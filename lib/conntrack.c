@@ -1777,7 +1777,8 @@ ct_sweep(struct conntrack *ct, long long now, size_t limit)
                  dir++) {
                 if (!conn_get_tm(conn, &tm) &&
                     conntrack_offload_fill_item_common(&item, conn, dir) &&
-                    ct->offload_class->conn_active(&item, now) &&
+                    ct->offload_class->conn_active(&item, now,
+                                                   conn->prev_query) &&
                     !hw_updated) {
                     conn_protected_update_expiration(ct, conn, tm, now);
                     hw_updated = true;
@@ -1785,12 +1786,14 @@ ct_sweep(struct conntrack *ct, long long now, size_t limit)
                 if (conn->nat_conn && !conn_get_tm(conn->nat_conn, &tm) &&
                     conntrack_offload_fill_item_common(&item, conn->nat_conn,
                                                        dir) &&
-                    ct->offload_class->conn_active(&item, now) &&
+                    ct->offload_class->conn_active(&item, now,
+                                                   conn->prev_query) &&
                     !hw_updated) {
                     conn_protected_update_expiration(ct, conn, tm, now);
                     hw_updated = true;
                 }
             }
+            conn->prev_query = now;
             if (hw_updated) {
                 ovs_mutex_unlock(&conn->lock);
                 continue;
