@@ -111,6 +111,7 @@ struct conn {
     struct ovs_mutex lock; /* Guards all mutable fields. */
     ovs_u128 label;
     long long expiration;
+    long long prev_query;
     uint32_t mark;
     int seq_skew;
 
