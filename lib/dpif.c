@@ -1144,14 +1144,6 @@ dpif_flow_dump_next(struct dpif_flow_dump_thread *thread,
     return n;
 }
 
-int
-dpif_get_offload_stats(struct dpif *dpif, struct dpif_offload_stats *offload_stats)
-{
-    return (dpif->dpif_class->get_offload_stats
-            ? dpif->dpif_class->get_offload_stats(dpif, offload_stats)
-            : EOPNOTSUPP);
-}
-
 struct dpif_execute_helper_aux {
     struct dpif *dpif;
     const struct flow *flow;

@@ -321,8 +321,6 @@ struct dpif_class {
 
     int (*flow_dump_next)(struct dpif_flow_dump_thread *thread,
                           struct dpif_flow *flows, int max_flows);
-    /* Get offload statistics. */
-    int (*get_offload_stats)(struct dpif *, struct dpif_offload_stats *);
     /* Executes each of the 'n_ops' operations in 'ops' on 'dpif', in the order
      * in which they are specified, placing each operation's results in the
      * "output" members documented in comments and the 'error' member of each
