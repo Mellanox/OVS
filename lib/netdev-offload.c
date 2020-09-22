@@ -61,7 +61,6 @@ VLOG_DEFINE_THIS_MODULE(netdev_offload);
 
 static bool netdev_flow_api_enabled = false;
 static struct seq_pool *mark_pool = NULL;
-static struct ovs_mutex mark_pool_mutex = OVS_MUTEX_INITIALIZER;
 static bool e2e_cache_enabled = false;
 
 #define DEFAULT_OFFLOAD_THREAD_NB 1
@@ -317,8 +316,7 @@ netdev_hw_offload_stats_get(struct netdev *netdev, uint64_t *counters)
 
 #define MAX_FLOW_MARK (UINT32_MAX - 1)
 
-static struct ovs_list mark_release_list =
-    OVS_LIST_INITIALIZER(&mark_release_list);
+static struct ovs_list *mark_release_lists;
 
 struct mark_release_item {
     struct ovs_list node;
@@ -330,10 +328,11 @@ static void
 mark_delayed_release(uint32_t mark)
 {
     struct mark_release_item *item = xzalloc(sizeof *item);
+    unsigned int tid = netdev_offload_thread_id();
 
     item->mark = mark;
     item->timestamp = time_msec();
-    ovs_list_push_back(&mark_release_list, &item->node);
+    ovs_list_push_back(&mark_release_lists[tid], &item->node);
     VLOG_DBG("%s: mark=%d, timestamp=%llu", __func__, item->mark,
              item->timestamp);
 }
@@ -348,19 +347,23 @@ mark_delayed_release(uint32_t mark)
 static void
 do_mark_delayed_release(void)
 {
+    unsigned int tid = netdev_offload_thread_id();
+    struct ovs_list *mark_release_list;
     struct mark_release_item *item;
     struct ovs_list *list;
     long long int now;
 
+    mark_release_list = &mark_release_lists[tid];
+
     now = time_msec();
-    while (!ovs_list_is_empty(&mark_release_list)) {
-        list = ovs_list_front(&mark_release_list);
+    while (!ovs_list_is_empty(mark_release_list)) {
+        list = ovs_list_front(mark_release_list);
         item = CONTAINER_OF(list, struct mark_release_item, node);
         if (now < item->timestamp + DELAYED_RELEASE_TIMEOUT_MS) {
             break;
         }
         ovs_list_remove(list);
-        seq_pool_free_id(mark_pool, 0, item->mark);
+        seq_pool_free_id(mark_pool, tid, item->mark);
         VLOG_DBG("%s: mark=%d, timestamp=%llu, now=%llu", __func__, item->mark,
                  item->timestamp, now);
         free(item);
@@ -370,30 +373,36 @@ do_mark_delayed_release(void)
 uint32_t
 netdev_offload_flow_mark_alloc(void)
 {
+    static struct ovsthread_once mark_init = OVSTHREAD_ONCE_INITIALIZER;
+    unsigned int tid = netdev_offload_thread_id();
     uint32_t mark;
 
-    ovs_mutex_lock(&mark_pool_mutex);
-    if (!mark_pool) {
+    if (ovsthread_once_start(&mark_init)) {
+        unsigned int nb_thread = netdev_offload_thread_nb();
+        size_t i;
+
         /* Haven't initiated yet, do it here */
-        mark_pool = seq_pool_create(1, 1, MAX_FLOW_MARK);
+        mark_pool = seq_pool_create(nb_thread, 1, MAX_FLOW_MARK);
+        mark_release_lists = xcalloc(nb_thread, sizeof *mark_release_lists);
+        for (i = 0; i < nb_thread; i++) {
+            ovs_list_init(&mark_release_lists[i]);
+        }
+
+        ovsthread_once_done(&mark_init);
     }
 
     do_mark_delayed_release();
-    if (seq_pool_new_id(mark_pool, 0, &mark)) {
-        ovs_mutex_unlock(&mark_pool_mutex);
+    if (seq_pool_new_id(mark_pool, tid, &mark)) {
         return mark;
     }
 
-    ovs_mutex_unlock(&mark_pool_mutex);
     return INVALID_FLOW_MARK;
 }
 
 void
 netdev_offload_flow_mark_free(uint32_t mark)
 {
-    ovs_mutex_lock(&mark_pool_mutex);
     mark_delayed_release(mark);
-    ovs_mutex_unlock(&mark_pool_mutex);
 }
 
 int
