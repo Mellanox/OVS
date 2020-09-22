@@ -73,6 +73,7 @@
 #include "pvector.h"
 #include "random.h"
 #include "seq.h"
+#include "seq-pool.h"
 #include "smap.h"
 #include "sset.h"
 #include "timeval.h"
@@ -3045,19 +3046,25 @@ dp_netdev_ct_offload_del(struct dp_offload_thread_item *offload_item, int dir)
 
 #define MIN_CTID 1
 #define MAX_CTID (UINT32_MAX - 1)
-static struct id_pool *ctid_pool = NULL;
+static struct seq_pool *ctid_pool = NULL;
 
 static int
 dp_alloc_ctid(uint32_t *ctid)
 {
-    if (!ctid_pool) {
+    static struct ovsthread_once ctid_init = OVSTHREAD_ONCE_INITIALIZER;
+    unsigned int tid = netdev_offload_thread_id();
+
+    if (ovsthread_once_start(&ctid_init)) {
+        unsigned int nb_threads = netdev_offload_thread_nb();
+
         /* Haven't initiated yet, do it here */
-        ctid_pool = id_pool_create(MIN_CTID, MAX_CTID);
+        ctid_pool = seq_pool_create(nb_threads, MIN_CTID, MAX_CTID);
+        ovsthread_once_done(&ctid_init);
     }
     if (!ctid_pool) {
         return -1;
     }
-    if (!id_pool_alloc_id(ctid_pool, ctid)) {
+    if (!seq_pool_new_id(ctid_pool, tid, ctid)) {
         return -1;
     }
     return 0;
@@ -3066,7 +3073,9 @@ dp_alloc_ctid(uint32_t *ctid)
 static void
 dp_release_ctid(uint32_t ctid)
 {
-    id_pool_free_id(ctid_pool, ctid);
+    unsigned int tid = netdev_offload_thread_id();
+
+    seq_pool_free_id(ctid_pool, tid, ctid);
 }
 
 static void
