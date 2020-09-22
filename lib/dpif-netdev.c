@@ -328,9 +328,6 @@ struct dp_netdev {
     struct ovs_refcount ref_cnt;
     atomic_flag destroyed;
 
-    /* Counting offloaded statistics. */
-    struct dpif_offload_stats offload_stats;
-
     /* Ports.
      *
      * Any lookup into 'ports' or any access to the dp_netdev_ports found
@@ -455,8 +452,6 @@ struct dp_flow_offload {
     struct ovs_mutex mutex;
     struct ovs_list list;
     pthread_cond_t cond;
-    uint32_t enqueues;
-    uint32_t dequeues;
 };
 
 static struct dp_flow_offload dp_flow_offload = {
@@ -960,7 +955,6 @@ dp_netdev_append_ct_offload(struct ct_flow_offload_item *offload)
 
     ovs_mutex_lock(&dp_flow_offload.mutex);
     ovs_list_push_back(&dp_flow_offload.list, &offload_item->node);
-    dp_flow_offload.enqueues++;
     xpthread_cond_signal(&dp_flow_offload.cond);
     ovs_mutex_unlock(&dp_flow_offload.mutex);
 }
@@ -1876,7 +1870,6 @@ create_dp_netdev(const char *name, const struct dpif_class *class,
     *CONST_CAST(const char **, &dp->name) = xstrdup(name);
     ovs_refcount_init(&dp->ref_cnt);
     atomic_flag_clear(&dp->destroyed);
-    memset(&dp->offload_stats, 0, sizeof dp->offload_stats);
 
     ovs_mutex_init_recursive(&dp->port_mutex);
     hmap_init(&dp->ports);
@@ -2710,7 +2703,6 @@ dp_netdev_append_flow_offload(struct dp_flow_offload_item *offload)
 
     ovs_mutex_lock(&dp_flow_offload.mutex);
     ovs_list_push_back(&dp_flow_offload.list, &offload_item->node);
-    dp_flow_offload.enqueues++;
     xpthread_cond_signal(&dp_flow_offload.cond);
     ovs_mutex_unlock(&dp_flow_offload.mutex);
 }
@@ -3075,9 +3067,7 @@ static void
 dp_netdev_ct_offload_handle(struct dp_offload_item *offload_item)
 {
     struct ct_flow_offload_item *ct_offload = offload_item->ct_offload_item;
-    struct dp_netdev *dp = ct_offload->dp;
     int ret[CT_DIR_NUM];
-    int ts_index = 0;
     const char *op;
     int dir;
 
@@ -3111,19 +3101,6 @@ dp_netdev_ct_offload_handle(struct dp_offload_item *offload_item)
                  dir == CT_DIR_INIT ? "init" : "reply",
                  UUID_ARGS((struct uuid *)&ct_offload[dir].ufid));
     }
-    if (dp && !ret[CT_DIR_INIT] && !ret[CT_DIR_REP]) {
-        if (ct_offload[CT_DIR_INIT].op ==
-            DP_NETDEV_FLOW_OFFLOAD_OP_ADD) {
-            dp->offload_stats.ct_connections++;
-        } else {
-            dp->offload_stats.ct_connections--;
-        }
-    }
-    if (dp && (dp->offload_stats.ct_connections &
-               CT_CONN_TS_INTERVAL_MASK) == 0) {
-        ts_index &= CT_CONN_TS_MASK;
-        dp->offload_stats.timestamps[ts_index++] = time_msec();
-    }
     if (ct_offload[CT_DIR_INIT].op == DP_NETDEV_FLOW_OFFLOAD_OP_ADD &&
         ret[CT_DIR_INIT] && ret[CT_DIR_REP]) {
         dp_release_ctid(*ct_offload->ctid_ptr);
@@ -3152,7 +3129,6 @@ dp_netdev_flow_offload_main(void *data OVS_UNUSED)
             ovsrcu_quiesce_end();
         }
         list = ovs_list_pop_front(&dp_flow_offload.list);
-        dp_flow_offload.dequeues++;
         offload_item = CONTAINER_OF(list, struct dp_offload_item, node);
         ovs_mutex_unlock(&dp_flow_offload.mutex);
 
@@ -4521,20 +4497,6 @@ dpif_netdev_flow_dump_next(struct dpif_flow_dump_thread *thread_,
     }
 
     return n_flows;
-}
-
-static int
-dpif_netdev_get_offload_stats(struct dpif *dpif, struct dpif_offload_stats *offload_stats)
-{
-    struct dp_netdev *dp = get_dp_netdev(dpif);
-
-    offload_stats->ct_connections = dp->offload_stats.ct_connections;
-    offload_stats->queue_enqueues = dp_flow_offload.enqueues;
-    offload_stats->queue_dequeues = dp_flow_offload.dequeues;
-    memcpy(&offload_stats->timestamps, &dp->offload_stats.timestamps,
-           sizeof offload_stats->timestamps);
-
-    return 0;
 }
 
 static int
@@ -8863,7 +8825,6 @@ const struct dpif_class dpif_netdev_class = {
     dpif_netdev_flow_dump_thread_create,
     dpif_netdev_flow_dump_thread_destroy,
     dpif_netdev_flow_dump_next,
-    dpif_netdev_get_offload_stats,
     dpif_netdev_operate,
     NULL,                       /* recv_set */
     NULL,                       /* handlers_set */

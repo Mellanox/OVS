@@ -1102,60 +1102,6 @@ out_free:
 }
 
 static int
-dpctl_get_offload_stats(int argc, const char *argv[],
-                        struct dpctl_params *dpctl_p)
-{
-    struct dpif *dpif;
-    int error;
-
-    error = opt_dpif_open(argc, argv, dpctl_p, 2, &dpif);
-    if (!error) {
-        struct dpif_offload_stats offload_stats;
-
-        error = dpif_get_offload_stats(dpif, &offload_stats);
-        if (!error) {
-            struct ds s = DS_EMPTY_INITIALIZER;
-            int i;
-
-            if (dpctl_p->verbosity) {
-                ds_put_format(&s, "CT insertion/deletion rates (%u resolution,"
-                              " K connections/sec):\n", CT_CONN_TS_INTERVAL_NUM);
-            }
-#define CT_RATE(i) \
-    offload_stats.timestamps[(i) & CT_CONN_TS_MASK] == \
-    offload_stats.timestamps[(i - 1) & CT_CONN_TS_MASK] ? 0 : \
-    ((double) CT_CONN_TS_INTERVAL_NUM) / \
-    (offload_stats.timestamps[(i) & CT_CONN_TS_MASK] - \
-     offload_stats.timestamps[(i - 1) & CT_CONN_TS_MASK])
-#define PER_LINE 16
-            for (i = 0; dpctl_p->verbosity && i < CT_CONN_TIMESTAMPS;
-                 i += PER_LINE) {
-                int j;
-
-                ds_put_format(&s, "%4u ", i);
-                for (j = 0; j < PER_LINE; j++) {
-                    ds_put_format(&s, "%4.1f ", CT_RATE(i + j));
-                }
-                ds_put_cstr(&s, "\n");
-            }
-            dpctl_print(dpctl_p,
-                        "%sOffload queue depth: %u (%u - %u)\n"
-                        "Connection tracking offloaded connections: %u\n",
-                        ds_cstr(&s),
-                        offload_stats.queue_enqueues - offload_stats.queue_dequeues,
-                        offload_stats.queue_enqueues, offload_stats.queue_dequeues,
-                        offload_stats.ct_connections);
-            ds_destroy(&s);
-        } else {
-            dpctl_error(dpctl_p, error, "Offloaded statistics could not be retrieved");
-        }
-        dpif_close(dpif);
-    }
-
-    return error;
-}
-
-static int
 dpctl_put_flow(int argc, const char *argv[], enum dpif_flow_put_flags flags,
                struct dpctl_params *dpctl_p)
 {
@@ -2578,8 +2524,6 @@ static const struct dpctl_command all_commands[] = {
     { "show", "[dp...]", 0, INT_MAX, dpctl_show, DP_RO },
     { "dump-flows", "[dp] [filter=..] [type=..]",
       0, 3, dpctl_dump_flows, DP_RO },
-    { "get-offload-stats", "[dp]",
-      0, 1, dpctl_get_offload_stats, DP_RO },
     { "add-flow", "[dp] flow actions", 2, 3, dpctl_add_flow, DP_RW },
     { "mod-flow", "[dp] flow actions", 2, 3, dpctl_mod_flow, DP_RW },
     { "get-flow", "[dp] ufid", 1, 2, dpctl_get_flow, DP_RO },

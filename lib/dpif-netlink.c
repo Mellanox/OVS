@@ -4129,7 +4129,6 @@ const struct dpif_class dpif_netlink_class = {
     dpif_netlink_flow_dump_thread_create,
     dpif_netlink_flow_dump_thread_destroy,
     dpif_netlink_flow_dump_next,
-    NULL,                       /* get_offload_stats */
     dpif_netlink_operate,
     dpif_netlink_recv_set,
     dpif_netlink_handlers_set,
