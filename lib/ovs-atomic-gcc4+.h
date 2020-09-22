@@ -128,6 +128,20 @@ atomic_signal_fence(memory_order order)
 #define atomic_compare_exchange_weak_explicit   \
     atomic_compare_exchange_strong_explicit
 
+#define atomic_exchange_explicit(DST, SRC, ORDER)                 \
+    ({                                                            \
+        typeof(DST) dst__ = (DST);                                \
+        typeof(SRC) src__ = (SRC);                                \
+        typeof(SRC) ret__;                                        \
+                                                                  \
+        atomic_read_explicit(dst__, ret__, memory_order_relaxed); \
+        while (!atomic_compare_exchange_weak(dst__, ret__, src__, \
+                    ORDER, memory_order_relaxed);                 \
+        ret__;                                                    \
+    })
+#define atomic_exchange(DST, SRC) \
+    atomic_exchange_explicit(DST, SRC, memory_order_seq_cst)
+
 #define atomic_op__(RMW, OP, ARG, ORIG)                     \
     ({                                                      \
         typeof(RMW) rmw__ = (RMW);                          \
