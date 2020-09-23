@@ -118,6 +118,7 @@ enum dp_packet_offload_mask {
 enum e2e_cache_trace_flags {
     E2E_CACHE_TRACE_FLAG_TNL_POP     = 1 << 0,
     E2E_CACHE_TRACE_FLAG_OVERFLOW    = 1 << 1,
+    E2E_CACHE_TRACE_FLAG_ABORT       = 1 << 2,
 };
 
 OVS_PACKED(

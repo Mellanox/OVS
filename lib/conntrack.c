@@ -1573,12 +1573,14 @@ e2e_cache_trace_add_ct(struct conntrack *ct,
                conn->master_conn->offloads.dir_info[dir].dp) {
         conn = conn->master_conn;
     }
-    if (conn->offloads.dir_info[dir].e2e_flow) {
-        e2e_trace_size++;
-        p->e2e_trace_ct_ufids |= 1 << e2e_trace_size;
-        p->e2e_trace[e2e_trace_size] = conn->offloads.dir_info[dir].ufid;
-        p->e2e_trace_size = e2e_trace_size + 1;
+    if (!conn->offloads.dir_info[dir].e2e_flow) {
+        p->e2e_trace_flags |= E2E_CACHE_TRACE_FLAG_ABORT;
+        return;
     }
+    e2e_trace_size++;
+    p->e2e_trace_ct_ufids |= 1 << e2e_trace_size;
+    p->e2e_trace[e2e_trace_size] = conn->offloads.dir_info[dir].ufid;
+    p->e2e_trace_size = e2e_trace_size + 1;
 }
 #else
 #define e2e_cache_trace_add_ct(ct, p, conn, r, m, l) do { } while (0)
