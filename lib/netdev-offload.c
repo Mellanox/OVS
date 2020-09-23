@@ -62,6 +62,7 @@ VLOG_DEFINE_THIS_MODULE(netdev_offload);
 static bool netdev_flow_api_enabled = false;
 static struct seq_pool *mark_pool = NULL;
 static bool e2e_cache_enabled = false;
+static uint32_t e2e_cache_size = 0;
 
 #define DEFAULT_OFFLOAD_THREAD_NB 1
 #define MAX_OFFLOAD_THREAD_NB 10
@@ -582,6 +583,12 @@ netdev_is_e2e_cache_enabled(void)
     return e2e_cache_enabled;
 }
 
+uint32_t
+netdev_get_e2e_cache_size(void)
+{
+    return e2e_cache_size;
+}
+
 unsigned int
 netdev_offload_thread_nb(void)
 {
@@ -931,6 +938,11 @@ netdev_set_flow_api_enabled(const struct smap *ovs_other_config)
 
         if (ovsthread_once_start(&once_e2e)) {
             e2e_cache_enabled = true;
+            if (e2e_cache_enabled) {
+                e2e_cache_size = smap_get_int(ovs_other_config, "e2e-size",
+                                              4000);
+                VLOG_INFO("E2E cache size is %"PRIu32, e2e_cache_size);
+            }
             ovsthread_once_done(&once_e2e);
         }
     }

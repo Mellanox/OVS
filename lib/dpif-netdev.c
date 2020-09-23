@@ -145,6 +145,7 @@ static struct odp_support dp_netdev_support = {
 };
 
 static bool dp_netdev_e2e_cache_enabled = false;
+static uint32_t dp_netdev_e2e_cache_size = 0;
 
 /* EMC cache and SMC cache compose the datapath flow cache (DFC)
  *
@@ -4094,8 +4095,11 @@ dpif_netdev_get_flow_offload_status(const struct dp_netdev *dp,
         /* Storing statistics and attributes from the last request for
          * later use on mutex contention. */
         dp_netdev_flow_set_last_stats_attrs(netdev_flow, stats, attrs, ret);
-        /* get merged flow stats and update it to mt flow stats */
-        if (dp_netdev_e2e_cache_enabled && !ret) {
+        /* Get merged flow stats and update it to mt flow stats. As CT connections
+         * are offloaded either to MT or e2e (but not both), even if we fail to
+         * get stats for MT CT, we still need to query the e2e.
+         */
+        if (dp_netdev_e2e_cache_enabled) {
             e2e_cache_get_merged_flows_stats(netdev, &match, &actions,
                                              &netdev_flow->mega_ufid, stats,
                                              &buf, now, prev_now);
@@ -5147,6 +5151,7 @@ dpif_netdev_set_config(struct dpif *dpif, const struct smap *other_config)
     }
 
     dp_netdev_e2e_cache_enabled = netdev_is_e2e_cache_enabled();
+    dp_netdev_e2e_cache_size = netdev_get_e2e_cache_size();
 
     bool pmd_rxq_assign_cyc = !strcmp(pmd_rxq_assign, "cycles");
     if (!pmd_rxq_assign_cyc && strcmp(pmd_rxq_assign, "roundrobin")) {
@@ -8800,7 +8805,11 @@ e2e_cache_process_trace_info(struct dp_netdev *dp,
     if (OVS_UNLIKELY(err)) {
         return -1;
     }
-    e2e_cache_offload_ct_mt_flows(dp, mt_flows, num_flows);
+    if (atomic_count_get(&e2e_stats.merged_flows_in_cache) >=
+        dp_netdev_e2e_cache_size) {
+        e2e_cache_offload_ct_mt_flows(dp, mt_flows, num_flows);
+        return -1;
+    }
 
     merged_flow = xzalloc(sizeof *merged_flow +
                           num_flows * sizeof merged_flow->associated_flows[0]);
@@ -8817,6 +8826,7 @@ e2e_cache_process_trace_info(struct dp_netdev *dp,
     err = e2e_cache_merge_flows(mt_flows, num_flows, merged_flow,
                                 &merged_actions);
     if (OVS_UNLIKELY(err)) {
+        e2e_cache_offload_ct_mt_flows(dp, mt_flows, num_flows);
         goto free_merged_flow;
     }
 
