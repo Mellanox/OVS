@@ -20,6 +20,7 @@
 
 #include "openvswitch/netdev.h"
 #include "openvswitch/types.h"
+#include "ovs-thread.h"
 #include "packets.h"
 #include "flow.h"
 
@@ -79,6 +80,24 @@ struct offload_info {
                                   * to delete the original flow. */
 };
 
+DECLARE_EXTERN_PER_THREAD_DATA(unsigned int, netdev_offload_thread_id);
+
+unsigned int netdev_offload_thread_nb(void);
+unsigned int netdev_offload_thread_init(void);
+unsigned int netdev_offload_ufid_to_thread_id(const ovs_u128 ufid);
+
+static inline unsigned int
+netdev_offload_thread_id(void)
+{
+    unsigned int id = *netdev_offload_thread_id_get();
+
+    if (OVS_UNLIKELY(id == OVSTHREAD_ID_UNSET)) {
+        id = netdev_offload_thread_init();
+    }
+
+    return id;
+}
+
 #define INVALID_FLOW_MARK 0
 
 int netdev_flow_flush(struct netdev *);
@@ -100,7 +119,7 @@ int netdev_flow_get(struct netdev *, struct match *, struct nlattr **actions,
                     struct dpif_flow_attrs *, struct ofpbuf *wbuffer);
 int netdev_flow_del(struct netdev *, const ovs_u128 *,
                     struct dpif_flow_stats *);
-int netdev_hw_offload_stats_get(struct netdev *, uint64_t *counter);
+int netdev_hw_offload_stats_get(struct netdev *, uint64_t *counters);
 int netdev_init_flow_api(struct netdev *);
 void netdev_uninit_flow_api(struct netdev *);
 uint32_t netdev_get_block_id(struct netdev *);

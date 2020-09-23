@@ -4004,12 +4004,12 @@ netdev_offload_dpdk_hw_miss_packet_recover(struct netdev *netdev,
 
 static int
 netdev_offload_dpdk_hw_offload_stats_get(struct netdev *netdev,
-                                         uint64_t *counter)
+                                         uint64_t *counters)
 {
     struct netdev_offload_dpdk_data *data;
 
     data = netdev->hw_info.offload_data;
-    *counter = data->rte_flow_counter;
+    *counters = data->rte_flow_counter;
     return 0;
 }
 
