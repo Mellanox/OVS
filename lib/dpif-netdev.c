@@ -7816,6 +7816,7 @@ struct e2e_cache_thread_msg_queues {
  * generated_msgs = Amount of trace messages generated/dispatched to E2E cache.
  * processed_msgs = Amount of trace messages processed by E2E cache.
  * discarded_msgs = Amount of trace messages discarded by E2E cache.
+ * aborted_msgs = Amount of trace messages aborted by E2E cache.
  * trace_msgs_in_queue = Amount of trace messages in E2E cache queue.
  * new_flow_msgs = Amount of new flow messages received by E2E cache.
  * del_flow_msgs = Amount of delete flow messages received by E2E cache.
@@ -7829,6 +7830,7 @@ struct e2e_cache_stats {
     atomic_count generated_msgs;
     uint32_t processed_msgs;
     atomic_count discarded_msgs;
+    atomic_count aborted_msgs;
     uint32_t trace_msgs_in_queue;
     uint32_t new_flow_msgs;
     uint32_t del_flow_msgs;
@@ -7869,6 +7871,7 @@ static struct e2e_cache_stats e2e_stats = {
     .generated_msgs = ATOMIC_COUNT_INIT(0),
     .processed_msgs = 0,
     .discarded_msgs = ATOMIC_COUNT_INIT(0),
+    .aborted_msgs = ATOMIC_COUNT_INIT(0),
     .trace_msgs_in_queue = 0,
     .new_flow_msgs = 0,
     .del_flow_msgs = 0,
@@ -7899,6 +7902,8 @@ dpif_netdev_e2e_stats_format(struct e2e_cache_stats *stats, struct ds *s)
                   stats->processed_msgs);
     ds_put_format(s, "\n%-45s : %"PRIu32"", "discarded messages",
                   atomic_count_get(&stats->discarded_msgs));
+    ds_put_format(s, "\n%-45s : %"PRIu32"", "aborted messages",
+                  atomic_count_get(&stats->aborted_msgs));
     ds_put_format(s, "\n%-45s : %"PRIu32"", "messages in e2e queue",
                   stats->trace_msgs_in_queue);
     ds_put_format(s, "\n%-45s : %"PRIu32"", "new flow messages",
@@ -8096,10 +8101,6 @@ e2e_cache_associate_counters(struct e2e_cache_ufid_to_flow_item *mflow,
     ovs_mutex_lock(&ufid_to_flow_map_mutex);
     for (mt_index = 0, flows_index = 0; mt_index < trc_info->num_elements;
          mt_index++) {
-        if ((mt_index > 0) && (trc_info->e2e_trace_ct_ufids & (1 << mt_index))
-            && (trc_info->e2e_trace_ct_ufids & (1 << (mt_index - 1)))) {
-            continue;
-        }
         counter_found = false;
         counter_hash = trc_info->e2e_trace_ct_ufids & (1 << mt_index)
                        ? mflow->ct_counter : mflow->flows_counter;
@@ -8182,14 +8183,14 @@ e2e_cache_calc_counters(struct e2e_cache_ufid_to_flow_item *mflow,
     for (mt_index = 0, flows_index = 0, ct_index = 0;
          mt_index < trc_info->num_elements; mt_index++) {
         if (trc_info->e2e_trace_ct_ufids & (1 << mt_index)) {
-            /* In case there is another adjacent CT UFID, it is the opposite
-             * direction flow, that was already assigned with a counter. Take
-             * it for counter calculation instead of this one.
-             */
             if (trc_info->e2e_trace_ct_ufids & (1 << (mt_index + 1))) {
                 continue;
             }
-            ct_ufids[ct_index++] = trc_info->ufids[mt_index];
+            /* CT are traced only for both directions, adjacent. Calc the
+             * counter hash based on both, XORed.
+             */
+            ct_ufids[ct_index++] = ovs_u128_xor(trc_info->ufids[mt_index],
+                                                trc_info->ufids[mt_index - 1]);
         } else {
             flow_ufids[flows_index++] = trc_info->ufids[mt_index];
         }
@@ -8645,6 +8646,12 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
             atomic_count_inc(&e2e_stats.discarded_msgs);
             continue;
         }
+        /* Don't send aborted traces */
+        if (OVS_UNLIKELY(packet->e2e_trace_flags &
+                         E2E_CACHE_TRACE_FLAG_ABORT)) {
+            atomic_count_inc(&e2e_stats.aborted_msgs);
+            continue;
+        }
         /* In case the packet had tnl_pop, we split the trace to the tnl_pop
          * ufid (the 1st one in the trace), and the rest of the trace,
          * representing the path of the packet with the virtual port. Once the
@@ -8719,14 +8726,6 @@ e2e_cache_trace_info_to_flows(const struct e2e_cache_trace_info *trc_info,
     uint16_t i, num_elements;
 
     for (i = 0, num_elements = 0; i < trc_info->num_elements; i++) {
-        /* In case it is another adjacent CT UFID, it is the opposite
-         * direction flow, that is used only to assign shared counters, so
-         * skip it.
-         */
-        if ((i > 0) && (trc_info->e2e_trace_ct_ufids & (1 << i)) &&
-            (trc_info->e2e_trace_ct_ufids & (1 << (i - 1)))) {
-            continue;
-        }
         flows[num_elements] =
             e2e_cache_ufid_to_flow_data_find(&trc_info->ufids[i]);
         VLOG_DBG_RL(&rl, "%s: ufids[%d]="UUID_FMT" flows[%d]=%p", __FUNCTION__,
@@ -11273,6 +11272,10 @@ e2e_cache_merge_actions(struct e2e_cache_ufid_to_flow_item **netdev_flows,
 
     memset(&merged_set, 0, sizeof merged_set);
     for (i = 0; i < num; i++) {
+        if (i > 0 && netdev_flows[i]->offload_state != E2E_OL_STATE_FLOW &&
+            netdev_flows[i - 1]->offload_state != E2E_OL_STATE_FLOW) {
+            continue;
+        }
         NL_ATTR_FOR_EACH (a, left, netdev_flows[i]->actions,
                           netdev_flows[i]->actions_size) {
             enum ovs_action_attr type = nl_attr_type(a);
@@ -11377,6 +11380,10 @@ e2e_cache_merge_match(struct e2e_cache_ufid_to_flow_item **netdev_flows,
     bool tnl_saved = false;
 
     for (i = 0; i < num; i++) {
+        if (i > 0 && netdev_flows[i]->offload_state != E2E_OL_STATE_FLOW &&
+            netdev_flows[i - 1]->offload_state != E2E_OL_STATE_FLOW) {
+            continue;
+        }
         /* parse match */
         match = &(netdev_flows[i]->match);
         if (!tnl_saved && !is_all_zeros(&match->wc.masks.tunnel,
