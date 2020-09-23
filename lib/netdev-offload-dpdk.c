@@ -689,12 +689,16 @@ static struct seq_pool *label_id_pool = NULL;
 static uint32_t
 label_id_alloc(void *arg OVS_UNUSED)
 {
+    static struct ovsthread_once label_id_init = OVSTHREAD_ONCE_INITIALIZER;
+    unsigned int tid = netdev_offload_thread_id();
     uint32_t label_id;
 
-    if (!label_id_pool) {
-        label_id_pool = seq_pool_create(1, MIN_LABEL_ID, MAX_LABEL_ID);
+    if (ovsthread_once_start(&label_id_init)) {
+        label_id_pool = seq_pool_create(netdev_offload_thread_nb(),
+                                        MIN_LABEL_ID, MAX_LABEL_ID);
+        ovsthread_once_done(&label_id_init);
     }
-    if (seq_pool_new_id(label_id_pool, 0, &label_id)) {
+    if (seq_pool_new_id(label_id_pool, tid, &label_id)) {
         return label_id;
     }
     return 0;
@@ -703,7 +707,9 @@ label_id_alloc(void *arg OVS_UNUSED)
 static void
 label_id_free(void *arg OVS_UNUSED, uint32_t label_id)
 {
-    seq_pool_free_id(label_id_pool, 0, label_id);
+    unsigned int tid = netdev_offload_thread_id();
+
+    seq_pool_free_id(label_id_pool, tid, label_id);
 }
 
 static struct context_metadata label_id_md = {
@@ -750,12 +756,16 @@ static struct seq_pool *zone_id_pool = NULL;
 static uint32_t
 zone_id_alloc(void *arg OVS_UNUSED)
 {
+    static struct ovsthread_once zone_id_init = OVSTHREAD_ONCE_INITIALIZER;
+    unsigned int tid = netdev_offload_thread_id();
     uint32_t zone_id;
 
-    if (!zone_id_pool) {
-        zone_id_pool = seq_pool_create(1, MIN_ZONE_ID, MAX_ZONE_ID);
+    if (ovsthread_once_start(&zone_id_init)) {
+        zone_id_pool = seq_pool_create(netdev_offload_thread_nb(),
+                                       MIN_ZONE_ID, MAX_ZONE_ID);
+        ovsthread_once_done(&zone_id_init);
     }
-    if (seq_pool_new_id(zone_id_pool, 0, &zone_id)) {
+    if (seq_pool_new_id(zone_id_pool, tid, &zone_id)) {
         return zone_id;
     }
     return 0;
@@ -764,7 +774,9 @@ zone_id_alloc(void *arg OVS_UNUSED)
 static void
 zone_id_free(void *arg OVS_UNUSED, uint32_t zone_id)
 {
-    seq_pool_free_id(zone_id_pool, 0, zone_id);
+    unsigned int tid = netdev_offload_thread_id();
+
+    seq_pool_free_id(zone_id_pool, tid, zone_id);
 }
 
 static struct context_metadata zone_id_md = {
@@ -802,14 +814,17 @@ static struct seq_pool *table_id_pool = NULL;
 static uint32_t
 table_id_alloc(void *arg OVS_UNUSED)
 {
+    static struct ovsthread_once table_id_init = OVSTHREAD_ONCE_INITIALIZER;
+    unsigned int tid = netdev_offload_thread_id();
     uint32_t id;
 
-    if (!table_id_pool) {
-        /* Haven't initiated yet, do it here */
-        table_id_pool = seq_pool_create(1, MIN_TABLE_ID, MAX_TABLE_ID);
+    if (ovsthread_once_start(&table_id_init)) {
+        table_id_pool = seq_pool_create(netdev_offload_thread_nb(),
+                                        MIN_TABLE_ID, MAX_TABLE_ID);
+        ovsthread_once_done(&table_id_init);
     }
 
-    if (seq_pool_new_id(table_id_pool, 0, &id)) {
+    if (seq_pool_new_id(table_id_pool, tid, &id)) {
         return id;
     }
 
@@ -834,10 +849,11 @@ netdev_offload_dpdk_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
 static void
 table_id_free(void *arg, uint32_t id)
 {
+    unsigned int tid = netdev_offload_thread_id();
     struct netdev *netdev;
     ovs_u128 table_ufid;
 
-    seq_pool_free_id(table_id_pool, 0, id);
+    seq_pool_free_id(table_id_pool, tid, id);
 
     if (arg) {
         table_id_ufid(id, &table_ufid);
@@ -893,21 +909,29 @@ static struct seq_pool *ct_ctx_pool = NULL;
 static uint32_t
 ct_ctx_id_alloc(void *arg OVS_UNUSED)
 {
+    static struct ovsthread_once ct_ctx_init = OVSTHREAD_ONCE_INITIALIZER;
+    unsigned int tid = netdev_offload_thread_id();
     uint32_t id;
 
-    if (!ct_ctx_pool) {
-        ct_ctx_pool = seq_pool_create(1, MIN_CT_CTX_ID, MAX_CT_CTX_ID);
+    if (ovsthread_once_start(&ct_ctx_init)) {
+        ct_ctx_pool = seq_pool_create(netdev_offload_thread_nb(),
+                                      MIN_CT_CTX_ID, MAX_CT_CTX_ID);
+        ovsthread_once_done(&ct_ctx_init);
     }
-    if (seq_pool_new_id(ct_ctx_pool, 0, &id)) {
+
+    if (seq_pool_new_id(ct_ctx_pool, tid, &id)) {
         return id;
     }
+
     return 0;
 }
 
 static void
 ct_ctx_id_free(void *arg OVS_UNUSED, uint32_t id)
 {
-    seq_pool_free_id(ct_ctx_pool, 0, id);
+    unsigned int tid = netdev_offload_thread_id();
+
+    seq_pool_free_id(ct_ctx_pool, tid, id);
 }
 
 struct ct_miss_ctx {
@@ -969,14 +993,17 @@ static struct seq_pool *tnl_id_pool = NULL;
 static uint32_t
 tnl_id_alloc(void *arg OVS_UNUSED)
 {
+    static struct ovsthread_once tnl_id_init = OVSTHREAD_ONCE_INITIALIZER;
+    unsigned int tid = netdev_offload_thread_id();
     uint32_t id;
 
-    if (!tnl_id_pool) {
-        /* Haven't initiated yet, do it here */
-        tnl_id_pool = seq_pool_create(1, MIN_TUNNEL_ID, MAX_TUNNEL_ID);
+    if (ovsthread_once_start(&tnl_id_init)) {
+        tnl_id_pool = seq_pool_create(netdev_offload_thread_nb(),
+                                      MIN_TUNNEL_ID, MAX_TUNNEL_ID);
+        ovsthread_once_done(&tnl_id_init);
     }
 
-    if (seq_pool_new_id(tnl_id_pool, 0, &id)) {
+    if (seq_pool_new_id(tnl_id_pool, tid, &id)) {
         return id;
     }
 
@@ -986,7 +1013,9 @@ tnl_id_alloc(void *arg OVS_UNUSED)
 static void
 tnl_id_free(void *arg OVS_UNUSED, uint32_t id)
 {
-    seq_pool_free_id(tnl_id_pool, 0, id);
+    unsigned int tid = netdev_offload_thread_id();
+
+    seq_pool_free_id(tnl_id_pool, tid, id);
 }
 
 static struct ds *
