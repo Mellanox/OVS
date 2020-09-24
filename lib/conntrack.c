@@ -334,6 +334,9 @@ conntrack_offload_del_conn(struct conntrack *ct,
             continue;
         }
         item[dir].ctid = conn_dir->offloads.ctid;
+        if (ct_e2e_cache_enabled) {
+            ct->offload_class->conn_e2e_del(&item[dir].ufid);
+        }
     }
     item[CT_DIR_INIT].refcnt = conn->offloads.refcnt;
     item[CT_DIR_REP].refcnt = NULL;
