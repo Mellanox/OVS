@@ -8594,10 +8594,8 @@ dp_netdev_e2e_cache_main(void *arg OVS_UNUSED)
         while ((ufid_msg = e2e_cache_ufid_msg_dequeue()) != NULL) {
             if (ufid_msg->op == E2E_UFID_MSG_PUT) {
                 e2e_cache_flow_db_put(ufid_msg);
-                atomic_count_inc(&e2e_stats.new_flow_msgs);
             } else {
                 e2e_cache_flow_db_del(&ufid_msg->ufid);
-                atomic_count_inc(&e2e_stats.del_flow_msgs);
             }
             free(ufid_msg);
         }
