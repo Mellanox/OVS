@@ -409,10 +409,7 @@ get_context_data_by_id(struct context_metadata *md, uint32_t id, void *data)
     return -1;
 }
 
-static struct ovs_list context_release_list =
-    OVS_LIST_INITIALIZER(&context_release_list);
-static struct ovs_mutex context_release_lock =
-    OVS_MUTEX_INITIALIZER;
+static struct ovs_list *context_release_lists;
 
 struct context_release_item {
     struct ovs_list node;
@@ -479,11 +476,32 @@ maps_unlock:
 }
 
 static void
+context_delayed_release_init(void)
+{
+    static struct ovsthread_once init_once =
+        OVSTHREAD_ONCE_INITIALIZER;
+
+    if (ovsthread_once_start(&init_once)) {
+        size_t i;
+
+        context_release_lists = xcalloc(netdev_offload_thread_nb(),
+                                        sizeof *context_release_lists);
+        for (i = 0; i < netdev_offload_thread_nb(); i++) {
+            ovs_list_init(&context_release_lists[i]);
+        }
+        ovsthread_once_done(&init_once);
+    }
+}
+
+static void
 context_delayed_release(struct context_metadata *md, void *arg, uint32_t id,
                         struct context_data *data, bool associated)
 {
     struct context_release_item *item;
     struct ovs_list *context_release_list;
+    unsigned int tid;
+
+    context_delayed_release_init();
 
     item = xzalloc(sizeof *item);
     item->md = md;
@@ -495,10 +513,12 @@ context_delayed_release(struct context_metadata *md, void *arg, uint32_t id,
         context_release(item);
         return;
     }
+
+    tid = netdev_offload_thread_id();
+    context_release_list = &context_release_lists[tid];
+
     item->timestamp = time_msec();
-    ovs_mutex_lock(&context_release_lock);
-    ovs_list_push_back(&context_release_list, &item->node);
-    ovs_mutex_unlock(&context_release_lock);
+    ovs_list_push_back(context_release_list, &item->node);
     VLOG_DBG_RL(&rl, "%s: md=%s, id=%d, associated=%d, timestamp=%llu",
                 __func__, item->md->name, item->id, associated,
                 item->timestamp);
@@ -512,14 +532,20 @@ context_delayed_release(struct context_metadata *md, void *arg, uint32_t id,
 static void
 do_context_delayed_release(void)
 {
+    struct ovs_list *context_release_list;
     struct context_release_item *item;
     struct ovs_list *list;
     long long int now;
+    unsigned int tid;
+
+    context_delayed_release_init();
+
+    tid = netdev_offload_thread_id();
+    context_release_list = &context_release_lists[tid];
 
     now = time_msec();
-    ovs_mutex_lock(&context_release_lock);
-    while (!ovs_list_is_empty(&context_release_list)) {
-        list = ovs_list_front(&context_release_list);
+    while (!ovs_list_is_empty(context_release_list)) {
+        list = ovs_list_front(context_release_list);
         item = CONTAINER_OF(list, struct context_release_item, node);
         if (now < item->timestamp + DELAYED_RELEASE_TIMEOUT_MS) {
             break;
@@ -530,7 +556,6 @@ do_context_delayed_release(void)
         ovs_list_remove(list);
         context_release(item);
     }
-    ovs_mutex_unlock(&context_release_lock);
 }
 
 static void
