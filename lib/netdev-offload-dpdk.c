@@ -243,12 +243,13 @@ ufid_to_rte_flow_disassociate(struct ufid_to_rte_flow_data *data)
 }
 
 /* A generic data structure used for mapping data to id and id to data. The
- * elements are reference coutned. As changes are done only from the single
- * offload thread, no locks are required.
+ * elements are reference coutned. Changes may come from multiple threads,
+ * writes are locked.
  * "name" and "dump_context_data" are used for log messages.
- * "d2i_hmap" is the data-to-id map.
- * "i2d_hmap" is the id-to-data map.
- * "associated_i2d_cmap" is a id-to-data map used to associate already
+ * "maps_lock" is the hashmaps lock for MT-safety.
+ * "d2i_map" is the data-to-id map.
+ * "i2d_map" is the id-to-data map.
+ * "associated_i2d_map" is a id-to-data map used to associate already
  *      allocated ids.
  * "has_associated_map" is true if this metadata has an associated map.
  * "id_alloc" is used to allocate an id for a new data.
@@ -258,9 +259,10 @@ ufid_to_rte_flow_disassociate(struct ufid_to_rte_flow_data *data)
 struct context_metadata {
     const char *name;
     struct ds *(*dump_context_data)(struct ds *s, void *data);
-    struct hmap d2i_hmap;
-    struct hmap i2d_hmap;
-    struct hmap associated_i2d_hmap;
+    struct ovs_mutex maps_lock;
+    struct cmap d2i_map;
+    struct cmap i2d_map;
+    struct cmap associated_i2d_map;
     bool has_associated_map;
     uint32_t (*id_alloc)(void *arg);
     void (*id_free)(void *arg, uint32_t id);
@@ -271,13 +273,37 @@ struct context_metadata {
 struct context_release_item;
 
 struct context_data {
-    struct hmap_node d2i_node;
-    struct hmap_node i2d_node;
-    struct hmap_node associated_i2d_node;
+    struct cmap_node d2i_node;
+    uint32_t d2i_hash;
+    struct cmap_node i2d_node;
+    uint32_t i2d_hash;
+    struct cmap_node associated_i2d_node;
+    uint32_t associated_i2d_hash;
     void *data;
     uint32_t id;
     struct ovs_refcount refcount;
 };
+
+static bool
+context_data_ref(struct context_metadata *md,
+                 struct context_data *ctx_data,
+                 uint32_t dhash)
+{
+    struct context_data *data_cur;
+    bool found = false;
+
+    ovs_mutex_lock(&md->maps_lock);
+    CMAP_FOR_EACH_WITH_HASH_PROTECTED (data_cur, d2i_node, dhash,
+                                       &md->d2i_map) {
+        if (data_cur == ctx_data) {
+            ovs_refcount_ref(&data_cur->refcount);
+            found = true;
+            break;
+        }
+    }
+    ovs_mutex_unlock(&md->maps_lock);
+    return found;
+}
 
 static int
 get_context_data_id_by_data(struct context_metadata *md,
@@ -290,10 +316,17 @@ get_context_data_id_by_data(struct context_metadata *md,
     struct ds s;
 
     ds_init(&s);
+
     dhash = hash_bytes(data_req->data, md->data_size, 0);
-    HMAP_FOR_EACH_WITH_HASH (data_cur, d2i_node, dhash, &md->d2i_hmap) {
+    CMAP_FOR_EACH_WITH_HASH (data_cur, d2i_node, dhash, &md->d2i_map) {
         if (!memcmp(data_req->data, data_cur->data, md->data_size)) {
-            ovs_refcount_ref(&data_cur->refcount);
+            if (!context_data_ref(md, data_cur, dhash)) {
+                /* If a reference could not be taken, it means that
+                 * while the data has been found within the map, it has
+                 * since been removed and related ID freed. At this point,
+                 * allocate a new data node altogether. */
+                break;
+            }
             VLOG_DBG_RL(&rl,
                         "%s: %s: '%s', refcnt=%u, id=%d", __func__, md->name,
                         ds_cstr(md->dump_context_data(&s, data_cur->data)),
@@ -319,14 +352,19 @@ get_context_data_id_by_data(struct context_metadata *md,
     if (data_cur->id == 0) {
         goto err_id_alloc;
     }
-    hmap_insert(&md->d2i_hmap, &data_cur->d2i_node, dhash);
+    ovs_mutex_lock(&md->maps_lock);
+    data_cur->d2i_hash = dhash;
+    cmap_insert(&md->d2i_map, &data_cur->d2i_node, dhash);
     ihash = hash_add(0, data_cur->id);
-    hmap_insert(&md->i2d_hmap, &data_cur->i2d_node, ihash);
+    data_cur->i2d_hash = ihash;
+    cmap_insert(&md->i2d_map, &data_cur->i2d_node, ihash);
     VLOG_DBG_RL(&rl, "%s: %s: '%s', refcnt=%d, id=%d", __func__, md->name,
                 ds_cstr(md->dump_context_data(&s, data_cur->data)),
                 ovs_refcount_read(&data_cur->refcount),
                 data_cur->id);
     *id = data_cur->id;
+
+    ovs_mutex_unlock(&md->maps_lock);
     ds_destroy(&s);
     return 0;
 
@@ -350,8 +388,8 @@ get_context_data_by_id(struct context_metadata *md, uint32_t id, void *data)
 
     ds_init(&s);
     if (md->has_associated_map) {
-        HMAP_FOR_EACH_WITH_HASH (data_cur, associated_i2d_node, ihash,
-                                 &md->associated_i2d_hmap) {
+        CMAP_FOR_EACH_WITH_HASH (data_cur, associated_i2d_node, ihash,
+                                 &md->associated_i2d_map) {
             if (data_cur->id == id) {
                 memcpy(data, data_cur->data, md->data_size);
                 ds_destroy(&s);
@@ -359,7 +397,7 @@ get_context_data_by_id(struct context_metadata *md, uint32_t id, void *data)
             }
         }
     }
-    HMAP_FOR_EACH_WITH_HASH (data_cur, i2d_node, ihash, &md->i2d_hmap) {
+    CMAP_FOR_EACH_WITH_HASH (data_cur, i2d_node, ihash, &md->i2d_map) {
         if (data_cur->id == id) {
             memcpy(data, data_cur->data, md->data_size);
             ds_destroy(&s);
@@ -373,6 +411,8 @@ get_context_data_by_id(struct context_metadata *md, uint32_t id, void *data)
 
 static struct ovs_list context_release_list =
     OVS_LIST_INITIALIZER(&context_release_list);
+static struct ovs_mutex context_release_lock =
+    OVS_MUTEX_INITIALIZER;
 
 struct context_release_item {
     struct ovs_list node;
@@ -385,45 +425,67 @@ struct context_release_item {
 };
 
 static void
+context_item_unref(struct context_release_item *item)
+{
+    free(item->data);
+    if (!item->associated) {
+        item->md->id_free(item->arg, item->id);
+    }
+    free(item);
+}
+
+static void
 context_release(struct context_release_item *item)
 {
     struct context_metadata *md = item->md;
     struct context_data *data = item->data;
-    uint32_t id = item->id;
-    void *arg = item->arg;
+    struct context_data *data_cur;
+    size_t ihash;
+
+    VLOG_DBG_RL(&rl, "%s: md=%s, id=%d. associated=%d", __func__, md->name,
+                item->id, item->associated);
+
+    ovs_mutex_lock(&md->maps_lock);
 
     if (!item->associated
         && ovs_refcount_unref(&item->data->refcount) > 1) {
         /* Data has been referenced again since delayed release request. */
+        goto maps_unlock;
+    }
+
+    ihash = hash_add(0, item->id);
+
+    CMAP_FOR_EACH_WITH_HASH_PROTECTED (data_cur, i2d_node, ihash,
+                                       &item->md->i2d_map) {
+        if (data_cur->id != item->id) {
+            continue;
+        }
+        if (!item->associated) {
+            cmap_remove(&md->i2d_map, &data->i2d_node, data->i2d_hash);
+            cmap_remove(&md->d2i_map, &data->d2i_node, data->d2i_hash);
+        } else {
+            cmap_remove(&md->associated_i2d_map,
+                        &data->associated_i2d_node,
+                        data->associated_i2d_hash);
+        }
+        ovsrcu_postpone(context_item_unref, item);
+        ovs_mutex_unlock(&md->maps_lock);
         return;
     }
 
-    VLOG_DBG_RL(&rl, "%s: md=%s, id=%d. associated=%d", __func__, md->name,
-                id, item->associated);
-    if (!item->associated) {
-        hmap_remove(&md->i2d_hmap, &data->i2d_node);
-        hmap_remove(&md->d2i_hmap, &data->d2i_node);
-        free(data);
-        md->id_free(arg, id);
-    } else {
-        hmap_remove(&md->associated_i2d_hmap,
-                    &data->associated_i2d_node);
-        free(data);
-    }
+maps_unlock:
+    ovs_mutex_unlock(&md->maps_lock);
+    free(item);
 }
 
 static void
 context_delayed_release(struct context_metadata *md, void *arg, uint32_t id,
                         struct context_data *data, bool associated)
 {
-    struct context_release_item tmp_item, *item;
+    struct context_release_item *item;
+    struct ovs_list *context_release_list;
 
-    if (md->delayed_release) {
-        item = xzalloc(sizeof *item);
-    } else {
-        item = &tmp_item;
-    }
-
+    item = xzalloc(sizeof *item);
     item->md = md;
     item->arg = arg;
     item->id = id;
@@ -434,7 +496,9 @@ context_delayed_release(struct context_metadata *md, void *arg, uint32_t id,
         return;
     }
     item->timestamp = time_msec();
+    ovs_mutex_lock(&context_release_lock);
     ovs_list_push_back(&context_release_list, &item->node);
+    ovs_mutex_unlock(&context_release_lock);
     VLOG_DBG_RL(&rl, "%s: md=%s, id=%d, associated=%d, timestamp=%llu",
                 __func__, item->md->name, item->id, associated,
                 item->timestamp);
@@ -453,6 +517,7 @@ do_context_delayed_release(void)
     long long int now;
 
     now = time_msec();
+    ovs_mutex_lock(&context_release_lock);
     while (!ovs_list_is_empty(&context_release_list)) {
         list = ovs_list_front(&context_release_list);
         item = CONTAINER_OF(list, struct context_release_item, node);
@@ -462,10 +527,10 @@ do_context_delayed_release(void)
         VLOG_DBG_RL(&rl, "%s: md=%s, id=%d, associated=%d, timestamp=%llu, "
                     "now=%llu", __func__, item->md->name, item->id,
                     item->associated, item->timestamp, now);
-        context_release(item);
         ovs_list_remove(list);
-        free(item);
+        context_release(item);
     }
+    ovs_mutex_unlock(&context_release_lock);
 }
 
 static void
@@ -479,7 +544,7 @@ put_context_data_by_id(struct context_metadata *md, void *arg, uint32_t id)
         return;
     }
     ihash = hash_add(0, id);
-    HMAP_FOR_EACH_WITH_HASH (data_cur, i2d_node, ihash, &md->i2d_hmap) {
+    CMAP_FOR_EACH_WITH_HASH (data_cur, i2d_node, ihash, &md->i2d_map) {
         if (data_cur->id == id) {
             ds_init(&s);
             VLOG_DBG_RL(&rl,
@@ -517,8 +582,11 @@ associate_id_data(struct context_metadata *md,
     ovs_refcount_init(&data_cur->refcount);
     data_cur->id = data_req->id;
     ihash = hash_add(0, data_cur->id);
-    hmap_insert(&md->associated_i2d_hmap, &data_cur->associated_i2d_node,
+    ovs_mutex_lock(&md->maps_lock);
+    data_cur->associated_i2d_hash = ihash;
+    cmap_insert(&md->associated_i2d_map, &data_cur->associated_i2d_node,
                 ihash);
+    ovs_mutex_unlock(&md->maps_lock);
     VLOG_DBG_RL(&rl, "%s: %s: '%s', refcnt=%d, id=%d", __func__, md->name,
                 ds_cstr(md->dump_context_data(&s, data_cur->data)),
                 ovs_refcount_read(&data_cur->refcount),
@@ -543,8 +611,8 @@ disassociate_id_data(struct context_metadata *md, uint32_t id)
     struct ds s;
 
     ihash = hash_add(0, id);
-    HMAP_FOR_EACH_WITH_HASH (data_cur, associated_i2d_node, ihash,
-                             &md->associated_i2d_hmap) {
+    CMAP_FOR_EACH_WITH_HASH (data_cur, associated_i2d_node, ihash,
+                             &md->associated_i2d_map) {
         if (data_cur->id == id) {
             ds_init(&s);
             VLOG_DBG_RL(&rl, "%s: %s: '%s', id=%d", __func__, md->name,
@@ -708,8 +776,9 @@ label_id_free(void *arg OVS_UNUSED, uint32_t label_id)
 static struct context_metadata label_id_md = {
     .name = "label_id",
     .dump_context_data = dump_label_id,
-    .d2i_hmap = HMAP_INITIALIZER(&label_id_md.d2i_hmap),
-    .i2d_hmap = HMAP_INITIALIZER(&label_id_md.i2d_hmap),
+    .maps_lock = OVS_MUTEX_INITIALIZER,
+    .d2i_map = CMAP_INITIALIZER,
+    .i2d_map = CMAP_INITIALIZER,
     .id_alloc = label_id_alloc,
     .id_free = label_id_free,
     .data_size = sizeof(ovs_u128),
@@ -775,8 +844,9 @@ zone_id_free(void *arg OVS_UNUSED, uint32_t zone_id)
 static struct context_metadata zone_id_md = {
     .name = "zone_id",
     .dump_context_data = dump_zone_id,
-    .d2i_hmap = HMAP_INITIALIZER(&zone_id_md.d2i_hmap),
-    .i2d_hmap = HMAP_INITIALIZER(&zone_id_md.i2d_hmap),
+    .maps_lock = OVS_MUTEX_INITIALIZER,
+    .d2i_map = CMAP_INITIALIZER,
+    .i2d_map = CMAP_INITIALIZER,
     .id_alloc = zone_id_alloc,
     .id_free = zone_id_free,
     .data_size = sizeof(uint16_t),
@@ -858,8 +928,9 @@ table_id_free(void *arg, uint32_t id)
 static struct context_metadata table_id_md = {
     .name = "table_id",
     .dump_context_data = dump_table_id,
-    .d2i_hmap = HMAP_INITIALIZER(&table_id_md.d2i_hmap),
-    .i2d_hmap = HMAP_INITIALIZER(&table_id_md.i2d_hmap),
+    .maps_lock = OVS_MUTEX_INITIALIZER,
+    .d2i_map = CMAP_INITIALIZER,
+    .i2d_map = CMAP_INITIALIZER,
     .id_alloc = table_id_alloc,
     .id_free = table_id_free,
     .data_size = sizeof(struct table_id_data),
@@ -947,8 +1018,9 @@ dump_ct_ctx_id(struct ds *s, void *data)
 static struct context_metadata ct_miss_ctx_md = {
     .name = "ct_miss_ctx",
     .dump_context_data = dump_ct_ctx_id,
-    .d2i_hmap = HMAP_INITIALIZER(&ct_miss_ctx_md.d2i_hmap),
-    .i2d_hmap = HMAP_INITIALIZER(&ct_miss_ctx_md.i2d_hmap),
+    .maps_lock = OVS_MUTEX_INITIALIZER,
+    .d2i_map = CMAP_INITIALIZER,
+    .i2d_map = CMAP_INITIALIZER,
     .id_alloc = ct_ctx_id_alloc,
     .id_free = ct_ctx_id_free,
     .data_size = sizeof(struct ct_miss_ctx),
@@ -1025,8 +1097,9 @@ dump_tnl_id(struct ds *s, void *data)
 static struct context_metadata tnl_md = {
     .name = "tunnel",
     .dump_context_data = dump_tnl_id,
-    .d2i_hmap = HMAP_INITIALIZER(&tnl_md.d2i_hmap),
-    .i2d_hmap = HMAP_INITIALIZER(&tnl_md.i2d_hmap),
+    .maps_lock = OVS_MUTEX_INITIALIZER,
+    .d2i_map = CMAP_INITIALIZER,
+    .i2d_map = CMAP_INITIALIZER,
     .id_alloc = tnl_id_alloc,
     .id_free = tnl_id_free,
     .data_size = 2 * sizeof(struct flow_tnl),
@@ -1110,10 +1183,10 @@ flow_miss_id_free(void *arg OVS_UNUSED, uint32_t id)
 static struct context_metadata flow_miss_ctx_md = {
     .name = "flow_miss_ctx",
     .dump_context_data = dump_flow_ctx_id,
-    .d2i_hmap = HMAP_INITIALIZER(&flow_miss_ctx_md.d2i_hmap),
-    .i2d_hmap = HMAP_INITIALIZER(&flow_miss_ctx_md.i2d_hmap),
-    .associated_i2d_hmap =
-        HMAP_INITIALIZER(&flow_miss_ctx_md.associated_i2d_hmap),
+    .maps_lock = OVS_MUTEX_INITIALIZER,
+    .d2i_map = CMAP_INITIALIZER,
+    .i2d_map = CMAP_INITIALIZER,
+    .associated_i2d_map = CMAP_INITIALIZER,
     .has_associated_map = true,
     .id_alloc = flow_miss_id_alloc,
     .id_free = flow_miss_id_free,
