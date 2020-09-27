@@ -8635,6 +8635,9 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
             num_elements++;
             cur_trace_info++;
             packet->e2e_trace_flags &= ~E2E_CACHE_TRACE_FLAG_TNL_POP;
+            if (!packet->e2e_trace_ct_ufids) {
+                continue;
+            }
         }
         /* Send only traces for packet that passed conntrack */
         if (!packet->e2e_trace_ct_ufids) {
