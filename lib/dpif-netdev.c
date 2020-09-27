@@ -10980,54 +10980,54 @@ e2e_cache_flows_are_valid(struct e2e_cache_ufid_to_flow_item **netdev_flows,
     uint16_t i;
 
     for (i = 0; i < num; i++) {
-         match = &netdev_flows[i]->match;
-         /* validate match */
-         if ((match->flow.ipv6_label & match->wc.masks.ipv6_label) ||
-             (match->flow.nw_tos & match->wc.masks.nw_tos) ||
-             (match->flow.tcp_flags & match->wc.masks.tcp_flags) ||
-             (match->flow.igmp_group_ip4 & match->wc.masks.igmp_group_ip4)) {
-             /* TODO: add statistic counter */
-             return false;
-         }
-         /* validate actions */
-         NL_ATTR_FOR_EACH (a, left, netdev_flows[i]->actions,
-                           netdev_flows[i]->actions_size) {
-             enum ovs_action_attr type = nl_attr_type(a);
-             if (type == OVS_ACTION_ATTR_USERSPACE ||
-                 type == OVS_ACTION_ATTR_HASH ||
-                 type == OVS_ACTION_ATTR_TRUNC ||
-                 type == OVS_ACTION_ATTR_PUSH_NSH ||
-                 type == OVS_ACTION_ATTR_POP_NSH ||
-                 type == OVS_ACTION_ATTR_CT_CLEAR ||
-                 type == OVS_ACTION_ATTR_CHECK_PKT_LEN ||
-                 type == OVS_ACTION_ATTR_SAMPLE ||
-                 ((type == OVS_ACTION_ATTR_OUTPUT ||
-                   type == OVS_ACTION_ATTR_CLONE) &&
-                  left > NLA_ALIGN(a->nla_len)) ||
-                 ((type == OVS_ACTION_ATTR_SET ||
-                   type == OVS_ACTION_ATTR_SET_MASKED) &&
-                  !e2e_cache_set_action_is_valid(a))) {
-                  /* TODO: add statistic counter */
-                 return false;
-             }
-         }
+        match = &netdev_flows[i]->match;
+        /* validate match */
+        if ((match->flow.ipv6_label & match->wc.masks.ipv6_label) ||
+            (match->flow.nw_tos & match->wc.masks.nw_tos) ||
+            (match->flow.tcp_flags & match->wc.masks.tcp_flags) ||
+            (match->flow.igmp_group_ip4 & match->wc.masks.igmp_group_ip4)) {
+            /* TODO: add statistic counter */
+            return false;
+        }
+        /* validate actions */
+        NL_ATTR_FOR_EACH (a, left, netdev_flows[i]->actions,
+                          netdev_flows[i]->actions_size) {
+            enum ovs_action_attr type = nl_attr_type(a);
+            if (type == OVS_ACTION_ATTR_USERSPACE ||
+                type == OVS_ACTION_ATTR_HASH ||
+                type == OVS_ACTION_ATTR_TRUNC ||
+                type == OVS_ACTION_ATTR_PUSH_NSH ||
+                type == OVS_ACTION_ATTR_POP_NSH ||
+                type == OVS_ACTION_ATTR_CT_CLEAR ||
+                type == OVS_ACTION_ATTR_CHECK_PKT_LEN ||
+                type == OVS_ACTION_ATTR_SAMPLE ||
+                ((type == OVS_ACTION_ATTR_OUTPUT ||
+                  type == OVS_ACTION_ATTR_CLONE) &&
+                 left > NLA_ALIGN(a->nla_len)) ||
+                ((type == OVS_ACTION_ATTR_SET ||
+                  type == OVS_ACTION_ATTR_SET_MASKED) &&
+                 !e2e_cache_set_action_is_valid(a))) {
+                 /* TODO: add statistic counter */
+                return false;
+            }
+        }
     }
     return true;
 }
 
-#define e2e_save_set_attr(mfield, field, flag)                             \
-        if (mask) {                                                        \
-            if (!is_all_zeros(&mask->field, sizeof mask->field)) {         \
-                if (!is_all_ones(&mask->field, sizeof mask->field)) {      \
-                    VLOG_DBG_RL(&rl, "HW partial mask is not supported");  \
-                }                                                          \
-                merged->flags |= flag;                                     \
-                merged->mfield.field = key->field;                         \
-            }                                                              \
-        } else if (!is_all_zeros(&key->field, sizeof key->field)) {        \
-            merged->flags |= flag;                                         \
-            merged->mfield.field = key->field;                             \
-        }
+#define e2e_save_set_attr(mfield, field, flag)                         \
+    if (mask) {                                                        \
+        if (!is_all_zeros(&mask->field, sizeof mask->field)) {         \
+            if (!is_all_ones(&mask->field, sizeof mask->field)) {      \
+                VLOG_DBG_RL(&rl, "HW partial mask is not supported");  \
+            }                                                          \
+            merged->flags |= flag;                                     \
+            merged->mfield.field = key->field;                         \
+        }                                                              \
+    } else if (!is_all_zeros(&key->field, sizeof key->field)) {        \
+        merged->flags |= flag;                                         \
+        merged->mfield.field = key->field;                             \
+    }
 
 static inline void
 e2e_cache_save_set_actions(struct e2e_cache_merged_set *merged, bool masked,
@@ -11075,11 +11075,11 @@ e2e_cache_save_set_actions(struct e2e_cache_merged_set *merged, bool masked,
     }
 }
 
-#define e2e_construct_set_attr(mfield, field, flag)                     \
-        if (merged->flags & flag) {                                     \
-            key->field = merged->mfield.field;                          \
-            memset(&mask->field, 0xFF, sizeof mask->field);             \
-        }
+#define e2e_construct_set_attr(mfield, field, flag)       \
+    if (merged->flags & flag) {                           \
+        key->field = merged->mfield.field;                \
+        memset(&mask->field, 0xFF, sizeof mask->field);   \
+    }
 
 static inline void
 e2e_cache_attach_merged_set_action(struct ofpbuf *buf, size_t tnl_offset,
@@ -11160,8 +11160,8 @@ e2e_cache_merge_actions(struct e2e_cache_ufid_to_flow_item **netdev_flows,
 
     memset(&merged_set, 0, sizeof merged_set);
     for (i = 0; i < num; i++) {
-         NL_ATTR_FOR_EACH (a, left, netdev_flows[i]->actions,
-                           netdev_flows[i]->actions_size) {
+        NL_ATTR_FOR_EACH (a, left, netdev_flows[i]->actions,
+                          netdev_flows[i]->actions_size) {
             enum ovs_action_attr type = nl_attr_type(a);
 
             if (type == OVS_ACTION_ATTR_CT ||
@@ -11183,7 +11183,7 @@ e2e_cache_merge_actions(struct e2e_cache_ufid_to_flow_item **netdev_flows,
                 tnl_offset = buf->size + a->nla_len;
             }
             ofpbuf_put(buf, a, a->nla_len);
-         }
+        }
     }
     if (num_set) {
         e2e_cache_attach_merged_set_action(buf, tnl_offset, &merged_set);
@@ -11223,7 +11223,7 @@ e2e_cache_shift_tnl_fields(struct match *merged_match)
     memcpy(&inport_mask, &merged_match->wc.masks.in_port, sizeof inport_mask);
     /* clear match buffer */
     memset(merged_match, 0, sizeof *merged_match);
-    /* restore tunnel matcher */
+    /* restore tunnel match */
     if (merge_src) {
         memcpy(&merged_match->flow.tunnel.metadata.dl_src, &dl_src,
                sizeof dl_src);
@@ -11244,16 +11244,16 @@ e2e_cache_shift_tnl_fields(struct match *merged_match)
     memcpy(&merged_match->wc.masks.in_port, &inport_mask, sizeof inport_mask);
 }
 
-#define merge_flow_matcher(field, src, dst)                          \
-        if (!is_all_zeros(&src->wc.masks.field,                      \
-                          sizeof src->wc.masks.field) &&             \
-            is_all_zeros(&dst->wc.masks.field,                       \
-                         sizeof dst->wc.masks.field)) {              \
-            memcpy(&dst->flow.field, &src->flow.field,               \
-                   sizeof src->flow.field);                          \
-            memcpy(&dst->wc.masks.field, &src->wc.masks.field,       \
-                   sizeof src->wc.masks.field);                      \
-        }
+#define merge_flow_match(field, src, dst)                   \
+    if (!is_all_zeros(&src->wc.masks.field,                 \
+                      sizeof src->wc.masks.field) &&        \
+        is_all_zeros(&dst->wc.masks.field,                  \
+                     sizeof dst->wc.masks.field)) {         \
+        memcpy(&dst->flow.field, &src->flow.field,          \
+               sizeof src->flow.field);                     \
+        memcpy(&dst->wc.masks.field, &src->wc.masks.field,  \
+               sizeof src->wc.masks.field);                 \
+    }
 
 static void
 e2e_cache_merge_match(struct e2e_cache_ufid_to_flow_item **netdev_flows,
@@ -11264,36 +11264,36 @@ e2e_cache_merge_match(struct e2e_cache_ufid_to_flow_item **netdev_flows,
     bool tnl_saved = false;
 
     for (i = 0; i < num; i++) {
-         /* parse match */
-         match = &(netdev_flows[i]->match);
-         if (!tnl_saved && !is_all_zeros(&match->wc.masks.tunnel,
-                                         sizeof match->wc.masks.tunnel)) {
-             e2e_cache_shift_tnl_fields(merged_match);
-             tnl_saved = true;
-         }
-         /* merge in_port */
-         merge_flow_matcher(in_port, match, merged_match);
+        /* parse match */
+        match = &(netdev_flows[i]->match);
+        if (!tnl_saved && !is_all_zeros(&match->wc.masks.tunnel,
+                                        sizeof match->wc.masks.tunnel)) {
+            e2e_cache_shift_tnl_fields(merged_match);
+            tnl_saved = true;
+        }
+        /* merge in_port */
+        merge_flow_match(in_port, match, merged_match);
 
-         /* merge tunnel outer */
-         merge_flow_matcher(tunnel.ip_src, match, merged_match);
-         merge_flow_matcher(tunnel.ip_dst, match, merged_match);
-         merge_flow_matcher(tunnel.ipv6_src, match, merged_match);
-         merge_flow_matcher(tunnel.ipv6_dst, match, merged_match);
-         merge_flow_matcher(tunnel.tun_id, match, merged_match);
-         merge_flow_matcher(tunnel.tp_dst, match, merged_match);
+        /* merge tunnel outer */
+        merge_flow_match(tunnel.ip_src, match, merged_match);
+        merge_flow_match(tunnel.ip_dst, match, merged_match);
+        merge_flow_match(tunnel.ipv6_src, match, merged_match);
+        merge_flow_match(tunnel.ipv6_dst, match, merged_match);
+        merge_flow_match(tunnel.tun_id, match, merged_match);
+        merge_flow_match(tunnel.tp_dst, match, merged_match);
 
-         /* merge inner/non-tnl */
-         merge_flow_matcher(dl_src, match, merged_match);
-         merge_flow_matcher(dl_dst, match, merged_match);
-         merge_flow_matcher(dl_type, match, merged_match);
-         merge_flow_matcher(nw_src, match, merged_match);
-         merge_flow_matcher(nw_dst, match, merged_match);
-         merge_flow_matcher(ipv6_src, match, merged_match);
-         merge_flow_matcher(ipv6_dst, match, merged_match);
-         merge_flow_matcher(nw_frag, match, merged_match);
-         merge_flow_matcher(nw_proto, match, merged_match);
-         merge_flow_matcher(tp_src, match, merged_match);
-         merge_flow_matcher(tp_dst, match, merged_match);
+        /* merge inner/non-tnl */
+        merge_flow_match(dl_src, match, merged_match);
+        merge_flow_match(dl_dst, match, merged_match);
+        merge_flow_match(dl_type, match, merged_match);
+        merge_flow_match(nw_src, match, merged_match);
+        merge_flow_match(nw_dst, match, merged_match);
+        merge_flow_match(ipv6_src, match, merged_match);
+        merge_flow_match(ipv6_dst, match, merged_match);
+        merge_flow_match(nw_frag, match, merged_match);
+        merge_flow_match(nw_proto, match, merged_match);
+        merge_flow_match(tp_src, match, merged_match);
+        merge_flow_match(tp_dst, match, merged_match);
     }
 }
 
