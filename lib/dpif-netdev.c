@@ -145,7 +145,11 @@ static struct odp_support dp_netdev_support = {
 };
 
 static bool dp_netdev_e2e_cache_enabled = false;
+#ifdef E2E_CACHE_ENABLED
 static uint32_t dp_netdev_e2e_cache_size = 0;
+#define E2E_CACHE_MAX_TRACE_Q_SIZE   (10000u)
+static uint32_t dp_netdev_e2e_cache_trace_q_size = E2E_CACHE_MAX_TRACE_Q_SIZE;
+#endif
 
 /* EMC cache and SMC cache compose the datapath flow cache (DFC)
  *
@@ -5151,7 +5155,27 @@ dpif_netdev_set_config(struct dpif *dpif, const struct smap *other_config)
     }
 
     dp_netdev_e2e_cache_enabled = netdev_is_e2e_cache_enabled();
+#ifdef E2E_CACHE_ENABLED
     dp_netdev_e2e_cache_size = netdev_get_e2e_cache_size();
+    if (dp_netdev_e2e_cache_enabled) {
+        static bool done = false;
+        int i_value = smap_get_int(other_config, "e2e-cache-trace-q-size",
+                                   E2E_CACHE_MAX_TRACE_Q_SIZE);
+        if (i_value < 0) {
+            i_value = 0;
+        }
+        if (!done || dp_netdev_e2e_cache_trace_q_size != (uint32_t) i_value) {
+            dp_netdev_e2e_cache_trace_q_size = (uint32_t) i_value;
+            if (dp_netdev_e2e_cache_trace_q_size) {
+                VLOG_INFO("E2E cache trace queue size %u",
+                        dp_netdev_e2e_cache_trace_q_size);
+            } else {
+                VLOG_INFO("E2E cache trace queue unlimited");
+            }
+            done = true;
+        }
+    }
+#endif
 
     bool pmd_rxq_assign_cyc = !strcmp(pmd_rxq_assign, "cycles");
     if (!pmd_rxq_assign_cyc && strcmp(pmd_rxq_assign, "roundrobin")) {
@@ -7820,6 +7844,8 @@ struct e2e_cache_thread_msg_queues {
  * throttled_msgs = Amount of trace messages throttled due to high message
  *                  rate.
  * trace_msgs_in_queue = Amount of trace messages in E2E cache queue.
+ * trace_msgs_queue_overflow = Amount of trace messages dropped due to
+ *                             queue overflow.
  * new_flow_msgs = Amount of new flow messages received by E2E cache.
  * del_flow_msgs = Amount of delete flow messages received by E2E cache.
  * succ_merged_flows = Amount of successfully merged flows.
@@ -7835,6 +7861,7 @@ struct e2e_cache_stats {
     atomic_count aborted_msgs;
     atomic_count throttled_msgs;
     uint32_t trace_msgs_in_queue;
+    atomic_count trace_msgs_queue_overflow;
     uint32_t new_flow_msgs;
     uint32_t del_flow_msgs;
     uint32_t succ_merged_flows;
@@ -7877,6 +7904,7 @@ static struct e2e_cache_stats e2e_stats = {
     .aborted_msgs = ATOMIC_COUNT_INIT(0),
     .throttled_msgs = ATOMIC_COUNT_INIT(0),
     .trace_msgs_in_queue = 0,
+    .trace_msgs_queue_overflow = ATOMIC_COUNT_INIT(0),
     .new_flow_msgs = 0,
     .del_flow_msgs = 0,
     .succ_merged_flows = 0,
@@ -7912,6 +7940,8 @@ dpif_netdev_e2e_stats_format(struct e2e_cache_stats *stats, struct ds *s)
                   atomic_count_get(&stats->throttled_msgs));
     ds_put_format(s, "\n%-45s : %"PRIu32"", "messages in e2e queue",
                   stats->trace_msgs_in_queue);
+    ds_put_format(s, "\n%-45s : %"PRIu32,"dropped due to e2e queue overflow",
+                  atomic_count_get(&stats->trace_msgs_queue_overflow));
     ds_put_format(s, "\n%-45s : %"PRIu32"", "new flow messages",
                   stats->new_flow_msgs);
     ds_put_format(s, "\n%-45s : %"PRIu32"", "delete flow messages",
@@ -8616,6 +8646,15 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
         xpthread_cond_init(&e2e_cache_thread_msg_queues.cond, NULL);
         ovs_thread_create("e2e_cache", dp_netdev_e2e_cache_main, NULL);
         ovsthread_once_done(&e2e_cache_thread_once);
+    }
+
+    if (dp_netdev_e2e_cache_trace_q_size) {
+        uint32_t cur_q_size = e2e_stats.trace_msgs_in_queue;
+
+        if (OVS_UNLIKELY(cur_q_size >= dp_netdev_e2e_cache_trace_q_size)) {
+            atomic_count_inc(&e2e_stats.trace_msgs_queue_overflow);
+            return;
+        }
     }
 
     buffer_size = sizeof(struct e2e_cache_trace_message) +
