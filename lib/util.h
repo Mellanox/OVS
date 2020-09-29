@@ -166,6 +166,7 @@ void free_cacheline(void *);
 
 void ovs_strlcpy(char *dst, const char *src, size_t size);
 void ovs_strzcpy(char *dst, const char *src, size_t size);
+char *ovs_strcat(char *dst, size_t size, char **end, const char *src);
 
 int string_ends_with(const char *str, const char *suffix);
 
@@ -229,6 +230,8 @@ bool ovs_scan(const char *s, const char *format, ...) OVS_SCANF_FORMAT(2, 3);
 bool ovs_scan_len(const char *s, int *n, const char *format, ...);
 
 bool str_to_double(const char *, double *);
+
+char *u32_to_hex(char *, uint32_t);
 
 int hexit_value(unsigned char c);
 uintmax_t hexits_value(const char *s, size_t n, bool *ok);
