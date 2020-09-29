@@ -380,6 +380,61 @@ ovs_strzcpy(char *dst, const char *src, size_t size)
     }
 }
 
+/* Concatenate 'src' to 'dst'.
+ *
+ * If 'end' is NULL or '*end' points outside of 'dst' scope,
+ * 'src' is written at the end of 'dst' and at most 'size - 1 - strlen(dst)'
+ * bytes are written.
+ *
+ * If 'end' is set and '*end' points within 'dst[0, size - 1]',
+ * 'src' is written at '*end' and at most 'size - 1 - (*end - dst)'
+ * bytes are written.
+ *
+ * If any byte is written to 'dst', a NUL-byte is appended.
+ * If 'end' is not NULL the new tail of 'dst' is written to it,
+ * thus '*end' points to 'dst' NUL-byte.
+ *
+ * This function is meant to safely concatenate strings while avoiding
+ * reading the full length of 'dst' each time, and without having to
+ * compute the number of remaining bytes in the memory allocated for 'dst':
+ *
+ *     char dst[8];
+ *     char *tail = dst;
+ *
+ *     ovs_strcat(dst, sizeof dst, &tail, "foo");
+ *     ovs_strcat(dst, sizeof dst, &tail, "bar");
+ *     ovs_strcat(dst, sizeof dst, &tail, "baz");
+ *
+ * Results in "foobarb" (including NUL-byte) being written to 'dst'.
+ */
+char *
+ovs_strcat(char *dst, size_t size, char **end, const char *src)
+{
+    size_t dlen;
+
+    if (end == NULL || *end < dst || &dst[size] < *end) {
+        dlen = strnlen(dst, size - 1);
+    } else {
+        dlen = *end - dst;
+    }
+
+    if (size > dlen) {
+        size_t slen;
+
+        size -= dlen;
+        slen = strnlen(src, size - 1);
+        memcpy(&dst[dlen], src, slen);
+        dst[dlen + slen] = '\0';
+        if (end != NULL) {
+            *end = &dst[dlen + slen];
+        }
+    } else if (end != NULL) {
+        *end = &dst[dlen];
+    }
+
+    return dst;
+}
+
 /*
  * Returns true if 'str' ends with given 'suffix'.
  */
@@ -914,6 +969,24 @@ str_to_double(const char *s, double *d)
         errno = save_errno;
         return true;
     }
+}
+
+/* Convert a u32 into its hexadecimal string representation.
+ * Result is right-aligned in buf with no left-padding.
+ * Return value points to the start of the written string.
+ */
+char *
+u32_to_hex(char *buf, uint32_t x)
+{
+    char *p = &buf[8];
+
+    *--p = '\0';
+    do {
+        *--p = "0123456789abcdef"[x & 0xf];
+        x >>= 4;
+    } while (x);
+
+    return p;
 }
 
 /* Returns the value of 'c' as a hexadecimal digit. */

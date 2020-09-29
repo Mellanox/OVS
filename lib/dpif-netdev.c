@@ -2923,7 +2923,9 @@ dp_netdev_create_ct_actions(struct ofpbuf *buf,
                             struct ct_flow_offload_item *offload)
 {
     size_t offset;
-    char *helper;
+    char helper[] = "offl,st(0x  ),id(0x        )";
+    char s[9];
+    char *end;
 
     if (offload->nat.mod_flags) {
         offset = nl_msg_start_nested(buf, OVS_ACTION_ATTR_SET_MASKED);
@@ -3017,10 +3019,15 @@ dp_netdev_create_ct_actions(struct ofpbuf *buf,
         *labels_mask = offload->label_mask;
     }
     nl_msg_put_u16(buf, OVS_CT_ATTR_ZONE, offload->key.zone);
-    helper = xasprintf("offl,st(0x%"PRIx8"),id(0x%"PRIx32")",
-                       offload->ct_state, *offload->ctid_ptr);
+
+    end = helper;
+    ovs_strcat(helper, sizeof helper, &end, "offl,st(0x");
+    ovs_strcat(helper, sizeof helper, &end, u32_to_hex(s, offload->ct_state));
+    ovs_strcat(helper, sizeof helper, &end, "),id(0x");
+    ovs_strcat(helper, sizeof helper, &end, u32_to_hex(s, *offload->ctid_ptr));
+    ovs_strcat(helper, sizeof helper, &end, ")");
+
     nl_msg_put_string(buf, OVS_CT_ATTR_HELPER, helper);
-    free(helper);
     nl_msg_end_nested(buf, offset);
 }
 
