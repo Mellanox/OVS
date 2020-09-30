@@ -7748,11 +7748,6 @@ packet_enqueue_to_flow_map(struct dp_packet *packet,
 
 #ifdef E2E_CACHE_ENABLED
 
-struct e2e_cache_trace_msg_item {
-    struct ovs_list node;
-    struct e2e_cache_trace_message *msg;
-};
-
 enum {
     E2E_UFID_MSG_PUT = 1,
     E2E_UFID_MSG_DEL = 2
@@ -7942,45 +7937,33 @@ e2e_cache_trace_add_flow(struct dp_packet *p,
     p->e2e_trace_size = e2e_trace_size + 1;
 }
 
-static inline int
+static inline void
 e2e_cache_trace_msg_enqueue(struct e2e_cache_trace_message *msg)
 {
-    struct e2e_cache_trace_msg_item *item;
-
-    item = (struct e2e_cache_trace_msg_item *) xmalloc(sizeof *item);
-    if (OVS_UNLIKELY(!item)) {
-        return -1;
-    }
-
-    item->msg = msg;
-
     ovs_mutex_lock(&e2e_cache_thread_msg_queues.mutex);
     ovs_list_push_back(&e2e_cache_thread_msg_queues.trace_msg_list,
-                       &item->node);
+                       &msg->node);
     xpthread_cond_signal(&e2e_cache_thread_msg_queues.cond);
     e2e_stats.trace_msgs_in_queue++;
     ovs_mutex_unlock(&e2e_cache_thread_msg_queues.mutex);
-    return 0;
 }
 
 static inline struct e2e_cache_trace_message *
 e2e_cache_trace_msg_dequeue(void)
 {
-    struct ovs_list *list;
-    struct e2e_cache_trace_msg_item *trace_msg_item;
     struct e2e_cache_trace_message *msg;
+    struct ovs_list *list;
 
     if (ovs_list_is_empty(&e2e_cache_thread_msg_queues.trace_msg_list)) {
         return NULL;
     }
+
     ovs_mutex_lock(&e2e_cache_thread_msg_queues.mutex);
     list = ovs_list_pop_front(&e2e_cache_thread_msg_queues.trace_msg_list);
     e2e_stats.trace_msgs_in_queue--;
     ovs_mutex_unlock(&e2e_cache_thread_msg_queues.mutex);
 
-    trace_msg_item = CONTAINER_OF(list, struct e2e_cache_trace_msg_item, node);
-    msg = trace_msg_item->msg;
-    free(trace_msg_item);
+    msg = CONTAINER_OF(list, struct e2e_cache_trace_message, node);
     return msg;
 }
 
@@ -8658,11 +8641,7 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
     buffer->dp = dp;
     buffer->num_elements = num_elements;
 
-    if (OVS_UNLIKELY(e2e_cache_trace_msg_enqueue(buffer) != 0)) {
-        atomic_count_inc(&e2e_stats.discarded_msgs);
-        goto out;
-    }
-
+    e2e_cache_trace_msg_enqueue(buffer);
     atomic_count_inc(&e2e_stats.generated_msgs);
     return;
 
