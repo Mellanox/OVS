@@ -130,6 +130,7 @@ struct e2e_cache_trace_info {
 
 OVS_PACKED(
 struct e2e_cache_trace_message {
+    struct ovs_list node;
     void *dp;
     uint32_t num_elements;
     struct e2e_cache_trace_info data[0];
