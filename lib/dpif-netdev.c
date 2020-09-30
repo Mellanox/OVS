@@ -7773,9 +7773,6 @@ struct e2e_cache_thread_msg_queues {
  * trace_msgs_in_queue = Amount of trace messages in E2E cache queue.
  * new_flow_msgs = Amount of new flow messages received by E2E cache.
  * del_flow_msgs = Amount of delete flow messages received by E2E cache.
- * new_ct_msgs = Amount of new CT messages received by E2E cache.
- * del_ct_msgs = Amount of delete CT messages received by E2E cache.
- * new_del_flow_ct_in_queue = Amount of new/delete flow/CT message in E2E cache queue.
  * succ_merged_flows = Amount of successfully merged flows.
  * merge_rej_flows = Amount of flows rejected by the merge engine.
  * add_merged_flow_hw = Amount of add merged flow messages dispatched to HW offload.
@@ -7789,9 +7786,6 @@ struct e2e_cache_stats {
     uint32_t trace_msgs_in_queue;
     uint32_t new_flow_msgs;
     uint32_t del_flow_msgs;
-    atomic_count new_ct_msgs;
-    atomic_count del_ct_msgs;
-    atomic_count new_del_flow_ct_in_queue;
     uint32_t succ_merged_flows;
     uint32_t merge_rej_flows;
     atomic_count add_merged_flow_hw;
@@ -7832,9 +7826,6 @@ static struct e2e_cache_stats e2e_stats = {
     .trace_msgs_in_queue = 0,
     .new_flow_msgs = 0,
     .del_flow_msgs = 0,
-    .new_ct_msgs = ATOMIC_COUNT_INIT(0),
-    .del_ct_msgs = ATOMIC_COUNT_INIT(0),
-    .new_del_flow_ct_in_queue = ATOMIC_COUNT_INIT(0),
     .succ_merged_flows = 0,
     .merge_rej_flows = 0,
     .add_merged_flow_hw = ATOMIC_COUNT_INIT(0),
@@ -7868,13 +7859,6 @@ dpif_netdev_e2e_stats_format(struct e2e_cache_stats *stats, struct ds *s)
                   stats->new_flow_msgs);
     ds_put_format(s, "\n%-45s : %"PRIu32"", "delete flow messages",
                   stats->del_flow_msgs);
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "new ct messages",
-                  atomic_count_get(&stats->new_ct_msgs));
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "delete ct messages",
-                  atomic_count_get(&stats->del_ct_msgs));
-    ds_put_format(s, "\n%-45s : %"PRIu32"",
-                  "new del flow/ct messages in queue",
-                  atomic_count_get(&stats->new_del_flow_ct_in_queue));
     ds_put_format(s, "\n%-45s : %"PRIu32"", "suscessfully merged flows",
                   stats->succ_merged_flows);
     ds_put_format(s, "\n%-45s : %"PRIu32"", "flows rejected by the merge engine",
