@@ -77,6 +77,7 @@ struct ct_dir_info {
     int status;
     uint8_t pkt_ct_state;
     bool e2e_flow;
+    uint8_t e2e_seen_pkts;
 };
 
 enum ct_offload_flag {

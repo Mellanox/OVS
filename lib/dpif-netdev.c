@@ -7817,6 +7817,8 @@ struct e2e_cache_thread_msg_queues {
  * processed_msgs = Amount of trace messages processed by E2E cache.
  * discarded_msgs = Amount of trace messages discarded by E2E cache.
  * aborted_msgs = Amount of trace messages aborted by E2E cache.
+ * throttled_msgs = Amount of trace messages throttled due to high message
+ *                  rate.
  * trace_msgs_in_queue = Amount of trace messages in E2E cache queue.
  * new_flow_msgs = Amount of new flow messages received by E2E cache.
  * del_flow_msgs = Amount of delete flow messages received by E2E cache.
@@ -7831,6 +7833,7 @@ struct e2e_cache_stats {
     uint32_t processed_msgs;
     atomic_count discarded_msgs;
     atomic_count aborted_msgs;
+    atomic_count throttled_msgs;
     uint32_t trace_msgs_in_queue;
     uint32_t new_flow_msgs;
     uint32_t del_flow_msgs;
@@ -7872,6 +7875,7 @@ static struct e2e_cache_stats e2e_stats = {
     .processed_msgs = 0,
     .discarded_msgs = ATOMIC_COUNT_INIT(0),
     .aborted_msgs = ATOMIC_COUNT_INIT(0),
+    .throttled_msgs = ATOMIC_COUNT_INIT(0),
     .trace_msgs_in_queue = 0,
     .new_flow_msgs = 0,
     .del_flow_msgs = 0,
@@ -7904,6 +7908,8 @@ dpif_netdev_e2e_stats_format(struct e2e_cache_stats *stats, struct ds *s)
                   atomic_count_get(&stats->discarded_msgs));
     ds_put_format(s, "\n%-45s : %"PRIu32"", "aborted messages",
                   atomic_count_get(&stats->aborted_msgs));
+    ds_put_format(s, "\n%-45s : %"PRIu32"", "throttled messages",
+                  atomic_count_get(&stats->throttled_msgs));
     ds_put_format(s, "\n%-45s : %"PRIu32"", "messages in e2e queue",
                   stats->trace_msgs_in_queue);
     ds_put_format(s, "\n%-45s : %"PRIu32"", "new flow messages",
@@ -8653,6 +8659,13 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
             if (!packet->e2e_trace_ct_ufids) {
                 continue;
             }
+        }
+        /* If the trace is marked as "throttled" this means that it must be
+         * omitted from sending due to high messages rate.
+         */
+        if (packet->e2e_trace_flags & E2E_CACHE_TRACE_FLAG_THROTTLED) {
+            atomic_count_inc(&e2e_stats.throttled_msgs);
+            continue;
         }
         /* Don't send "partial" traces due to overflow of the trace storage */
         if (OVS_UNLIKELY(packet->e2e_trace_flags &

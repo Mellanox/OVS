@@ -1541,8 +1541,10 @@ e2e_cache_trace_add_ct(struct conntrack *ct,
                        ovs_u128 label)
 {
     uint32_t e2e_trace_size = p->e2e_trace_size;
-    int dir;
     struct ct_flow_offload_item item;
+    struct ct_dir_info *dir_info;
+    uint8_t e2e_seen_pkts;
+    int dir;
 
     if (OVS_UNLIKELY(e2e_trace_size >= E2E_CACHE_MAX_TRACE)) {
         p->e2e_trace_flags |= E2E_CACHE_TRACE_FLAG_OVERFLOW;
@@ -1560,14 +1562,24 @@ e2e_cache_trace_add_ct(struct conntrack *ct,
     conntrack_offload_fill_item_add(&item, conn, dir, mark, label);
     item.odp_port = p->md.in_port.odp_port;
 
-    p->e2e_trace_ct_ufids |= 1 << e2e_trace_size;
-    if (!conn->offloads.dir_info[dir].e2e_flow) {
-        conn->offloads.dir_info[dir].e2e_flow = true;
-        ct->offload_class->conn_get_ufid(&item,
-                                         &conn->offloads.dir_info[dir].ufid);
+    dir_info = &conn->offloads.dir_info[dir];
+    if (!dir_info->e2e_flow) {
+        dir_info->e2e_flow = true;
+        ct->offload_class->conn_get_ufid(&item, &dir_info->ufid);
         ct->offload_class->conn_e2e_add(&item);
     }
-    p->e2e_trace[e2e_trace_size] = conn->offloads.dir_info[dir].ufid;
+
+    /* Prevent sending E2E trace messages for every packet. Send only
+     * when number of seen packets is equal to 2^x.
+     */
+    e2e_seen_pkts = dir_info->e2e_seen_pkts++;
+    if ((e2e_seen_pkts & (e2e_seen_pkts - 1u)) != 0) {
+        p->e2e_trace_flags |= E2E_CACHE_TRACE_FLAG_THROTTLED;
+        return;
+    }
+
+    p->e2e_trace_ct_ufids |= 1 << e2e_trace_size;
+    p->e2e_trace[e2e_trace_size] = dir_info->ufid;
     p->e2e_trace_size = e2e_trace_size + 1;
 
     /* Check if the opposite direction flow already has a ufid. If so, trace
