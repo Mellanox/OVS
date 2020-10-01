@@ -298,6 +298,17 @@ netdev_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
            : EOPNOTSUPP;
 }
 
+int
+netdev_hw_offload_stats_get(struct netdev *netdev, uint64_t *counter)
+{
+    const struct netdev_flow_api *flow_api =
+        ovsrcu_get(const struct netdev_flow_api *, &netdev->flow_api);
+
+    return (flow_api && flow_api->hw_offload_stats_get)
+           ? flow_api->hw_offload_stats_get(netdev, counter)
+           : EOPNOTSUPP;
+}
+
 #define MAX_FLOW_MARK (UINT32_MAX - 1)
 
 static struct ovs_list mark_release_list =
