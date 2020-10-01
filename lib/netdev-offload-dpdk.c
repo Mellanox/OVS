@@ -72,6 +72,7 @@ struct act_resources {
 #define NUM_RTE_FLOWS_PER_PORT 2
 struct flow_item {
     const char *devargs;
+    unsigned int creation_tid;
     struct rte_flow *rte_flow[NUM_RTE_FLOWS_PER_PORT];
     bool has_count[NUM_RTE_FLOWS_PER_PORT];
 };
@@ -114,6 +115,7 @@ add_flow_item(struct flows_handle *flows,
 
     memcpy(&flows->items[cnt], item, sizeof flows->items[cnt]);
     flows->items[cnt].devargs = nullable_xstrdup(item->devargs);
+    flows->items[cnt].creation_tid = netdev_offload_thread_id();
     flows->cnt++;
 }
 
@@ -133,7 +135,7 @@ struct ufid_to_rte_flow_data {
 
 struct netdev_offload_dpdk_data {
     struct cmap ufid_to_rte_flow;
-    uint64_t rte_flow_counter;
+    atomic_uint64_t *rte_flow_counters;
 };
 
 static int
@@ -143,6 +145,8 @@ offload_data_init(struct netdev *netdev)
 
     data = xzalloc(sizeof *data);
     cmap_init(&data->ufid_to_rte_flow);
+    data->rte_flow_counters = xcalloc(netdev_offload_thread_nb(),
+                                      sizeof *data->rte_flow_counters);
 
     netdev->hw_info.offload_data = data;
 
@@ -165,6 +169,7 @@ offload_data_destroy(struct netdev *netdev)
     }
 
     cmap_destroy(&data->ufid_to_rte_flow);
+    free(data->rte_flow_counters);
     free(data);
 }
 
@@ -1788,9 +1793,10 @@ create_rte_flow(struct netdev *netdev,
                                                     actions, error);
     if (fi->rte_flow[pos]) {
         struct netdev_offload_dpdk_data *data;
+        unsigned int tid = netdev_offload_thread_id();
 
         data = netdev->hw_info.offload_data;
-        data->rte_flow_counter++;
+        atomic_count_inc64(&data->rte_flow_counters[tid]);
         if (!VLOG_DROP_DBG(&rl)) {
             dump_flow(&s, &s_extra, attr, items, actions);
             extra_str = ds_cstr(&s_extra);
@@ -1903,6 +1909,7 @@ free_flow_actions(struct flow_actions *actions, bool free_confs)
 static int
 netdev_offload_dpdk_destroy_flow(struct netdev *netdev,
                                  struct rte_flow *rte_flow,
+                                 unsigned int creation_tid,
                                  const ovs_u128 *ufid)
 {
     struct uuid ufid0 = UUID_ZERO;
@@ -1914,7 +1921,7 @@ netdev_offload_dpdk_destroy_flow(struct netdev *netdev,
         struct netdev_offload_dpdk_data *data;
 
         data = netdev->hw_info.offload_data;
-        data->rte_flow_counter--;
+        atomic_count_dec64(&data->rte_flow_counters[creation_tid]);
 
         VLOG_DBG("%s: removed rte flow %p associated with ufid "UUID_FMT,
                  netdev_get_name(netdev), rte_flow,
@@ -3313,7 +3320,8 @@ create_ct_conn(struct netdev *netdev,
     goto out;
 
 ct_err:
-    netdev_offload_dpdk_destroy_flow(netdev, fi->rte_flow[1], NULL);
+    netdev_offload_dpdk_destroy_flow(netdev, fi->rte_flow[1],
+                                     fi->creation_tid, NULL);
 out:
     free_flow_actions(&ct_actions, false);
     free_flow_actions(&nat_actions, false);
@@ -3411,7 +3419,8 @@ create_pre_post_ct(struct netdev *netdev,
     goto out;
 
 pre_ct_err:
-    netdev_offload_dpdk_destroy_flow(netdev, fi->rte_flow[1], NULL);
+    netdev_offload_dpdk_destroy_flow(netdev, fi->rte_flow[1],
+                                     fi->creation_tid, NULL);
 out:
     free_flow_actions(&pre_ct_actions, false);
     free_flow_actions(&post_ct_actions, false);
@@ -3745,7 +3754,8 @@ netdev_offload_dpdk_remove_flows(struct ufid_to_rte_flow_data *rte_flow_data)
             if (!rte_flow) {
                 continue;
             }
-            ret = netdev_offload_dpdk_destroy_flow(flow_netdev, rte_flow, ufid);
+            ret = netdev_offload_dpdk_destroy_flow(flow_netdev, rte_flow,
+                                                   fi->creation_tid, ufid);
             if (ret) {
                 netdev_close(flow_netdev);
                 goto out;
@@ -4004,9 +4014,12 @@ netdev_offload_dpdk_hw_offload_stats_get(struct netdev *netdev,
                                          uint64_t *counters)
 {
     struct netdev_offload_dpdk_data *data;
+    unsigned int tid;
 
     data = netdev->hw_info.offload_data;
-    *counters = data->rte_flow_counter;
+    for (tid = 0; tid < netdev_offload_thread_nb(); tid++) {
+        counters[tid] = atomic_count_get64(&data->rte_flow_counters[tid]);
+    }
     return 0;
 }
 
