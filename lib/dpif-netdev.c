@@ -7850,8 +7850,10 @@ struct e2e_cache_thread_msg_queues {
  * del_flow_msgs = Amount of delete flow messages received by E2E cache.
  * succ_merged_flows = Amount of successfully merged flows.
  * merge_rej_flows = Amount of flows rejected by the merge engine.
- * add_merged_flow_hw = Amount of add merged flow messages dispatched to HW offload.
- * del_merged_flow_hw = Amount of delete merged flow messages disapatched to HW offload.
+ * add_merged_flow_hw = Amount of add merged flow messages dispatched to
+ *                      HW offload.
+ * del_merged_flow_hw = Amount of delete merged flow messages dispatched to
+ *                      HW offload.
  * merged_flows_in_cache = Amount of merged flows in E2E cache.
  */
 struct e2e_cache_stats {
@@ -7946,7 +7948,7 @@ dpif_netdev_e2e_stats_format(struct e2e_cache_stats *stats, struct ds *s)
                   stats->new_flow_msgs);
     ds_put_format(s, "\n%-45s : %"PRIu32"", "delete flow messages",
                   stats->del_flow_msgs);
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "suscessfully merged flows",
+    ds_put_format(s, "\n%-45s : %"PRIu32"", "successfully merged flows",
                   stats->succ_merged_flows);
     ds_put_format(s, "\n%-45s : %"PRIu32"", "flows rejected by the merge engine",
                   stats->merge_rej_flows);
