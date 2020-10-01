@@ -89,6 +89,9 @@ struct netdev_flow_api {
     int (*hw_miss_packet_recover)(struct netdev *, uint32_t flow_miss_ctx_id,
                                   struct dp_packet *);
 
+    /* Queries an offload provider hardware statistics. */
+    int (*hw_offload_stats_get)(struct netdev *netdev, uint64_t *counter);
+
     /* Initializies the netdev flow api.
      * Return 0 if successful, otherwise returns a positive errno value. */
     int (*init_flow_api)(struct netdev *);
