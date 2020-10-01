@@ -133,6 +133,7 @@ struct ufid_to_rte_flow_data {
 
 struct netdev_offload_dpdk_data {
     struct cmap ufid_to_rte_flow;
+    uint64_t rte_flow_counter;
 };
 
 static int
@@ -1786,6 +1787,10 @@ create_rte_flow(struct netdev *netdev,
     fi->rte_flow[pos] = netdev_dpdk_rte_flow_create(netdev, attr, items,
                                                     actions, error);
     if (fi->rte_flow[pos]) {
+        struct netdev_offload_dpdk_data *data;
+
+        data = netdev->hw_info.offload_data;
+        data->rte_flow_counter++;
         if (!VLOG_DROP_DBG(&rl)) {
             dump_flow(&s, &s_extra, attr, items, actions);
             extra_str = ds_cstr(&s_extra);
@@ -1906,6 +1911,11 @@ netdev_offload_dpdk_destroy_flow(struct netdev *netdev,
 
     ret = netdev_dpdk_rte_flow_destroy(netdev, rte_flow, &error);
     if (!ret) {
+        struct netdev_offload_dpdk_data *data;
+
+        data = netdev->hw_info.offload_data;
+        data->rte_flow_counter--;
+
         VLOG_DBG("%s: removed rte flow %p associated with ufid "UUID_FMT,
                  netdev_get_name(netdev), rte_flow,
                  UUID_ARGS(ufid ? (struct uuid *)ufid : &ufid0));
@@ -3990,6 +4000,17 @@ netdev_offload_dpdk_hw_miss_packet_recover(struct netdev *netdev,
 }
 
 static int
+netdev_offload_dpdk_hw_offload_stats_get(struct netdev *netdev,
+                                         uint64_t *counter)
+{
+    struct netdev_offload_dpdk_data *data;
+
+    data = netdev->hw_info.offload_data;
+    *counter = data->rte_flow_counter;
+    return 0;
+}
+
+static int
 netdev_offload_dpdk_flow_dump_create(struct netdev *netdev,
                                      struct netdev_flow_dump **dump_out,
                                      bool terse OVS_UNUSED)
@@ -4020,6 +4041,7 @@ const struct netdev_flow_api netdev_offload_dpdk = {
     .flow_get = netdev_offload_dpdk_flow_get,
     .flow_flush = netdev_offload_dpdk_flow_flush,
     .hw_miss_packet_recover = netdev_offload_dpdk_hw_miss_packet_recover,
+    .hw_offload_stats_get = netdev_offload_dpdk_hw_offload_stats_get,
     .flow_dump_create = netdev_offload_dpdk_flow_dump_create,
     .flow_dump_destroy = netdev_offload_dpdk_flow_dump_destroy,
 };
