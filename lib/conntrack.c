@@ -1537,9 +1537,6 @@ e2e_cache_trace_add_ct(struct conntrack *ct,
     }
 
     dir = ct_get_packet_dir(reply);
-    conntrack_offload_fill_item_add(&item, conn, dir, mark, label);
-    item.odp_port = p->md.in_port.odp_port;
-
     if (conn->nat_conn &&
         conn->nat_conn->offloads.dir_info[dir].dp) {
         conn = conn->nat_conn;
@@ -1547,6 +1544,8 @@ e2e_cache_trace_add_ct(struct conntrack *ct,
                conn->master_conn->offloads.dir_info[dir].dp) {
         conn = conn->master_conn;
     }
+    conntrack_offload_fill_item_add(&item, conn, dir, mark, label);
+    item.odp_port = p->md.in_port.odp_port;
 
     p->e2e_trace_ct_ufids |= 1 << e2e_trace_size;
     if (!conn->offloads.dir_info[dir].e2e_flow) {
@@ -1562,6 +1561,13 @@ e2e_cache_trace_add_ct(struct conntrack *ct,
      * it too so counters can be shared.
      */
     dir = ct_get_packet_dir(!reply);
+    if (conn->nat_conn &&
+        conn->nat_conn->offloads.dir_info[dir].dp) {
+        conn = conn->nat_conn;
+    } else if (conn->master_conn &&
+               conn->master_conn->offloads.dir_info[dir].dp) {
+        conn = conn->master_conn;
+    }
     if (conn->offloads.dir_info[dir].e2e_flow) {
         e2e_trace_size++;
         p->e2e_trace_ct_ufids |= 1 << e2e_trace_size;
