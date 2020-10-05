@@ -112,7 +112,7 @@ struct nat_action_info_t {
     uint16_t nat_action;
 };
 
-struct conntrack *conntrack_init(void);
+struct conntrack *conntrack_init(void *dp);
 void conntrack_destroy(struct conntrack *);
 
 int conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,

@@ -128,7 +128,7 @@ test_benchmark(struct ovs_cmdl_context *ctx)
 
     threads = xcalloc(n_threads, sizeof *threads);
     ovs_barrier_init(&barrier, n_threads + 1);
-    ct = conntrack_init();
+    ct = conntrack_init(NULL);
 
     /* Create threads */
     for (i = 0; i < n_threads; i++) {
@@ -215,7 +215,7 @@ test_pcap(struct ovs_cmdl_context *ctx)
 
     fatal_signal_init();
 
-    ct = conntrack_init();
+    ct = conntrack_init(NULL);
     total_count = 0;
     for (;;) {
         struct dp_packet *packet;

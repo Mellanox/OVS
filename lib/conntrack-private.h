@@ -150,6 +150,7 @@ struct conntrack {
     struct ipf *ipf; /* Fragmentation handling context. */
     uint32_t zone_limit_seq; /* Used to disambiguate zone limit counts. */
     atomic_bool tcp_seq_chk; /* Check TCP sequence numbers. */
+    void *dp; /* DP handler for offloads. */
 };
 
 /* Lock acquisition order:
