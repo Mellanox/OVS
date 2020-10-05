@@ -125,7 +125,6 @@ OVS_PACKED(
 struct e2e_cache_trace_info {
     uint16_t num_elements;
     uint16_t e2e_trace_ct_ufids;
-    odp_port_t port;
     ovs_u128 ufids[E2E_CACHE_MAX_TRACE];
 });
 
@@ -176,7 +175,6 @@ BUILD_ASSERT_DECL(E2E_CACHE_MAX_TRACE <= 16);
     uint32_t   e2e_trace_size;
     uint16_t   e2e_trace_flags;
     uint16_t   e2e_trace_ct_ufids;
-    odp_port_t e2e_trace_port;
     ovs_u128   e2e_trace[E2E_CACHE_MAX_TRACE];
 #endif
 };
