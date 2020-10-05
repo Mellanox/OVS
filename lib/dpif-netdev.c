@@ -7968,7 +7968,6 @@ e2e_cache_trace_init(struct dp_packet *p)
     p->e2e_trace_size = 0;
     p->e2e_trace_flags = 0;
     p->e2e_trace_ct_ufids = 0;
-    p->e2e_trace_port = ODPP_NONE;
 }
 
 static inline void
@@ -8658,7 +8657,6 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
          */
         if (packet->e2e_trace_flags & E2E_CACHE_TRACE_FLAG_TNL_POP) {
             cur_trace_info->num_elements = 1;
-            cur_trace_info->port = packet->e2e_trace_port;
             cur_trace_info->e2e_trace_ct_ufids = 0;
             packet->e2e_trace_ct_ufids >>= 1;
 
@@ -8687,7 +8685,6 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
 
         cur_trace_info->e2e_trace_ct_ufids = packet->e2e_trace_ct_ufids;
         cur_trace_info->num_elements = e2e_trace_size;
-        cur_trace_info->port = packet->md.in_port.odp_port;
 
         memcpy(&cur_trace_info->ufids[0], e2e_trace,
                e2e_trace_size * sizeof *e2e_trace);
@@ -8719,7 +8716,6 @@ static void
 e2e_cache_trace_tnl_pop(struct dp_packet *packet)
 {
     packet->e2e_trace_flags |= E2E_CACHE_TRACE_FLAG_TNL_POP;
-    packet->e2e_trace_port = packet->md.in_port.odp_port;
 }
 
 static int
