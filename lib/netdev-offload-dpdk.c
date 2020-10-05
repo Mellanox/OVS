@@ -1462,12 +1462,18 @@ shared_age_id_alloc(void *arg)
                                              MAX_SHARED_AGE_ID);
         ovsthread_once_done(&shared_age_id_init);
     }
+    if (OVS_UNLIKELY(!devargs)) {
+        return 0;
+    }
     if (!seq_pool_new_id(shared_age_id_pool, tid, &shared_age_id)) {
         return 0;
     }
     strncpy(shared_age_ctx_data.devargs, devargs,
             sizeof shared_age_ctx_data.devargs);
     netdev = netdev_dpdk_get_netdev_by_devargs(devargs);
+    if (!netdev) {
+        goto deallocate_id;
+    }
     shared_age_ctx_data.shared_action =
         netdev_dpdk_rte_flow_shared_action_create(netdev, &action, &error);
     if (!shared_age_ctx_data.shared_action) {
@@ -1486,6 +1492,7 @@ associate_err:
         (netdev, shared_age_ctx_data.shared_action, &error);
 shared_action_create_err:
     netdev_close(netdev);
+deallocate_id:
     seq_pool_free_id(shared_age_id_pool, tid, shared_age_id);
     return 0;
 }
@@ -4642,9 +4649,7 @@ netdev_offload_dpdk_counter_query(struct netdev *netdev OVS_UNUSED,
 
     memset(stats, 0, sizeof *stats);
     if (get_context_data_id_by_data(&shared_age_id_md, &shared_age_id_ctx,
-                                    CONST_CAST(void *,
-                                               shared_age_ctx_data.devargs),
-                                    &shared_age_id)) {
+                                    NULL, &shared_age_id)) {
         VLOG_ERR_RL(&rl, "Could not get shared age id for "
                     "app_counter_id=0x%08x", app_counter_id);
         return -1;
