@@ -233,22 +233,55 @@ tm_to_ct_dpif_tp(enum ct_timeout tm)
 static void
 conn_update_expiration__(struct conntrack *ct, struct conn *conn,
                          enum ct_timeout tm, long long now,
-                         uint32_t tp_value)
+                         uint32_t tp_value, bool protected)
     OVS_REQUIRES(conn->lock)
 {
-    ovs_mutex_unlock(&conn->lock);
+    VLOG_DBG_RL(&rl, "Update timeout %s zone=%u with policy id=%d "
+                "val=%u sec.",
+                ct_timeout_str[tm], conn->key.zone, conn->tp_id, tp_value);
 
-    ovs_mutex_lock(&ct->ct_lock);
-    ovs_mutex_lock(&conn->lock);
+    if (!protected) {
+        ovs_mutex_unlock(&conn->lock);
+
+        ovs_mutex_lock(&ct->ct_lock);
+        ovs_mutex_lock(&conn->lock);
+    }
     if (!conn->cleaned) {
         conn->expiration = now + tp_value * 1000;
         ovs_list_remove(&conn->exp_node);
         ovs_list_push_back(&ct->exp_lists[tm], &conn->exp_node);
     }
-    ovs_mutex_unlock(&conn->lock);
-    ovs_mutex_unlock(&ct->ct_lock);
+    if (!protected) {
+        ovs_mutex_unlock(&conn->lock);
+        ovs_mutex_unlock(&ct->ct_lock);
+    }
 
     ovs_mutex_lock(&conn->lock);
+}
+
+static uint32_t
+get_tp_id_val(struct conntrack *ct, uint32_t tp_id, enum ct_timeout tm)
+{
+    struct timeout_policy *tp;
+    uint32_t val;
+
+    tp = timeout_policy_lookup(ct, tp_id);
+    if (tp) {
+        val = tp->policy.attrs[tm_to_ct_dpif_tp(tm)];
+    } else {
+        val = ct_dpif_netdev_tp_def[tm_to_ct_dpif_tp(tm)];
+    }
+    return val;
+}
+
+void
+conn_protected_update_expiration(struct conntrack *ct, struct conn *conn,
+                                 enum ct_timeout tm, long long now)
+{
+    uint32_t tp_value;
+
+    tp_value = get_tp_id_val(ct, conn->tp_id, tm);
+    conn_update_expiration__(ct, conn, tm, now, tp_value, true);
 }
 
 /* The conn entry lock must be held on entry and exit. */
@@ -257,28 +290,19 @@ conn_update_expiration(struct conntrack *ct, struct conn *conn,
                        enum ct_timeout tm, long long now)
     OVS_REQUIRES(conn->lock)
 {
-    struct timeout_policy *tp;
     uint32_t val;
 
     ovs_mutex_unlock(&conn->lock);
 
     ovs_mutex_lock(&ct->ct_lock);
     ovs_mutex_lock(&conn->lock);
-    tp = timeout_policy_lookup(ct, conn->tp_id);
-    if (tp) {
-        val = tp->policy.attrs[tm_to_ct_dpif_tp(tm)];
-    } else {
-        val = ct_dpif_netdev_tp_def[tm_to_ct_dpif_tp(tm)];
-    }
+    val = get_tp_id_val(ct, conn->tp_id, tm);
     ovs_mutex_unlock(&conn->lock);
     ovs_mutex_unlock(&ct->ct_lock);
 
     ovs_mutex_lock(&conn->lock);
-    VLOG_DBG_RL(&rl, "Update timeout %s zone=%u with policy id=%d "
-                "val=%u sec.",
-                ct_timeout_str[tm], conn->key.zone, conn->tp_id, val);
 
-    conn_update_expiration__(ct, conn, tm, now, val);
+    conn_update_expiration__(ct, conn, tm, now, val, false);
 }
 
 static void
