@@ -8645,12 +8645,6 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
         uint32_t e2e_trace_size = packet->e2e_trace_size;
         ovs_u128 *e2e_trace = &packet->e2e_trace[0];
 
-        /* Don't send "partial" traces due to overflow of the trace storage */
-        if (OVS_UNLIKELY(packet->e2e_trace_flags &
-                         E2E_CACHE_TRACE_FLAG_OVERFLOW)) {
-            atomic_count_inc(&e2e_stats.discarded_msgs);
-            continue;
-        }
         /* Don't send aborted traces */
         if (OVS_UNLIKELY(packet->e2e_trace_flags &
                          E2E_CACHE_TRACE_FLAG_ABORT)) {
@@ -8678,6 +8672,12 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
             if (!packet->e2e_trace_ct_ufids) {
                 continue;
             }
+        }
+        /* Don't send "partial" traces due to overflow of the trace storage */
+        if (OVS_UNLIKELY(packet->e2e_trace_flags &
+                         E2E_CACHE_TRACE_FLAG_OVERFLOW)) {
+            atomic_count_inc(&e2e_stats.discarded_msgs);
+            continue;
         }
         /* Send only traces for packet that passed conntrack */
         if (!packet->e2e_trace_ct_ufids) {
