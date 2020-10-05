@@ -286,7 +286,7 @@ ct_print_conn_info(const struct conn *c, const char *log_msg,
 /* Initializes the connection tracker 'ct'.  The caller is responsible for
  * calling 'conntrack_destroy()', when the instance is not needed anymore */
 struct conntrack *
-conntrack_init(void)
+conntrack_init(void *dp)
 {
     static struct ovsthread_once setup_l4_once = OVSTHREAD_ONCE_INITIALIZER;
     struct conntrack *ct = xzalloc(sizeof *ct);
@@ -315,6 +315,7 @@ conntrack_init(void)
     latch_init(&ct->clean_thread_exit);
     ct->clean_thread = ovs_thread_create("ct_clean", clean_thread_main, ct);
     ct->ipf = ipf_init();
+    ct->dp = dp;
 
     /* Initialize the l4 protocols. */
     if (ovsthread_once_start(&setup_l4_once)) {
