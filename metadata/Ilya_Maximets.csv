@@ -1,0 +1,3 @@
+sep=;
+Change-Id=I8acea2249370f045c00b6b0ae1e6cbad5917117e; subject=netdev-offload: Allow offloading to netdev without ifindex.; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=Iac3e3a33f383f988ffb827a7fb487c41707f5d59; subject=netdev-offload: Disallow offloading to unrelated tunneling vports.; feature=bp_2_14; upstream_status=in_progress; general=;

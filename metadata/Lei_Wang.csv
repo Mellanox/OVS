@@ -1,0 +1,5 @@
+sep=;
+Change-Id=I9ee6a0d6002dc982465a44845952816796705e30; subject=netdev-dpdk-vdpa: add per queue and error statistics for vdpa; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=I0593fbbb9c70ee9bc5a79f6752e43816b606f49c; subject=netdev-dpdk-vdpa: fix queues are not utilized fully; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=Ib624f90397f0ceb0c807b76249c3b7763c1c0cf7; subject=netdev-offload-dpdk: Support vxlan encap offload with load actions; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=I378f866eb976c6ee68680f02b0909c5149561182; subject=netdev-dpdk-vdpa: Fix vdpa interface creation failure; feature=bp_2_14; upstream_status=in_progress; general=;

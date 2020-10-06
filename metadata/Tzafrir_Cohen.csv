@@ -1,0 +1,6 @@
+sep=;
+Change-Id=Ib256abac8e92ff86848cb86414055cb5f06b6e4a; subject=debian: Convert "python" to "python2" deps; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Icbde681b1c90753da27537a8ccf70e66c638dbe1; subject=debian: We use debhelper 9; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I76f9561308d196797a3a68c2173efd386cc27e78; subject=debian: build dir and man pages; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Id0026c6db1f0af739c0daac9528d96e90560eb6a; subject=spec: Fix RHEL8 python3 issues; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=I8bd7e7d20b950f1aa56e7b055d719d4d73592256; subject=spec: Remove %python_provide from python3 package; feature=bp_2_14; upstream_status=in_progress; general=;

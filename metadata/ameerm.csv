@@ -1,0 +1,5 @@
+sep=;
+Change-Id=Ia5b87f936b918cba5cd485d36f500cdbf3784a64; subject=dpif: Introduce an API to retrieve offload statistics; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=Ic98098609b2ea78e03451a34eeea5be20b326aa7; subject=dpif-netdev: Count offloaded connections; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=Ifeeffeced24a3a863ef041322e78df1daa931495; subject=dpctl: Introduce a new command to retrieve offloaded statistics; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=I44c8fdf5342482e4c57cee7323d0d66837812bed; subject=daemon-unix: Support OVS-DPDK HW offloads for non-root user; feature=bp_2_14; upstream_status=in_progress; general=;

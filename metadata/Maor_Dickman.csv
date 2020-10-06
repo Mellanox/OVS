@@ -1,3 +1,5 @@
 sep=;
 Change-Id=I06d8e217f00b0fbdd8b71b533c51b8e3cde67b31; subject=METADATA: Initial metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I79ff9e6feda17c38ddfe6375859586a55818fad9; subject=makefile: fix make checks to ingore new mellanox scripts; feature=ofed_scripts; upstream_status=NA; general=;
+Change-Id=I879770684ac98e741467f83d9f9aba4188956a6b; subject=Fix build dependencies for RHEL 8.X; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=I3a5f7e20414771606a9ad13e92c56a08ce37e275; subject=spec: Only build python2 if python3 not installed; feature=bp_2_14; upstream_status=in_progress; general=;

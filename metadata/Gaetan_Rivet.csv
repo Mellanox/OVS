@@ -1,0 +1,13 @@
+sep=;
+Change-Id=If1502a3d9c0adf91de70a66c118f4ef582f5bfcb; subject=rpm: remove incorrect python3 comment from dpdk option; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=I6ec8fb62ce82d3776a7b0d5a6c4a054288ab7057; subject=rpm: remove doubled 'with dpdk' conditional; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=Ifebf91aa9fa6a5a8db1868dbc4c9c95df14911a2; subject=rpm: add --with static option; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=Id740ecb0f9a6a5e3553df7a6ff703a3b7b5ce384; subject=ignore: debian build dir; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=I503a746e410beb3332ee7b9273d76a21c02461c8; subject=debian: add missing dh-python dependency; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I7160f2c2361a65b54bde5159cc3c245ec7322d88; subject=debian: allow overloading DPDK install dir; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Iab7f58374a35a26e38e369ec3ca55fb79b3922b5; subject=debian: add static build option; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ic885541da88e2fc546de80f5d5e6b74569e0eb92; subject=debian: add missing libmnl-dev dependency; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I9b393a0d467ab927247dd7d5dde3fe23b10f5847; subject=acinclude: add pcap dependency; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=Ic4c0eee490d20a88b1342bab825bb72dd8e0da9f; subject=debian: fix openvswitch-test python3-twisted dependency; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I39a48434dd8078e5bc8a71ae3fe9261377fc7b72; subject=spec: do not install .a in base package; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=I6f26218112758fa4454badb7d159c0f5660ff3f6; subject=spec: fix python-twisted dep on rhel7; feature=bp_2_14; upstream_status=in_progress; general=;
