@@ -31,6 +31,7 @@
 #include "uuid.h"
 #include "seq-pool.h"
 #include "odp-util.h"
+#include "ovs-atomic.h"
 
 VLOG_DEFINE_THIS_MODULE(netdev_offload_dpdk);
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(600, 600);
@@ -275,8 +276,7 @@ struct context_data {
     struct hmap_node associated_i2d_node;
     void *data;
     uint32_t id;
-    uint32_t refcnt;
-    struct context_release_item *delayed_release_item;
+    struct ovs_refcount refcount;
 };
 
 static int
@@ -293,11 +293,12 @@ get_context_data_id_by_data(struct context_metadata *md,
     dhash = hash_bytes(data_req->data, md->data_size, 0);
     HMAP_FOR_EACH_WITH_HASH (data_cur, d2i_node, dhash, &md->d2i_hmap) {
         if (!memcmp(data_req->data, data_cur->data, md->data_size)) {
-            data_cur->refcnt++;
+            ovs_refcount_ref(&data_cur->refcount);
             VLOG_DBG_RL(&rl,
-                        "%s: %s: '%s', refcnt=%d, id=%d", __func__, md->name,
+                        "%s: %s: '%s', refcnt=%u, id=%d", __func__, md->name,
                         ds_cstr(md->dump_context_data(&s, data_cur->data)),
-                        data_cur->refcnt, data_cur->id);
+                        ovs_refcount_read(&data_cur->refcount),
+                        data_cur->id);
             ds_destroy(&s);
             *id = data_cur->id;
             return 0;
@@ -313,7 +314,7 @@ get_context_data_id_by_data(struct context_metadata *md,
         goto err_data_alloc;
     }
     memcpy(data_cur->data, data_req->data, md->data_size);
-    data_cur->refcnt = 1;
+    ovs_refcount_init(&data_cur->refcount);
     data_cur->id = md->id_alloc(arg);
     if (data_cur->id == 0) {
         goto err_id_alloc;
@@ -323,7 +324,8 @@ get_context_data_id_by_data(struct context_metadata *md,
     hmap_insert(&md->i2d_hmap, &data_cur->i2d_node, ihash);
     VLOG_DBG_RL(&rl, "%s: %s: '%s', refcnt=%d, id=%d", __func__, md->name,
                 ds_cstr(md->dump_context_data(&s, data_cur->data)),
-                data_cur->refcnt, data_cur->id);
+                ovs_refcount_read(&data_cur->refcount),
+                data_cur->id);
     *id = data_cur->id;
     ds_destroy(&s);
     return 0;
@@ -390,6 +392,12 @@ context_release(struct context_release_item *item)
     uint32_t id = item->id;
     void *arg = item->arg;
 
+    if (!item->associated
+        && ovs_refcount_unref(&item->data->refcount) > 1) {
+        /* Data has been referenced again since delayed release request. */
+        return;
+    }
+
     VLOG_DBG_RL(&rl, "%s: md=%s, id=%d. associated=%d", __func__, md->name,
                 id, item->associated);
     if (!item->associated) {
@@ -426,18 +434,6 @@ context_delayed_release(struct context_metadata *md, void *arg, uint32_t id,
         return;
     }
     item->timestamp = time_msec();
-    /* If there is already a pending release for this item that has not been
-     * handled yet, drop it from the list and post the newly created item,
-     * with an updated timestamp.
-     */
-    if (data->delayed_release_item) {
-        ovs_list_remove(&data->delayed_release_item->node);
-        free(data->delayed_release_item);
-    }
-    /* Store the posted item in the data, so in case of re-release, the stored
-     * item is removed.
-     */
-    data->delayed_release_item = item;
     ovs_list_push_back(&context_release_list, &item->node);
     VLOG_DBG_RL(&rl, "%s: md=%s, id=%d, associated=%d, timestamp=%llu",
                 __func__, item->md->name, item->id, associated,
@@ -466,9 +462,7 @@ do_context_delayed_release(void)
         VLOG_DBG_RL(&rl, "%s: md=%s, id=%d, associated=%d, timestamp=%llu, "
                     "now=%llu", __func__, item->md->name, item->id,
                     item->associated, item->timestamp, now);
-        if (item->data->refcnt == 0 || item->associated) {
-            context_release(item);
-        }
+        context_release(item);
         ovs_list_remove(list);
         free(item);
     }
@@ -487,16 +481,14 @@ put_context_data_by_id(struct context_metadata *md, void *arg, uint32_t id)
     ihash = hash_add(0, id);
     HMAP_FOR_EACH_WITH_HASH (data_cur, i2d_node, ihash, &md->i2d_hmap) {
         if (data_cur->id == id) {
-            data_cur->refcnt--;
             ds_init(&s);
             VLOG_DBG_RL(&rl,
-                        "%s: %s: '%s', refcnt=%d, id=%d", __func__, md->name,
+                        "%s: %s: '%s', refcnt=%u, id=%d", __func__, md->name,
                         ds_cstr(md->dump_context_data(&s, data_cur->data)),
-                        data_cur->refcnt, data_cur->id);
+                        ovs_refcount_read(&data_cur->refcount),
+                        data_cur->id);
             ds_destroy(&s);
-            if (data_cur->refcnt == 0) {
-                context_delayed_release(md, arg, id, data_cur, false);
-            }
+            context_delayed_release(md, arg, id, data_cur, false);
             return;
         }
     }
@@ -522,14 +514,15 @@ associate_id_data(struct context_metadata *md,
         goto err_data_alloc;
     }
     memcpy(data_cur->data, data_req->data, md->data_size);
-    data_cur->refcnt = 1;
+    ovs_refcount_init(&data_cur->refcount);
     data_cur->id = data_req->id;
     ihash = hash_add(0, data_cur->id);
     hmap_insert(&md->associated_i2d_hmap, &data_cur->associated_i2d_node,
                 ihash);
     VLOG_DBG_RL(&rl, "%s: %s: '%s', refcnt=%d, id=%d", __func__, md->name,
                 ds_cstr(md->dump_context_data(&s, data_cur->data)),
-                data_cur->refcnt, data_cur->id);
+                ovs_refcount_read(&data_cur->refcount),
+                data_cur->id);
     ds_destroy(&s);
     return 0;
 
