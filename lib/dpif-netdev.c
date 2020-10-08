@@ -7957,7 +7957,6 @@ dpif_netdev_dump_e2e_flows(struct hmap *portno_names,
                            struct ofputil_port_map *port_map, struct ds *s)
 {
     struct e2e_cache_merged_flow *merged_flow;
-    struct dpif_flow_stats merged_stats;
     struct dp_netdev_flow netdev_flow;
 
     memset(&netdev_flow, 0, sizeof netdev_flow);
@@ -7971,10 +7970,6 @@ dpif_netdev_dump_e2e_flows(struct hmap *portno_names,
         *CONST_CAST(ovs_u128 *, &netdev_flow.mega_ufid) = merged_flow->ufid;
         CONST_CAST(struct flow *, &netdev_flow.flow)->in_port =
             merged_flow->match.flow.in_port;
-        get_dpif_flow_status(merged_flow->dp, &netdev_flow,
-                             &merged_stats, NULL);
-        ds_put_format(s, ", packets:%"PRIu64", bytes:%"PRIu64"",
-                      merged_stats.n_packets, merged_stats.n_bytes);
         ds_put_cstr(s, ", actions:");
         format_odp_actions(s, merged_flow->actions, merged_flow->actions_size,
                            portno_names);
