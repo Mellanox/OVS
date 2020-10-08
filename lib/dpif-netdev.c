@@ -844,6 +844,28 @@ struct dpif_netdev {
     uint64_t last_port_seq;
 };
 
+enum e2e_offload_state {
+    E2E_OL_STATE_FLOW,
+    E2E_OL_STATE_CT_SW,
+    E2E_OL_STATE_CT_HW,
+    E2E_OL_STATE_CT_ERR,
+};
+
+/*
+ * A mapping from ufid to flow for e2e cache.
+ */
+struct e2e_cache_ovs_flow {
+    struct cmap_node node;
+    ovs_u128 ufid;
+    struct match match;
+    enum e2e_offload_state offload_state;
+    struct nlattr *actions;
+    uint16_t actions_size;
+    struct hmap merged_counters; /* Map of merged flows counters
+                                    it is part of. */
+    struct ovs_list associated_merged_flows;
+};
+
 /* Helper struct for accessing a struct containing ovs_list array.
  * Containing struct
  *   |- Helper array
@@ -861,7 +883,6 @@ struct dpif_netdev {
  *    containing struct =
  *    CONTAINER_OF(helper item, containing struct type, helper field[index])
  */
-struct e2e_cache_ovs_flow;
 struct flow2flow_item {
     struct ovs_list list;
     struct e2e_cache_ovs_flow *mt_flow;
@@ -890,28 +911,6 @@ struct e2e_cache_merged_flow {
     struct ovs_list ct_counter_list; /* Anchor for list of merged flows
                                         using the same CT counter. */
     struct flow2flow_item associated_flows[0];
-};
-
-enum e2e_offload_state {
-    E2E_OL_STATE_FLOW,
-    E2E_OL_STATE_CT_SW,
-    E2E_OL_STATE_CT_HW,
-    E2E_OL_STATE_CT_ERR,
-};
-
-/*
- * A mapping from ufid to flow for e2e cache.
- */
-struct e2e_cache_ovs_flow {
-    struct cmap_node node;
-    ovs_u128 ufid;
-    struct match match;
-    enum e2e_offload_state offload_state;
-    struct nlattr *actions;
-    uint16_t actions_size;
-    struct hmap merged_counters; /* Map of merged flows counters
-                                    it is part of. */
-    struct ovs_list associated_merged_flows;
 };
 
 /* Counter object. */
