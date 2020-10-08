@@ -1148,7 +1148,7 @@ int
 dpif_dump_e2e_stats(struct dpif *dpif, struct ds *s)
 {
     return (dpif->dpif_class->dump_e2e_stats
-            ? dpif->dpif_class->dump_e2e_stats(s)
+            ? dpif->dpif_class->dump_e2e_stats(s), 0
             : EOPNOTSUPP);
 }
 
@@ -1156,7 +1156,7 @@ int
 dpif_dump_e2e_flows(struct dpif *dpif, struct hmap *portno_names, struct ofputil_port_map *port_map, struct ds *s)
 {
     return (dpif->dpif_class->dump_e2e_flows
-            ? dpif->dpif_class->dump_e2e_flows(portno_names, port_map, s)
+            ? dpif->dpif_class->dump_e2e_flows(portno_names, port_map, s), 0
             : EOPNOTSUPP);
 }
 
