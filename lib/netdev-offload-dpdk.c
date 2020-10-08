@@ -2281,6 +2281,7 @@ struct act_vars {
     uintptr_t ct_counter_key;
     struct flows_counter_key flows_counter_key;
     enum tnl_type tnl_type;
+    bool is_outer_ipv4;
 };
 
 static int
@@ -2947,6 +2948,8 @@ parse_flow_match(struct netdev *netdev,
         act_vars->vport = match->flow.in_port.odp_port;
         act_vars->tnl_key = &match->flow.tunnel;
         act_vars->tnl_mask = match->wc.masks.tunnel;
+        act_vars->is_outer_ipv4 = match->wc.masks.tunnel.ip_src ||
+                                  match->wc.masks.tunnel.ip_dst;
         if (match->flow.recirc_id &&
             parse_tnl_match_recirc(patterns, match, act_resources)) {
             return -1;
