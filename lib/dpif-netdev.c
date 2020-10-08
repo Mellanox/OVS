@@ -861,11 +861,35 @@ struct dpif_netdev {
  *    containing struct =
  *    CONTAINER_OF(helper item, containing struct type, helper field[index])
  */
-struct e2e_cache_ufid_to_flow_item;
+struct e2e_cache_ovs_flow;
 struct flow2flow_item {
     struct ovs_list list;
     int index;
-    struct e2e_cache_ufid_to_flow_item *mt_flow;
+    struct e2e_cache_ovs_flow *mt_flow;
+};
+
+/*
+ * Merged flow structure.
+ */
+struct e2e_cache_merged_flow {
+    union {
+        struct hmap_node in_hmap;
+        struct ovs_list  in_list;
+    } node;
+    ovs_u128 ufid;
+    struct dp_netdev *dp;
+    struct dp_netdev_flow *offloaded_flow;
+    struct match match;
+    struct nlattr *actions;
+    uint16_t actions_size;
+    uint32_t flows_counter;
+    uint32_t ct_counter;
+    struct ovs_list flow_counter_list; /* Anchor for list of merged flows
+                                          using the same flow counter. */
+    struct ovs_list ct_counter_list; /* Anchor for list of merged flows
+                                        using the same CT counter. */
+    size_t associated_flows_len;
+    struct flow2flow_item associated_flows[0];
 };
 
 enum e2e_offload_state {
@@ -878,29 +902,16 @@ enum e2e_offload_state {
 /*
  * A mapping from ufid to flow for e2e cache.
  */
-struct e2e_cache_ufid_to_flow_item {
-    union {
-        struct cmap_node in_cmap;
-        struct hmap_node in_hmap;
-        struct ovs_list  in_list;
-    } node;
+struct e2e_cache_ovs_flow {
+    struct cmap_node node;
     ovs_u128 ufid;
-    struct dp_netdev *dp;
-    struct dp_netdev_flow *offloaded_flow;
     struct match match;
     enum e2e_offload_state offload_state;
     struct nlattr *actions;
     uint16_t actions_size;
-    uint32_t flows_counter;
-    uint32_t ct_counter;
-    struct hmap merged_counters; /* For MT flow, map of merged flows counters
+    struct hmap merged_counters; /* Map of merged flows counters
                                     it is part of. */
-    struct ovs_list flow_counter_list; /* Anchor for list of merged flows
-                                          using the same flow counter. */
-    struct ovs_list ct_counter_list; /* Anchor for list of merged flows
-                                        using the same CT counter. */
-    size_t associated_flows_len;
-    struct flow2flow_item associated_flows[0];
+    struct ovs_list associated_merged_flows;
 };
 
 /* Counter object. */
@@ -7828,8 +7839,8 @@ static struct e2e_cache_stats e2e_stats = {
     .merged_flows_in_cache = ATOMIC_COUNT_INIT(0),
 };
 
-static struct ovs_mutex ufid_to_flow_map_mutex = OVS_MUTEX_INITIALIZER;
-static struct cmap ufid_to_flow_map OVS_GUARDED_BY(ufid_to_flow_map_mutex) =
+static struct ovs_mutex flows_map_mutex = OVS_MUTEX_INITIALIZER;
+static struct cmap flows_map OVS_GUARDED_BY(flows_map_mutex) =
     CMAP_INITIALIZER;
 
 static struct hmap merged_flows_map = HMAP_INITIALIZER(&merged_flows_map);
@@ -7876,18 +7887,20 @@ void
 dpif_netdev_e2e_flows_format(struct hmap *portno_names,
                              struct ofputil_port_map *port_map, struct ds *s)
 {
-    struct e2e_cache_ufid_to_flow_item *data;
+    struct e2e_cache_merged_flow *merged_flow;
     struct dpif_flow_stats merged_stats;
 
-    HMAP_FOR_EACH (data, node.in_hmap, &merged_flows_map) {
-        odp_format_ufid(&data->ufid, s);
+    HMAP_FOR_EACH (merged_flow, node.in_hmap, &merged_flows_map) {
+        odp_format_ufid(&merged_flow->ufid, s);
         ds_put_cstr(s, ", ");
-        match_format(&data->match, port_map, s, OFP_DEFAULT_PRIORITY);
-        get_dpif_flow_status(data->dp, data->offloaded_flow, &merged_stats, NULL);
+        match_format(&merged_flow->match, port_map, s, OFP_DEFAULT_PRIORITY);
+        get_dpif_flow_status(merged_flow->dp, merged_flow->offloaded_flow,
+                             &merged_stats, NULL);
         ds_put_format(s, ", packets:%"PRIu64", bytes:%"PRIu64"",
                       merged_stats.n_packets, merged_stats.n_bytes);
         ds_put_cstr(s, ", actions:");
-        format_odp_actions(s, data->actions, data->actions_size, portno_names);
+        format_odp_actions(s, merged_flow->actions, merged_flow->actions_size,
+                           portno_names);
         ds_put_cstr(s, "\n");
     }
 }
@@ -7988,24 +8001,24 @@ e2e_cache_populate_offload_item(struct dp_offload_thread_item *offload_item,
 }
 
 static void
-e2e_cache_disassociate_counters(struct e2e_cache_ufid_to_flow_item *mflow)
+e2e_cache_disassociate_counters(struct e2e_cache_merged_flow *merged_flow)
 {
     struct e2e_cache_counter_item *counter_next, *counter_item;
-    struct e2e_cache_ufid_to_flow_item *mt_flow;
+    struct e2e_cache_ovs_flow *mt_flow;
     struct ovs_list *next_counter;
     size_t i;
 
-    ovs_mutex_lock(&ufid_to_flow_map_mutex);
-    for (i = 0; i < mflow->associated_flows_len; i++) {
-        mt_flow = mflow->associated_flows[i].mt_flow;
+    ovs_mutex_lock(&flows_map_mutex);
+    for (i = 0; i < merged_flow->associated_flows_len; i++) {
+        mt_flow = merged_flow->associated_flows[i].mt_flow;
         HMAP_FOR_EACH_SAFE (counter_item, counter_next, node,
                             &mt_flow->merged_counters) {
             hmap_remove(&mt_flow->merged_counters, &counter_item->node);
             free(counter_item);
         }
     }
-    next_counter = ovs_list_front(&mflow->flow_counter_list);
-    ovs_list_remove(&mflow->flow_counter_list);
+    next_counter = ovs_list_front(&merged_flow->flow_counter_list);
+    ovs_list_remove(&merged_flow->flow_counter_list);
     if (ovs_list_is_empty(next_counter)) {
         counter_item = CONTAINER_OF(next_counter,
                                     struct e2e_cache_counter_item,
@@ -8013,8 +8026,8 @@ e2e_cache_disassociate_counters(struct e2e_cache_ufid_to_flow_item *mflow)
         hmap_remove(&counter_map, &counter_item->node);
         free(counter_item);
     }
-    next_counter = ovs_list_front(&mflow->ct_counter_list);
-    ovs_list_remove(&mflow->ct_counter_list);
+    next_counter = ovs_list_front(&merged_flow->ct_counter_list);
+    ovs_list_remove(&merged_flow->ct_counter_list);
     if (ovs_list_is_empty(next_counter)) {
         counter_item = CONTAINER_OF(next_counter,
                                     struct e2e_cache_counter_item,
@@ -8022,12 +8035,12 @@ e2e_cache_disassociate_counters(struct e2e_cache_ufid_to_flow_item *mflow)
         hmap_remove(&counter_map, &counter_item->node);
         free(counter_item);
     }
-    ovs_mutex_unlock(&ufid_to_flow_map_mutex);
+    ovs_mutex_unlock(&flows_map_mutex);
 }
 
 static void
-e2e_cache_associate_counters(struct e2e_cache_ufid_to_flow_item *mflow,
-                             struct e2e_cache_ufid_to_flow_item *mt_flows[],
+e2e_cache_associate_counters(struct e2e_cache_merged_flow *merged_flow,
+                             struct e2e_cache_ovs_flow *mt_flows[],
                              const struct e2e_cache_trace_info *trc_info)
 {
     struct e2e_cache_counter_item *counter_item;
@@ -8035,12 +8048,12 @@ e2e_cache_associate_counters(struct e2e_cache_ufid_to_flow_item *mflow,
     uint32_t counter_hash;
     bool counter_found;
 
-    ovs_mutex_lock(&ufid_to_flow_map_mutex);
+    ovs_mutex_lock(&flows_map_mutex);
     for (mt_index = 0, flows_index = 0; mt_index < trc_info->num_elements;
          mt_index++) {
         counter_found = false;
         counter_hash = trc_info->e2e_trace_ct_ufids & (1 << mt_index)
-                       ? mflow->ct_counter : mflow->flows_counter;
+                       ? merged_flow->ct_counter : merged_flow->flows_counter;
         /* Search if this counter is already used by this flow. */
         HMAP_FOR_EACH_WITH_HASH (counter_item, node, counter_hash,
                                  &mt_flows[flows_index]->merged_counters) {
@@ -8060,34 +8073,36 @@ e2e_cache_associate_counters(struct e2e_cache_ufid_to_flow_item *mflow,
     }
 
     /* Search for an already existing CT counter item, or create if not. */
-    counter_item = e2e_cache_counter_find(mflow->ct_counter);
+    counter_item = e2e_cache_counter_find(merged_flow->ct_counter);
     if (!counter_item) {
         counter_item = xmalloc(sizeof *counter_item);
-        counter_item->hash = mflow->ct_counter;
+        counter_item->hash = merged_flow->ct_counter;
         ovs_list_init(&counter_item->merged_flows);
         hmap_insert(&counter_map, &counter_item->node, counter_item->hash);
     }
     /* Add the merged flow to the counter item. */
-    ovs_list_push_back(&counter_item->merged_flows, &mflow->ct_counter_list);
+    ovs_list_push_back(&counter_item->merged_flows,
+                       &merged_flow->ct_counter_list);
     /* Search for an already existing flows counter item, or create if not. */
-    counter_item = e2e_cache_counter_find(mflow->flows_counter);
+    counter_item = e2e_cache_counter_find(merged_flow->flows_counter);
     if (!counter_item) {
         counter_item = xmalloc(sizeof *counter_item);
-        counter_item->hash = mflow->flows_counter;
+        counter_item->hash = merged_flow->flows_counter;
         ovs_list_init(&counter_item->merged_flows);
         hmap_insert(&counter_map, &counter_item->node, counter_item->hash);
     }
     /* Add the merged flow to the counter item. */
-    ovs_list_push_back(&counter_item->merged_flows, &mflow->flow_counter_list);
-    ovs_mutex_unlock(&ufid_to_flow_map_mutex);
+    ovs_list_push_back(&counter_item->merged_flows,
+                       &merged_flow->flow_counter_list);
+    ovs_mutex_unlock(&flows_map_mutex);
 }
 
 static int
-e2e_cache_merged_flow_offload_del(struct e2e_cache_ufid_to_flow_item *mflow)
+e2e_cache_merged_flow_offload_del(struct e2e_cache_merged_flow *merged_flow)
 {
+    struct dp_netdev_flow *flow = merged_flow->offloaded_flow;
     struct dp_offload_thread_item *offload_item;
-    struct dp_netdev *dp = mflow->dp;
-    struct dp_netdev_flow *flow = mflow->offloaded_flow;
+    struct dp_netdev *dp = merged_flow->dp;
     int rv;
 
     ovs_assert(dp);
@@ -8098,9 +8113,9 @@ e2e_cache_merged_flow_offload_del(struct e2e_cache_ufid_to_flow_item *mflow)
     e2e_cache_populate_offload_item(offload_item,
                                     DP_NETDEV_FLOW_OFFLOAD_OP_DEL, dp, flow);
 
-    e2e_cache_disassociate_counters(mflow);
-    mflow->dp = NULL;
-    mflow->offloaded_flow = NULL;
+    e2e_cache_disassociate_counters(merged_flow);
+    merged_flow->dp = NULL;
+    merged_flow->offloaded_flow = NULL;
     atomic_count_inc(&e2e_stats.del_merged_flow_hw);
     rv = dp_netdev_flow_offload_del(offload_item);
     free(offload_item);
@@ -8108,7 +8123,7 @@ e2e_cache_merged_flow_offload_del(struct e2e_cache_ufid_to_flow_item *mflow)
 }
 
 static void
-e2e_cache_calc_counters(struct e2e_cache_ufid_to_flow_item *mflow,
+e2e_cache_calc_counters(struct e2e_cache_merged_flow *merged_flow,
                         const struct e2e_cache_trace_info *trc_info)
 {
     uint16_t mt_index, flows_index, ct_index;
@@ -8132,16 +8147,16 @@ e2e_cache_calc_counters(struct e2e_cache_ufid_to_flow_item *mflow,
             flow_ufids[flows_index++] = trc_info->ufids[mt_index];
         }
     }
-    mflow->flows_counter = hash_bytes(flow_ufids, sizeof flow_ufids, 0);
+    merged_flow->flows_counter = hash_bytes(flow_ufids, sizeof flow_ufids, 0);
     if (trc_info->e2e_trace_ct_ufids) {
-        mflow->ct_counter = hash_bytes(ct_ufids, sizeof ct_ufids, 0);
+        merged_flow->ct_counter = hash_bytes(ct_ufids, sizeof ct_ufids, 0);
     }
 }
 
 static int
 e2e_cache_merged_flow_offload_put(struct dp_netdev *dp,
-                                  struct e2e_cache_ufid_to_flow_item *mflow,
-                                  struct e2e_cache_ufid_to_flow_item *mt_flows[],
+                                  struct e2e_cache_merged_flow *merged_flow,
+                                  struct e2e_cache_ovs_flow *mt_flows[],
                                   const struct e2e_cache_trace_info *trc_info)
 {
     struct dp_offload_thread_item *offload_item;
@@ -8156,12 +8171,13 @@ e2e_cache_merged_flow_offload_put(struct dp_netdev *dp,
 
     flow->mark = INVALID_FLOW_MARK;
     flow->dead = false;
-    *CONST_CAST(ovs_u128 *, &flow->mega_ufid) = mflow->ufid;
+    *CONST_CAST(ovs_u128 *, &flow->mega_ufid) = merged_flow->ufid;
     CONST_CAST(struct flow *, &flow->flow)->in_port =
-        mflow->match.flow.in_port;
+            merged_flow->match.flow.in_port;
     ovs_refcount_init(&flow->ref_cnt);
-    ovsrcu_set(&flow->actions, dp_netdev_actions_create(mflow->actions,
-                                                        mflow->actions_size));
+    ovsrcu_set(&flow->actions,
+               dp_netdev_actions_create(merged_flow->actions,
+                                        merged_flow->actions_size));
     flow->dp_extra_info = xstrdup("merged_flow");
 
     offload_item = xmalloc(sizeof *offload_item +
@@ -8169,31 +8185,37 @@ e2e_cache_merged_flow_offload_put(struct dp_netdev *dp,
     e2e_cache_populate_offload_item(offload_item,
                                     DP_NETDEV_FLOW_OFFLOAD_OP_ADD, dp, flow);
 
-    e2e_cache_calc_counters(mflow, trc_info);
-    e2e_cache_associate_counters(mflow, mt_flows, trc_info);
+    e2e_cache_calc_counters(merged_flow, trc_info);
+    e2e_cache_associate_counters(merged_flow, mt_flows, trc_info);
     flow_offload = &offload_item->data->flow_offload;
-    memcpy(&flow_offload->match, &mflow->match, sizeof mflow->match);
-    flow_offload->actions = xmalloc(mflow->actions_size);
+    memcpy(&flow_offload->match, &merged_flow->match,
+           sizeof merged_flow->match);
+    flow_offload->actions = xmalloc(merged_flow->actions_size);
     if (OVS_UNLIKELY(!flow_offload->actions)) {
-        return -1;
+        err = -1;
+        goto error;
     }
 
-    memcpy(flow_offload->actions, mflow->actions, mflow->actions_size);
-    flow_offload->actions_len = mflow->actions_size;
-    offload_item->data->flow_offload.flows_counter = mflow->flows_counter;
-    offload_item->data->flow_offload.ct_counter = mflow->ct_counter;
+    memcpy(flow_offload->actions, merged_flow->actions,
+           merged_flow->actions_size);
+    flow_offload->actions_len = merged_flow->actions_size;
+    offload_item->data->flow_offload.flows_counter = merged_flow->flows_counter;
+    offload_item->data->flow_offload.ct_counter = merged_flow->ct_counter;
     err = dp_netdev_flow_offload_put(offload_item);
     free(flow_offload->actions);
     free(offload_item);
     if (OVS_UNLIKELY(err != 0)) {
-        dp_netdev_flow_free(flow);
-        return err;
+        goto error;
     }
 
-    mflow->dp = dp;
-    mflow->offloaded_flow = flow;
+    merged_flow->dp = dp;
+    merged_flow->offloaded_flow = flow;
     atomic_count_inc(&e2e_stats.add_merged_flow_hw);
     return 0;
+
+error:
+    dp_netdev_flow_free(flow);
+    return err;
 }
 
 /* Associate the merged flow to each of its composing flows,
@@ -8202,41 +8224,42 @@ e2e_cache_merged_flow_offload_put(struct dp_netdev *dp,
  * - From each flow to all the merged flow it is part of.
  */
 static void
-e2e_cache_associate_merged_flow(struct e2e_cache_ufid_to_flow_item *mflow,
-                                struct e2e_cache_ufid_to_flow_item *flows[],
+e2e_cache_associate_merged_flow(struct e2e_cache_merged_flow *merged_flow,
+                                struct e2e_cache_ovs_flow *flows[],
                                 uint32_t num_flows)
 {
     int i;
 
     for (i = 0; i < num_flows; i++) {
-        mflow->associated_flows[i].index = i;
-        ovs_list_push_back(&flows[i]->associated_flows[0].list,
-                           &mflow->associated_flows[i].list);
-        mflow->associated_flows[i].mt_flow = flows[i];
+        merged_flow->associated_flows[i].index = i;
+        ovs_list_push_back(&flows[i]->associated_merged_flows,
+                           &merged_flow->associated_flows[i].list);
+        merged_flow->associated_flows[i].mt_flow = flows[i];
     }
-    mflow->associated_flows_len = num_flows;
+    merged_flow->associated_flows_len = num_flows;
 }
 
 static void
-e2e_cache_disassociate_merged_flow(struct e2e_cache_ufid_to_flow_item *mflow)
+e2e_cache_disassociate_merged_flow(struct e2e_cache_merged_flow *merged_flow)
 {
-    size_t i, num_flows = mflow->associated_flows_len;
+    size_t i, num_flows = merged_flow->associated_flows_len;
 
     for (i = 0; i < num_flows; i++) {
-        ovs_list_remove(&mflow->associated_flows[i].list);
+        ovs_list_remove(&merged_flow->associated_flows[i].list);
     }
 }
 
-/* Find dp_flow_data with @ufid. */
-static inline struct e2e_cache_ufid_to_flow_item *
+/* Find e2e_cache_merged_flow with @ufid. */
+static inline struct e2e_cache_merged_flow *
 e2e_cache_merged_flow_find(const ovs_u128 *ufid)
 {
     uint32_t hash = hash_bytes(ufid, sizeof *ufid, 0);
-    struct e2e_cache_ufid_to_flow_item *data;
+    struct e2e_cache_merged_flow *merged_flow;
 
-    HMAP_FOR_EACH_WITH_HASH (data, node.in_hmap, hash, &merged_flows_map) {
-        if (ovs_u128_equals(*ufid, data->ufid)) {
-            return data;
+    HMAP_FOR_EACH_WITH_HASH (merged_flow, node.in_hmap, hash,
+                             &merged_flows_map) {
+        if (ovs_u128_equals(*ufid, merged_flow->ufid)) {
+            return merged_flow;
         }
     }
 
@@ -8246,58 +8269,67 @@ e2e_cache_merged_flow_find(const ovs_u128 *ufid)
 static void
 e2e_cache_flow_free(void *arg)
 {
-    struct e2e_cache_ufid_to_flow_item *dp_flow_data =
-        (struct e2e_cache_ufid_to_flow_item *) arg;
+    struct e2e_cache_ovs_flow *flow = (struct e2e_cache_ovs_flow *) arg;
 
-    if (dp_flow_data->actions) {
-        free(dp_flow_data->actions);
+    if (flow->actions) {
+        free(flow->actions);
     }
-    free(dp_flow_data);
+    free(flow);
 }
 
 static void
-e2e_cache_merged_flow_db_rem(struct e2e_cache_ufid_to_flow_item *dp_flow_data)
+e2e_cache_merged_flow_free(struct e2e_cache_merged_flow *merged_flow)
 {
-    e2e_cache_disassociate_merged_flow(dp_flow_data);
+    if (merged_flow->actions) {
+        free(merged_flow->actions);
+    }
+    free(merged_flow);
+}
 
-    hmap_remove(&merged_flows_map, &dp_flow_data->node.in_hmap);
+static void
+e2e_cache_merged_flow_db_rem(struct e2e_cache_merged_flow *merged_flow)
+{
+    e2e_cache_disassociate_merged_flow(merged_flow);
+
+    hmap_remove(&merged_flows_map, &merged_flow->node.in_hmap);
     atomic_count_dec(&e2e_stats.merged_flows_in_cache);
 }
 
 static void
-e2e_cache_merged_flow_db_del(struct e2e_cache_ufid_to_flow_item *dp_flow_data)
+e2e_cache_merged_flow_db_del(struct e2e_cache_merged_flow *merged_flow)
 {
     /* Lock/unlock to prevent race condition with
      * e2e_cache_get_merged_flows_stats()
      */
-    ovs_mutex_lock(&ufid_to_flow_map_mutex);
-    e2e_cache_merged_flow_db_rem(dp_flow_data);
-    ovs_mutex_unlock(&ufid_to_flow_map_mutex);
+    ovs_mutex_lock(&flows_map_mutex);
+    e2e_cache_merged_flow_db_rem(merged_flow);
+    ovs_mutex_unlock(&flows_map_mutex);
 
-    e2e_cache_flow_free(dp_flow_data);
+    e2e_cache_merged_flow_free(merged_flow);
 }
 
 static inline int
-e2e_cache_merged_flow_db_put(struct e2e_cache_ufid_to_flow_item *merged_flow)
+e2e_cache_merged_flow_db_put(struct e2e_cache_merged_flow *merged_flow)
 {
     uint32_t hash =
         hash_bytes(&merged_flow->ufid, sizeof merged_flow->ufid, 0);
-    struct e2e_cache_ufid_to_flow_item *node;
+    struct e2e_cache_merged_flow *old_merged_flow;
 
-    node = e2e_cache_merged_flow_find(&merged_flow->ufid);
+    old_merged_flow = e2e_cache_merged_flow_find(&merged_flow->ufid);
     /* In case the merged flow exists do nothing. */
-    if (node && (node->actions_size == merged_flow->actions_size) &&
-       !memcmp(node->actions, merged_flow->actions,
-       sizeof *merged_flow->actions)) {
+    if (old_merged_flow &&
+        (old_merged_flow->actions_size == merged_flow->actions_size) &&
+        !memcmp(old_merged_flow->actions, merged_flow->actions,
+                sizeof *merged_flow->actions)) {
            return -1;
     }
 
     /* In case it's a flow modification delete the current flow
      * before inserting the updated one.
      */
-    if (node) {
-        e2e_cache_merged_flow_offload_del(node);
-        e2e_cache_merged_flow_db_del(node);
+    if (old_merged_flow) {
+        e2e_cache_merged_flow_offload_del(old_merged_flow);
+        e2e_cache_merged_flow_db_del(old_merged_flow);
     }
 
     hmap_insert(&merged_flows_map, &merged_flow->node.in_hmap, hash);
@@ -8305,31 +8337,30 @@ e2e_cache_merged_flow_db_put(struct e2e_cache_ufid_to_flow_item *merged_flow)
     return 0;
 }
 
-/* Find dp_flow_data with @ufid. */
-static inline struct e2e_cache_ufid_to_flow_item *
-e2e_cache_ufid_to_flow_data_find(const ovs_u128 *ufid)
+/* Find e2e_cache_ovs_flow with @ufid. */
+static inline struct e2e_cache_ovs_flow *
+e2e_cache_flow_find(const ovs_u128 *ufid)
 {
     size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
-    struct e2e_cache_ufid_to_flow_item *data;
+    struct e2e_cache_ovs_flow *flow;
 
-    CMAP_FOR_EACH_WITH_HASH (data, node.in_cmap, hash, &ufid_to_flow_map) {
-        if (ovs_u128_equals(*ufid, data->ufid)) {
-            return data;
+    CMAP_FOR_EACH_WITH_HASH (flow, node, hash, &flows_map) {
+        if (ovs_u128_equals(*ufid, flow->ufid)) {
+            return flow;
         }
     }
 
     return NULL;
 }
 
-static inline struct e2e_cache_ufid_to_flow_item *
-e2e_cache_ufid_to_flow_data_find_protected(const ovs_u128 *ufid, uint32_t hash)
+static inline struct e2e_cache_ovs_flow *
+e2e_cache_flow_find_protected(const ovs_u128 *ufid, uint32_t hash)
 {
-    struct e2e_cache_ufid_to_flow_item *data;
+    struct e2e_cache_ovs_flow *flow;
 
-    CMAP_FOR_EACH_WITH_HASH_PROTECTED (data, node.in_cmap, hash,
-                                       &ufid_to_flow_map) {
-        if (ovs_u128_equals(*ufid, data->ufid)) {
-            return data;
+    CMAP_FOR_EACH_WITH_HASH_PROTECTED (flow, node, hash, &flows_map) {
+        if (ovs_u128_equals(*ufid, flow->ufid)) {
+            return flow;
         }
     }
 
@@ -8337,17 +8368,17 @@ e2e_cache_ufid_to_flow_data_find_protected(const ovs_u128 *ufid, uint32_t hash)
 }
 
 static void
-e2e_cache_del_associated_merged_flows(struct e2e_cache_ufid_to_flow_item *flow,
+e2e_cache_del_associated_merged_flows(struct e2e_cache_ovs_flow *flow,
                                       struct ovs_list *merged_flows_to_delete)
 {
     struct flow2flow_item *associated_flow_item, *next_item;
-    struct e2e_cache_ufid_to_flow_item *merged_flow;
+    struct e2e_cache_merged_flow *merged_flow;
 
     LIST_FOR_EACH_SAFE (associated_flow_item, next_item, list,
-                        &flow->associated_flows[0].list) {
+                        &flow->associated_merged_flows) {
         merged_flow =
             CONTAINER_OF(associated_flow_item,
-                         struct e2e_cache_ufid_to_flow_item,
+                         struct e2e_cache_merged_flow,
                          associated_flows[associated_flow_item->index]);
 
         e2e_cache_merged_flow_db_rem(merged_flow);
@@ -8358,17 +8389,17 @@ e2e_cache_del_associated_merged_flows(struct e2e_cache_ufid_to_flow_item *flow,
 static void
 e2e_cache_del_merged_flows(struct ovs_list *merged_flows_to_delete)
 {
-    struct e2e_cache_ufid_to_flow_item *merged_flow;
+    struct e2e_cache_merged_flow *merged_flow;
     struct ovs_list *l;
 
     while (!ovs_list_is_empty(merged_flows_to_delete)) {
         l = ovs_list_pop_front(merged_flows_to_delete);
 
         merged_flow =
-            CONTAINER_OF(l, struct e2e_cache_ufid_to_flow_item, node.in_list);
+            CONTAINER_OF(l, struct e2e_cache_merged_flow, node.in_list);
 
         e2e_cache_merged_flow_offload_del(merged_flow);
-        e2e_cache_flow_free(merged_flow);
+        e2e_cache_merged_flow_free(merged_flow);
     }
 }
 
@@ -8376,16 +8407,15 @@ static void
 e2e_cache_flow_db_del_protected(const ovs_u128 *ufid, uint32_t hash,
                                 struct ovs_list *merged_flows_to_delete)
 {
-    struct e2e_cache_ufid_to_flow_item *dp_flow_data;
+    struct e2e_cache_ovs_flow *flow;
 
-    dp_flow_data = e2e_cache_ufid_to_flow_data_find_protected(ufid, hash);
-    if (OVS_UNLIKELY(!dp_flow_data)) {
+    flow = e2e_cache_flow_find_protected(ufid, hash);
+    if (OVS_UNLIKELY(!flow)) {
         return;
     }
-    e2e_cache_del_associated_merged_flows(dp_flow_data,
-                                          merged_flows_to_delete);
-    cmap_remove(&ufid_to_flow_map, &dp_flow_data->node.in_cmap, hash);
-    ovsrcu_postpone(e2e_cache_flow_free, dp_flow_data);
+    e2e_cache_del_associated_merged_flows(flow, merged_flows_to_delete);
+    cmap_remove(&flows_map, &flow->node, hash);
+    ovsrcu_postpone(e2e_cache_flow_free, flow);
 }
 
 static void
@@ -8395,9 +8425,9 @@ e2e_cache_flow_db_del(const ovs_u128 *ufid)
         OVS_LIST_INITIALIZER(&merged_flows_to_delete);
     size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
 
-    ovs_mutex_lock(&ufid_to_flow_map_mutex);
+    ovs_mutex_lock(&flows_map_mutex);
     e2e_cache_flow_db_del_protected(ufid, hash, &merged_flows_to_delete);
-    ovs_mutex_unlock(&ufid_to_flow_map_mutex);
+    ovs_mutex_unlock(&flows_map_mutex);
 
     e2e_cache_del_merged_flows(&merged_flows_to_delete);
 }
@@ -8405,43 +8435,40 @@ e2e_cache_flow_db_del(const ovs_u128 *ufid)
 static int
 e2e_cache_flow_db_put(struct e2e_cache_ufid_msg *ufid_msg)
 {
-    struct e2e_cache_ufid_to_flow_item *dp_flow_data_prev;
-    struct e2e_cache_ufid_to_flow_item *dp_flow_data;
+    struct e2e_cache_ovs_flow *flow_prev, *flow;
     struct ovs_list merged_flows_to_delete =
         OVS_LIST_INITIALIZER(&merged_flows_to_delete);
     const ovs_u128 *ufid;
     size_t hash;
 
-    dp_flow_data = (struct e2e_cache_ufid_to_flow_item *)
-        xzalloc(sizeof *dp_flow_data +
-                sizeof dp_flow_data->associated_flows[0]);
-    if (OVS_UNLIKELY(!dp_flow_data)) {
+    flow = (struct e2e_cache_ovs_flow *) xzalloc(sizeof *flow);
+    if (OVS_UNLIKELY(!flow)) {
         goto err;
     }
 
-    dp_flow_data->ufid = ufid_msg->ufid;
-    dp_flow_data->match = ufid_msg->match;
-    dp_flow_data->offload_state = ufid_msg->is_ct ? E2E_OL_STATE_CT_SW
-                                                  : E2E_OL_STATE_FLOW;
-    dp_flow_data->actions = ufid_msg->actions;
+    flow->ufid = ufid_msg->ufid;
+    flow->match = ufid_msg->match;
+    flow->offload_state = ufid_msg->is_ct ? E2E_OL_STATE_CT_SW
+                                          : E2E_OL_STATE_FLOW;
+    flow->actions = ufid_msg->actions;
     ufid_msg->actions = NULL;
-    dp_flow_data->actions_size = ufid_msg->actions_len;
-    ovs_list_init(&dp_flow_data->associated_flows[0].list);
-    hmap_init(&dp_flow_data->merged_counters);
+    flow->actions_size = ufid_msg->actions_len;
+    ovs_list_init(&flow->associated_merged_flows);
+    hmap_init(&flow->merged_counters);
 
-    ufid = &dp_flow_data->ufid;
+    ufid = &flow->ufid;
     hash = hash_bytes(ufid, sizeof *ufid, 0);
 
-    ovs_mutex_lock(&ufid_to_flow_map_mutex);
+    ovs_mutex_lock(&flows_map_mutex);
 
-    dp_flow_data_prev = e2e_cache_ufid_to_flow_data_find_protected(ufid, hash);
-    if (dp_flow_data_prev) {
+    flow_prev = e2e_cache_flow_find_protected(ufid, hash);
+    if (flow_prev) {
         e2e_cache_flow_db_del_protected(ufid, hash, &merged_flows_to_delete);
     }
 
-    cmap_insert(&ufid_to_flow_map, &dp_flow_data->node.in_cmap, hash);
+    cmap_insert(&flows_map, &flow->node, hash);
 
-    ovs_mutex_unlock(&ufid_to_flow_map_mutex);
+    ovs_mutex_unlock(&flows_map_mutex);
 
     e2e_cache_del_merged_flows(&merged_flows_to_delete);
     return 0;
@@ -8665,16 +8692,15 @@ e2e_cache_trace_tnl_pop(struct dp_packet *packet)
 
 static int
 e2e_cache_trace_info_to_flows(const struct e2e_cache_trace_info *trc_info,
-                              struct e2e_cache_ufid_to_flow_item *flows[],
+                              struct e2e_cache_ovs_flow *flows[],
                               uint16_t *num_flows)
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 10);
     uint16_t i, num_elements;
 
     for (i = 0, num_elements = 0; i < trc_info->num_elements; i++) {
-        flows[num_elements] =
-            e2e_cache_ufid_to_flow_data_find(&trc_info->ufids[i]);
-        VLOG_DBG_RL(&rl, "%s: ufids[%d]="UUID_FMT" flows[%d]=%p", __FUNCTION__,
+        flows[num_elements] = e2e_cache_flow_find(&trc_info->ufids[i]);
+        VLOG_DBG_RL(&rl, "%s: ufids[%d]="UUID_FMT" flows[%d]=%p", __func__,
                     i, UUID_ARGS((struct uuid *)&trc_info->ufids[i]),
                     num_elements, flows[num_elements]);
         if (OVS_UNLIKELY(!flows[num_elements])) {
@@ -8688,7 +8714,7 @@ e2e_cache_trace_info_to_flows(const struct e2e_cache_trace_info *trc_info,
 
 static void
 e2e_cache_offload_ct_mt_flows(struct dp_netdev *dp,
-                              struct e2e_cache_ufid_to_flow_item *mt_flows[],
+                              struct e2e_cache_ovs_flow *mt_flows[],
                               uint16_t num_flows)
 {
     struct ct_flow_offload_item offload;
@@ -8724,20 +8750,20 @@ e2e_cache_offload_ct_mt_flows(struct dp_netdev *dp,
 }
 
 static int
-e2e_cache_merge_flows(struct e2e_cache_ufid_to_flow_item **flows,
+e2e_cache_merge_flows(struct e2e_cache_ovs_flow **flows,
                       uint16_t num_flows,
-                      struct e2e_cache_ufid_to_flow_item *merged_flow,
+                      struct e2e_cache_merged_flow *merged_flow,
                       struct ofpbuf *merged_actions);
 
 static int
 e2e_cache_process_trace_info(struct dp_netdev *dp,
                              const struct e2e_cache_trace_info *trc_info)
 {
-    struct e2e_cache_ufid_to_flow_item *merged_flow;
+    struct e2e_cache_merged_flow *merged_flow;
     struct nlattr *actions;
     size_t actions_len;
     struct ofpbuf merged_actions;
-    struct e2e_cache_ufid_to_flow_item *mt_flows[E2E_CACHE_MAX_TRACE];
+    struct e2e_cache_ovs_flow *mt_flows[E2E_CACHE_MAX_TRACE];
     uint64_t merged_actions_buf[1024 / sizeof(uint64_t)];
     uint16_t i, num_flows;
     int err;
@@ -8802,11 +8828,11 @@ disassociate_merged_flow:
     /* Lock/unlock to prevent race condition with
      * e2e_cache_get_merged_flows_stats()
      */
-    ovs_mutex_lock(&ufid_to_flow_map_mutex);
+    ovs_mutex_lock(&flows_map_mutex);
     e2e_cache_disassociate_merged_flow(merged_flow);
-    ovs_mutex_unlock(&ufid_to_flow_map_mutex);
+    ovs_mutex_unlock(&flows_map_mutex);
 free_merged_flow:
-    e2e_cache_flow_free(merged_flow);
+    e2e_cache_merged_flow_free(merged_flow);
     return err;
 }
 
@@ -8822,31 +8848,34 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev,
 {
     struct e2e_cache_counter_item *mt_counter_item, *mapped_counter_item;
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 10);
-    struct e2e_cache_ufid_to_flow_item *merged_flow, *dp_flow_data;
-    size_t hash = hash_bytes(mt_ufid, sizeof *mt_ufid, 0);
+    struct e2e_cache_merged_flow *merged_flow;
     struct dpif_flow_stats merged_stats;
     struct dpif_flow_attrs merged_attr;
+    struct e2e_cache_ovs_flow *flow;
+    size_t hash;
     int ret;
 
-    ovs_mutex_lock(&ufid_to_flow_map_mutex);
-    dp_flow_data = e2e_cache_ufid_to_flow_data_find_protected(mt_ufid, hash);
-    if (OVS_UNLIKELY(!dp_flow_data)) {
-        ovs_mutex_unlock(&ufid_to_flow_map_mutex);
+    hash = hash_bytes(mt_ufid, sizeof *mt_ufid, 0);
+
+    ovs_mutex_lock(&flows_map_mutex);
+    flow = e2e_cache_flow_find_protected(mt_ufid, hash);
+    if (OVS_UNLIKELY(!flow)) {
+        ovs_mutex_unlock(&flows_map_mutex);
         return;
     }
-    HMAP_FOR_EACH (mt_counter_item, node, &dp_flow_data->merged_counters) {
+    HMAP_FOR_EACH (mt_counter_item, node, &flow->merged_counters) {
         /* Get the counter item from the global map. */
         mapped_counter_item = e2e_cache_counter_find(mt_counter_item->hash);
         if (!mapped_counter_item) {
             VLOG_ERR_RL(&rl, "Failed to get counter item for ufid "UUID_FMT,
-                        UUID_ARGS((struct uuid *) &dp_flow_data->ufid));
+                        UUID_ARGS((struct uuid *) &flow->ufid));
             continue;
         }
-        if (dp_flow_data->offload_state == E2E_OL_STATE_FLOW) {
+        if (flow->offload_state == E2E_OL_STATE_FLOW) {
             /* Get one of the merged flows using this counter. */
             merged_flow =
                 CONTAINER_OF(ovs_list_front(&mapped_counter_item->merged_flows),
-                             struct e2e_cache_ufid_to_flow_item,
+                             struct e2e_cache_merged_flow,
                              flow_counter_list);
             /* Query the counter. */
             ret = netdev_flow_get(netdev, match, actions, &merged_flow->ufid,
@@ -8864,7 +8893,7 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev,
                                  prev_now, stats);
         }
     }
-    ovs_mutex_unlock(&ufid_to_flow_map_mutex);
+    ovs_mutex_unlock(&flows_map_mutex);
 }
 
 static void *
@@ -11030,7 +11059,7 @@ e2e_cache_set_action_is_valid(struct nlattr *a)
 }
 
 static inline bool
-e2e_cache_flows_are_valid(struct e2e_cache_ufid_to_flow_item **netdev_flows,
+e2e_cache_flows_are_valid(struct e2e_cache_ovs_flow **netdev_flows,
                           uint16_t num)
 {
     struct match *match;
@@ -11207,12 +11236,12 @@ e2e_cache_attach_merged_set_action(struct ofpbuf *buf, size_t tnl_offset,
 }
 
 static void
-e2e_cache_merge_actions(struct e2e_cache_ufid_to_flow_item **netdev_flows,
+e2e_cache_merge_actions(struct e2e_cache_ovs_flow **netdev_flows,
                         uint16_t num, struct ofpbuf *buf)
 {
     uint16_t i = 0;
     unsigned int left;
-    struct nlattr *a;
+    const struct nlattr *a;
     uint16_t num_set = 0;
     struct e2e_cache_merged_set merged_set;
     size_t tnl_offset = 0;
@@ -11319,7 +11348,7 @@ e2e_cache_shift_tnl_fields(struct match *merged_match)
     }
 
 static void
-e2e_cache_merge_match(struct e2e_cache_ufid_to_flow_item **netdev_flows,
+e2e_cache_merge_match(struct e2e_cache_ovs_flow **netdev_flows,
                       uint16_t num, struct match *merged_match)
 {
     struct match *match;
@@ -11365,9 +11394,9 @@ e2e_cache_merge_match(struct e2e_cache_ufid_to_flow_item **netdev_flows,
 }
 
 static int
-e2e_cache_merge_flows(struct e2e_cache_ufid_to_flow_item **flows,
+e2e_cache_merge_flows(struct e2e_cache_ovs_flow **flows,
                       uint16_t num_flows,
-                      struct e2e_cache_ufid_to_flow_item *merged_flow,
+                      struct e2e_cache_merged_flow *merged_flow,
                       struct ofpbuf *merged_actions)
 {
     if (!e2e_cache_flows_are_valid(flows, num_flows)) {
