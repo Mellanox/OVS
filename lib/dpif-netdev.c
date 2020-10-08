@@ -903,7 +903,6 @@ struct e2e_cache_merged_flow {
     ovs_u128 ufid;
     struct dp_netdev *dp;
     struct dp_netdev_flow *offloaded_flow;
-    struct match match;
     struct nlattr *actions;
     uint16_t actions_size;
     uint16_t associated_flows_len;
@@ -913,6 +912,7 @@ struct e2e_cache_merged_flow {
                                           using the same flow counter. */
     struct ovs_list ct_counter_list; /* Anchor for list of merged flows
                                         using the same CT counter. */
+    struct match match;
     struct flow2flow_item associated_flows[0];
 };
 
@@ -11412,6 +11412,8 @@ e2e_cache_merge_match(struct e2e_cache_ovs_flow **netdev_flows,
     struct match *match;
     uint16_t i = 0;
     bool tnl_saved = false;
+
+    memset(merged_match, 0, sizeof *merged_match);
 
     for (i = 0; i < num; i++) {
         if (i > 0 && netdev_flows[i]->offload_state != E2E_OL_STATE_FLOW &&
