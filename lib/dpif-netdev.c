@@ -8300,17 +8300,18 @@ e2e_cache_merged_flow_db_put(struct e2e_cache_merged_flow *merged_flow)
 
     old_merged_flow = e2e_cache_merged_flow_find(&merged_flow->ufid);
     /* In case the merged flow exists do nothing. */
-    if (old_merged_flow &&
-        (old_merged_flow->actions_size == merged_flow->actions_size) &&
-        !memcmp(old_merged_flow->actions, merged_flow->actions,
-                sizeof *merged_flow->actions)) {
-           return -1;
-    }
-
-    /* In case it's a flow modification delete the current flow
-     * before inserting the updated one.
-     */
     if (old_merged_flow) {
+        uint16_t actions_size = merged_flow->actions_size;
+
+        if (old_merged_flow->actions_size == actions_size &&
+            !memcmp(old_merged_flow->actions, merged_flow->actions,
+                    actions_size)) {
+           return -1;
+        }
+
+        /* In case it's a flow modification delete the current flow
+         * before inserting the updated one.
+         */
         e2e_cache_merged_flow_offload_del(old_merged_flow);
         e2e_cache_merged_flow_db_del(old_merged_flow);
     }
