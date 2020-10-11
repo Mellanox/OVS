@@ -855,7 +855,7 @@ enum e2e_offload_state {
  * A mapping from ufid to flow for e2e cache.
  */
 struct e2e_cache_ovs_flow {
-    struct cmap_node node;
+    struct hmap_node node;
     ovs_u128 ufid;
     struct match match;
     enum e2e_offload_state offload_state;
@@ -7846,8 +7846,8 @@ static struct e2e_cache_stats e2e_stats = {
 };
 
 static struct ovs_mutex flows_map_mutex = OVS_MUTEX_INITIALIZER;
-static struct cmap flows_map OVS_GUARDED_BY(flows_map_mutex) =
-    CMAP_INITIALIZER;
+static struct hmap flows_map OVS_GUARDED_BY(flows_map_mutex) =
+    HMAP_INITIALIZER(&flows_map);
 
 static struct ovs_mutex merged_flows_map_mutex = OVS_MUTEX_INITIALIZER;
 static struct hmap merged_flows_map OVS_GUARDED_BY(merged_flows_map_mutex) =
@@ -8347,28 +8347,13 @@ e2e_cache_merged_flow_db_put(struct e2e_cache_merged_flow *merged_flow)
     return 0;
 }
 
-/* Find e2e_cache_ovs_flow with @ufid. */
+/* Find e2e_cache_ovs_flow with @ufid and calculated @hash */
 static inline struct e2e_cache_ovs_flow *
-e2e_cache_flow_find(const ovs_u128 *ufid)
-{
-    size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
-    struct e2e_cache_ovs_flow *flow;
-
-    CMAP_FOR_EACH_WITH_HASH (flow, node, hash, &flows_map) {
-        if (ovs_u128_equals(*ufid, flow->ufid)) {
-            return flow;
-        }
-    }
-
-    return NULL;
-}
-
-static inline struct e2e_cache_ovs_flow *
-e2e_cache_flow_find_protected(const ovs_u128 *ufid, uint32_t hash)
+e2e_cache_flow_find(const ovs_u128 *ufid, uint32_t hash)
 {
     struct e2e_cache_ovs_flow *flow;
 
-    CMAP_FOR_EACH_WITH_HASH_PROTECTED (flow, node, hash, &flows_map) {
+    HMAP_FOR_EACH_WITH_HASH (flow, node, hash, &flows_map) {
         if (ovs_u128_equals(*ufid, flow->ufid)) {
             return flow;
         }
@@ -8419,12 +8404,12 @@ e2e_cache_flow_db_del_protected(const ovs_u128 *ufid, uint32_t hash,
 {
     struct e2e_cache_ovs_flow *flow;
 
-    flow = e2e_cache_flow_find_protected(ufid, hash);
+    flow = e2e_cache_flow_find(ufid, hash);
     if (OVS_UNLIKELY(!flow)) {
         return;
     }
     e2e_cache_del_associated_merged_flows(flow, merged_flows_to_delete);
-    cmap_remove(&flows_map, &flow->node, hash);
+    hmap_remove(&flows_map, &flow->node);
     ovsrcu_postpone(e2e_cache_flow_free, flow);
 }
 
@@ -8471,12 +8456,12 @@ e2e_cache_flow_db_put(struct e2e_cache_ufid_msg *ufid_msg)
 
     ovs_mutex_lock(&flows_map_mutex);
 
-    flow_prev = e2e_cache_flow_find_protected(ufid, hash);
+    flow_prev = e2e_cache_flow_find(ufid, hash);
     if (flow_prev) {
         e2e_cache_flow_db_del_protected(ufid, hash, &merged_flows_to_delete);
     }
 
-    cmap_insert(&flows_map, &flow->node, hash);
+    hmap_insert(&flows_map, &flow->node, hash);
 
     ovs_mutex_unlock(&flows_map_mutex);
 
@@ -8707,11 +8692,15 @@ e2e_cache_trace_info_to_flows(const struct e2e_cache_trace_info *trc_info,
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 10);
     uint16_t i, num_elements;
+    const ovs_u128 *ufid;
+    uint32_t hash;
 
     for (i = 0, num_elements = 0; i < trc_info->num_elements; i++) {
-        flows[num_elements] = e2e_cache_flow_find(&trc_info->ufids[i]);
+        ufid = &trc_info->ufids[i];
+        hash = hash_bytes(ufid, sizeof *ufid, 0);
+        flows[num_elements] = e2e_cache_flow_find(ufid, hash);
         VLOG_DBG_RL(&rl, "%s: ufids[%d]="UUID_FMT" flows[%d]=%p", __func__,
-                    i, UUID_ARGS((struct uuid *)&trc_info->ufids[i]),
+                    i, UUID_ARGS((struct uuid *)ufid),
                     num_elements, flows[num_elements]);
         if (OVS_UNLIKELY(!flows[num_elements])) {
             return -1;
@@ -8867,7 +8856,7 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev,
     hash = hash_bytes(mt_ufid, sizeof *mt_ufid, 0);
 
     ovs_mutex_lock(&flows_map_mutex);
-    flow = e2e_cache_flow_find_protected(mt_ufid, hash);
+    flow = e2e_cache_flow_find(mt_ufid, hash);
     if (OVS_UNLIKELY(!flow)) {
         ovs_mutex_unlock(&flows_map_mutex);
         return;
