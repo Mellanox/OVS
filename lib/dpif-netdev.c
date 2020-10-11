@@ -7842,7 +7842,9 @@ static struct ovs_mutex flows_map_mutex = OVS_MUTEX_INITIALIZER;
 static struct cmap flows_map OVS_GUARDED_BY(flows_map_mutex) =
     CMAP_INITIALIZER;
 
-static struct hmap merged_flows_map = HMAP_INITIALIZER(&merged_flows_map);
+static struct ovs_mutex merged_flows_map_mutex = OVS_MUTEX_INITIALIZER;
+static struct hmap merged_flows_map OVS_GUARDED_BY(merged_flows_map_mutex) =
+    HMAP_INITIALIZER(&merged_flows_map);
 
 static void *dp_netdev_e2e_cache_main(void *arg);
 
@@ -7888,6 +7890,8 @@ dpif_netdev_dump_e2e_flows(struct hmap *portno_names,
     struct e2e_cache_merged_flow *merged_flow;
     struct dpif_flow_stats merged_stats;
 
+    ovs_mutex_lock(&merged_flows_map_mutex);
+
     HMAP_FOR_EACH (merged_flow, node.in_hmap, &merged_flows_map) {
         odp_format_ufid(&merged_flow->ufid, s);
         ds_put_cstr(s, ", ");
@@ -7901,6 +7905,8 @@ dpif_netdev_dump_e2e_flows(struct hmap *portno_names,
                            portno_names);
         ds_put_cstr(s, "\n");
     }
+
+    ovs_mutex_unlock(&merged_flows_map_mutex);
 }
 
 static inline void
@@ -8232,11 +8238,12 @@ e2e_cache_disassociate_merged_flow(struct e2e_cache_merged_flow *merged_flow)
     }
 }
 
-/* Find e2e_cache_merged_flow with @ufid. */
+/* Find e2e_cache_merged_flow with @ufid.
+ * merged_flows_map_mutex mutex must be locked.
+ */
 static inline struct e2e_cache_merged_flow *
-e2e_cache_merged_flow_find(const ovs_u128 *ufid)
+e2e_cache_merged_flow_find(const ovs_u128 *ufid, uint32_t hash)
 {
-    uint32_t hash = hash_bytes(ufid, sizeof *ufid, 0);
     struct e2e_cache_merged_flow *merged_flow;
 
     HMAP_FOR_EACH_WITH_HASH (merged_flow, node.in_hmap, hash,
@@ -8274,8 +8281,10 @@ e2e_cache_merged_flow_db_rem(struct e2e_cache_merged_flow *merged_flow)
 {
     e2e_cache_disassociate_merged_flow(merged_flow);
 
+    ovs_mutex_lock(&merged_flows_map_mutex);
     hmap_remove(&merged_flows_map, &merged_flow->node.in_hmap);
     atomic_count_dec(&e2e_stats.merged_flows_in_cache);
+    ovs_mutex_unlock(&merged_flows_map_mutex);
 }
 
 static void
@@ -8298,7 +8307,9 @@ e2e_cache_merged_flow_db_put(struct e2e_cache_merged_flow *merged_flow)
         hash_bytes(&merged_flow->ufid, sizeof merged_flow->ufid, 0);
     struct e2e_cache_merged_flow *old_merged_flow;
 
-    old_merged_flow = e2e_cache_merged_flow_find(&merged_flow->ufid);
+    ovs_mutex_lock(&merged_flows_map_mutex);
+
+    old_merged_flow = e2e_cache_merged_flow_find(&merged_flow->ufid, hash);
     /* In case the merged flow exists do nothing. */
     if (old_merged_flow) {
         uint16_t actions_size = merged_flow->actions_size;
@@ -8306,18 +8317,26 @@ e2e_cache_merged_flow_db_put(struct e2e_cache_merged_flow *merged_flow)
         if (old_merged_flow->actions_size == actions_size &&
             !memcmp(old_merged_flow->actions, merged_flow->actions,
                     actions_size)) {
-           return -1;
+            ovs_mutex_unlock(&merged_flows_map_mutex);
+            return -1;
         }
+
+        /* Must unlock merged_flows_map_mutex before calling next functions */
+        ovs_mutex_unlock(&merged_flows_map_mutex);
 
         /* In case it's a flow modification delete the current flow
          * before inserting the updated one.
          */
         e2e_cache_merged_flow_offload_del(old_merged_flow);
         e2e_cache_merged_flow_db_del(old_merged_flow);
+
+        ovs_mutex_lock(&merged_flows_map_mutex);
     }
 
     hmap_insert(&merged_flows_map, &merged_flow->node.in_hmap, hash);
     atomic_count_inc(&e2e_stats.merged_flows_in_cache);
+
+    ovs_mutex_unlock(&merged_flows_map_mutex);
     return 0;
 }
 
