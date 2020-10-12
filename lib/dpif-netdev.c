@@ -857,13 +857,16 @@ enum e2e_offload_state {
 struct e2e_cache_ovs_flow {
     struct hmap_node node;
     ovs_u128 ufid;
-    struct match match;
-    enum e2e_offload_state offload_state;
     struct nlattr *actions;
+    enum e2e_offload_state offload_state;
     uint16_t actions_size;
     struct hmap merged_counters; /* Map of merged flows counters
                                     it is part of. */
     struct ovs_list associated_merged_flows;
+    union {
+        struct match match[0];
+        struct ct_match ct_match[0];
+    };
 };
 
 /* Helper struct for accessing a struct containing ovs_list array.
@@ -1140,14 +1143,15 @@ dp_netdev_ct_offload_get_ufid(struct ct_flow_offload_item *offload,
 
 typedef int
 (*dp_netdev_ct_add_cb)(struct ct_flow_offload_item *offload,
-                       struct dp_netdev *dp, struct match *match,
+                       struct dp_netdev *dp, struct ct_match *match,
                        struct nlattr *actions, int actions_len);
 static int
 dp_netdev_ct_add(struct ct_flow_offload_item *offload, struct dp_netdev *dp,
                  dp_netdev_ct_add_cb cb);
 static int
 dp_netdev_ct_e2e_add_cb(struct ct_flow_offload_item *offload,
-                        struct dp_netdev *dp OVS_UNUSED, struct match *match,
+                        struct dp_netdev *dp OVS_UNUSED,
+                        struct ct_match *match,
                         struct nlattr *actions, int actions_len);
 static void
 dp_netdev_ct_offload_add_item(struct ct_flow_offload_item *offload)
@@ -3241,26 +3245,29 @@ dp_netdev_create_ct_actions(struct ofpbuf *buf,
 
 static int
 dp_netdev_ct_offload_add_cb(struct ct_flow_offload_item *offload,
-                            struct dp_netdev *dp, struct match *match,
+                            struct dp_netdev *dp, struct ct_match *ct_match,
                             struct nlattr *actions, int actions_len)
 {
     const char *dpif_type_str = dpif_normalize_type(dp->class->type);
     struct offload_info info = { .flow_mark = INVALID_FLOW_MARK, };
     struct netdev *port;
+    struct match match;
     int ret;
 
-    port = netdev_ports_get(match->flow.in_port.odp_port, dpif_type_str);
-    if (!port) {
+    port = netdev_ports_get(ct_match->odp_port, dpif_type_str);
+    if (OVS_UNLIKELY(!port)) {
         return -1;
     }
+
+    dp_netdev_fill_ct_match(&match, ct_match);
 
     ovs_rwlock_rdlock(&dp->port_rwlock);
     if (OVS_UNLIKELY(!VLOG_DROP_DBG((&upcall_rl)))) {
         struct ds ds = DS_EMPTY_INITIALIZER;
         struct ofpbuf key_buf, mask_buf;
         struct odp_flow_key_parms odp_parms = {
-            .flow = &match->flow,
-            .mask = &match->wc.masks,
+            .flow = &match.flow,
+            .mask = &match.wc.masks,
             .support = dp_netdev_support,
         };
 
@@ -3287,7 +3294,7 @@ dp_netdev_ct_offload_add_cb(struct ct_flow_offload_item *offload,
 
         ds_destroy(&ds);
     }
-    ret = netdev_flow_put(port, match, actions, actions_len, &offload->ufid,
+    ret = netdev_flow_put(port, &match, actions, actions_len, &offload->ufid,
                           &info, NULL);
     if (offload->status) {
         *(offload->status) = !ret;
@@ -3303,15 +3310,13 @@ dp_netdev_ct_add(struct ct_flow_offload_item *offload, struct dp_netdev *dp,
                  dp_netdev_ct_add_cb cb)
 {
     struct nlattr *actions;
-    struct match match;
     struct ofpbuf buf;
     int ret;
 
-    dp_netdev_fill_ct_match(&match, &offload->ct_match);
     ofpbuf_init(&buf, 0);
     dp_netdev_create_ct_actions(&buf, offload);
     actions = ofpbuf_at_assert(&buf, 0, sizeof(struct nlattr));
-    ret = cb(offload, dp, &match, actions, buf.size);
+    ret = cb(offload, dp, &offload->ct_match, actions, buf.size);
     ofpbuf_uninit(&buf);
 
     return ret;
@@ -3496,7 +3501,7 @@ queue_netdev_flow_del(struct dp_netdev_pmd_thread *pmd,
 }
 
 static int
-e2e_cache_flow_put(bool is_ct, const ovs_u128 *ufid, struct match *match,
+e2e_cache_flow_put(bool is_ct, const ovs_u128 *ufid, const void *match,
                    const struct nlattr *actions, size_t actions_len);
 static void
 queue_netdev_flow_put(struct dp_netdev_pmd_thread *pmd,
@@ -7753,9 +7758,12 @@ struct e2e_cache_ufid_msg {
     ovs_u128 ufid;
     int op;
     bool is_ct;
-    struct match match;
     struct nlattr *actions;
     size_t actions_len;
+    union {
+        struct match match[0];
+        struct ct_match ct_match[0];
+    };
 };
 
 struct e2e_cache_thread_msg_queues {
@@ -8275,6 +8283,19 @@ e2e_cache_merged_flow_find(const ovs_u128 *ufid, uint32_t hash)
     return NULL;
 }
 
+static inline struct e2e_cache_ovs_flow *
+e2e_cache_flow_alloc(bool is_ct)
+{
+    struct e2e_cache_ovs_flow *flow;
+    size_t alloc_bytes;
+
+    alloc_bytes = sizeof *flow;
+    alloc_bytes += is_ct ? sizeof flow->ct_match[0] : sizeof flow->match[0];
+
+    flow = (struct e2e_cache_ovs_flow *) xzalloc(alloc_bytes);
+    return flow;
+}
+
 static void
 e2e_cache_flow_free(void *arg)
 {
@@ -8284,6 +8305,52 @@ e2e_cache_flow_free(void *arg)
         free(flow->actions);
     }
     free(flow);
+}
+
+static inline struct e2e_cache_ufid_msg *
+e2e_cache_ufid_msg_alloc(int op, bool is_ct, size_t actions_len)
+{
+    struct e2e_cache_ufid_msg *msg;
+    struct nlattr *actions = NULL;
+    size_t alloc_size;
+
+    alloc_size = sizeof *msg;
+    if (op == E2E_UFID_MSG_PUT) {
+        if (actions_len) {
+            actions = (struct nlattr *) xmalloc(actions_len);
+            if (OVS_UNLIKELY(!actions)) {
+                return NULL;
+            }
+        }
+        alloc_size += is_ct ? sizeof msg->ct_match[0] :
+                              sizeof msg->match[0];
+    }
+
+    msg = (struct e2e_cache_ufid_msg *) xmalloc(alloc_size);
+    if (OVS_UNLIKELY(!msg)) {
+        goto err;
+    }
+
+    msg->op = op;
+    msg->is_ct = is_ct;
+    msg->actions = actions;
+    msg->actions_len = actions_len;
+    return msg;
+
+err:
+    if (actions) {
+        free(actions);
+    }
+    return NULL;
+}
+
+static inline void
+e2e_cache_ufid_msg_free(struct e2e_cache_ufid_msg *msg)
+{
+    if (msg->actions) {
+        free(msg->actions);
+    }
+    free(msg);
 }
 
 static void
@@ -8448,15 +8515,19 @@ e2e_cache_flow_db_put(struct e2e_cache_ufid_msg *ufid_msg)
     const ovs_u128 *ufid;
     size_t hash;
 
-    flow = (struct e2e_cache_ovs_flow *) xzalloc(sizeof *flow);
+    flow = e2e_cache_flow_alloc(ufid_msg->is_ct);
     if (OVS_UNLIKELY(!flow)) {
-        goto err;
+        return -1;
     }
 
     flow->ufid = ufid_msg->ufid;
-    flow->match = ufid_msg->match;
-    flow->offload_state = ufid_msg->is_ct ? E2E_OL_STATE_CT_SW
-                                          : E2E_OL_STATE_FLOW;
+    if (ufid_msg->is_ct) {
+        flow->ct_match[0] = ufid_msg->ct_match[0];
+        flow->offload_state = E2E_OL_STATE_CT_SW;
+    } else {
+        flow->match[0] = ufid_msg->match[0];
+        flow->offload_state = E2E_OL_STATE_FLOW;
+    }
     flow->actions = ufid_msg->actions;
     ufid_msg->actions = NULL;
     flow->actions_size = ufid_msg->actions_len;
@@ -8479,29 +8550,22 @@ e2e_cache_flow_db_put(struct e2e_cache_ufid_msg *ufid_msg)
 
     e2e_cache_del_merged_flows(&merged_flows_to_delete);
     return 0;
-
-err:
-    if (ufid_msg->actions) {
-        free(ufid_msg->actions);
-        ufid_msg->actions = NULL;
-    }
-    return -1;
 }
 
 static int
 e2e_cache_flow_del(const ovs_u128 *ufid)
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 10);
-    struct e2e_cache_ufid_msg *del_msg =
-        (struct e2e_cache_ufid_msg *) xmalloc(sizeof *del_msg);
+    struct e2e_cache_ufid_msg *del_msg;
 
     VLOG_DBG_RL(&rl, "%s: ufid="UUID_FMT, __FUNCTION__,
                 UUID_ARGS((struct uuid *)ufid));
+
+    del_msg = e2e_cache_ufid_msg_alloc(E2E_UFID_MSG_DEL, false, 0);
     if (OVS_UNLIKELY(!del_msg)) {
         return -1;
     }
     del_msg->ufid = *ufid;
-    del_msg->op = E2E_UFID_MSG_DEL;
 
     /* Insert message into queue, e2e_cache_ufid_msg_dequeue()
      * is used to dequeue it from there.
@@ -8516,31 +8580,26 @@ e2e_cache_flow_del(const ovs_u128 *ufid)
 }
 
 static int
-e2e_cache_flow_put(bool is_ct, const ovs_u128 *ufid, struct match *match,
+e2e_cache_flow_put(bool is_ct, const ovs_u128 *ufid, const void *match,
                    const struct nlattr *actions, size_t actions_len)
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 10);
-    struct e2e_cache_ufid_msg *put_msg =
-        (struct e2e_cache_ufid_msg *) xmalloc(sizeof *put_msg);
+    struct e2e_cache_ufid_msg *put_msg;
 
     VLOG_DBG_RL(&rl, "%s: ufid="UUID_FMT, __FUNCTION__,
                 UUID_ARGS((struct uuid *)ufid));
+    put_msg = e2e_cache_ufid_msg_alloc(E2E_UFID_MSG_PUT, is_ct, actions_len);
     if (OVS_UNLIKELY(!put_msg)) {
         return -1;
     }
 
-    put_msg->actions = (struct nlattr *) xmalloc(actions_len);
-    if (OVS_UNLIKELY(!put_msg->actions)) {
-        free(put_msg);
-        return -1;
-    }
-
     put_msg->ufid = *ufid;
-    put_msg->op = E2E_UFID_MSG_PUT;
-    put_msg->is_ct = is_ct;
-    put_msg->match = *match;
     memcpy(put_msg->actions, actions, actions_len);
-    put_msg->actions_len = actions_len;
+    if (is_ct) {
+        put_msg->ct_match[0] = *((const struct ct_match *) match);
+    } else {
+        put_msg->match[0] = *((const struct match *) match);
+    }
 
     /* Insert message into queue, e2e_cache_ufid_msg_dequeue()
      * is used to dequeue it from there.
@@ -8556,7 +8615,8 @@ e2e_cache_flow_put(bool is_ct, const ovs_u128 *ufid, struct match *match,
 
 static int
 dp_netdev_ct_e2e_add_cb(struct ct_flow_offload_item *offload,
-                        struct dp_netdev *dp OVS_UNUSED, struct match *match,
+                        struct dp_netdev *dp OVS_UNUSED,
+                        struct ct_match *match,
                         struct nlattr *actions, int actions_len)
 {
     return e2e_cache_flow_put(true, &offload->ufid, match, actions,
@@ -8731,7 +8791,6 @@ e2e_cache_offload_ct_mt_flows(struct dp_netdev *dp,
     struct ct_flow_offload_item offload;
     struct nlattr *actions = NULL;
     uint16_t max_actions_len = 0;
-    struct match match;
     uint16_t i;
     int ret;
 
@@ -8741,7 +8800,6 @@ e2e_cache_offload_ct_mt_flows(struct dp_netdev *dp,
             continue;
         }
         offload.ufid = mt_flows[i]->ufid;
-        match = mt_flows[i]->match;
         if (!actions || max_actions_len < mt_flows[i]->actions_size) {
             if (actions) {
                 free(actions);
@@ -8750,7 +8808,9 @@ e2e_cache_offload_ct_mt_flows(struct dp_netdev *dp,
             actions = xmalloc(max_actions_len);
         }
         memcpy(actions, mt_flows[i]->actions, mt_flows[i]->actions_size);
-        ret = dp_netdev_ct_offload_add_cb(&offload, dp, &match, actions,
+        ret = dp_netdev_ct_offload_add_cb(&offload, dp,
+                                          &mt_flows[i]->ct_match[0],
+                                          actions,
                                           mt_flows[i]->actions_size);
         if (OVS_LIKELY(ret == 0)) {
             mt_flows[i]->offload_state = E2E_OL_STATE_CT_HW;
@@ -8927,7 +8987,7 @@ dp_netdev_e2e_cache_main(void *arg OVS_UNUSED)
             } else {
                 e2e_cache_flow_db_del(&ufid_msg->ufid);
             }
-            free(ufid_msg);
+            e2e_cache_ufid_msg_free(ufid_msg);
         }
 
         trace_msg = e2e_cache_trace_msg_dequeue();
@@ -8960,7 +9020,7 @@ OVS_UNUSED
 static int
 e2e_cache_flow_put(bool is_ct OVS_UNUSED,
                    const ovs_u128 *ufid OVS_UNUSED,
-                   struct match *match OVS_UNUSED,
+                   const void *match OVS_UNUSED,
                    const struct nlattr *actions OVS_UNUSED,
                    size_t actions_len OVS_UNUSED)
 {
@@ -11099,7 +11159,7 @@ e2e_cache_flows_are_valid(struct e2e_cache_ovs_flow **netdev_flows,
             continue;
         }
 
-        match = &flow->match;
+        match = &flow->match[0];
         /* validate match */
         if ((match->flow.ipv6_label & match->wc.masks.ipv6_label) ||
             (match->flow.nw_tos & match->wc.masks.nw_tos) ||
@@ -11382,19 +11442,27 @@ static void
 e2e_cache_merge_match(struct e2e_cache_ovs_flow **netdev_flows,
                       uint16_t num, struct match *merged_match)
 {
-    struct match *match;
+    struct e2e_cache_ovs_flow *flow;
+    struct match match_on_stack;
+    const struct match *match;
     uint16_t i = 0;
     bool tnl_saved = false;
 
     memset(merged_match, 0, sizeof *merged_match);
 
     for (i = 0; i < num; i++) {
-        if (i > 0 && netdev_flows[i]->offload_state != E2E_OL_STATE_FLOW &&
+        flow = netdev_flows[i];
+        if (i > 0 && flow->offload_state != E2E_OL_STATE_FLOW &&
             netdev_flows[i - 1]->offload_state != E2E_OL_STATE_FLOW) {
             continue;
         }
         /* parse match */
-        match = &(netdev_flows[i]->match);
+        if (flow->offload_state == E2E_OL_STATE_FLOW) {
+            match = &flow->match[0];
+        } else {
+            dp_netdev_fill_ct_match(&match_on_stack, &flow->ct_match[0]);
+            match = &match_on_stack;
+        }
         if (!tnl_saved && !is_all_zeros(&match->wc.masks.tunnel,
                                         sizeof match->wc.masks.tunnel)) {
             e2e_cache_shift_tnl_fields(merged_match);
