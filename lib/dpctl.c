@@ -1402,18 +1402,22 @@ dpctl_del_flow(int argc, const char *argv[], struct dpctl_params *dpctl_p)
 static int
 dpctl_dump_e2e_stats(int argc, const char *argv[], struct dpctl_params *dpctl_p)
 {
-    struct ds s = DS_EMPTY_INITIALIZER;
     struct dpif *dpif;
     int error;
 
     error = opt_dpif_open(argc, argv, dpctl_p, 0, &dpif);
     if (!error) {
+        struct ds s = DS_EMPTY_INITIALIZER;
+
         error = dpif_dump_e2e_stats(dpif, &s);
 
         if (!error) {
             dpctl_print(dpctl_p, "%s\n",ds_cstr(&s));
         } else {
             dpctl_error(dpctl_p, error, "Could not dump e2e cache stats");
+        }
+        if (s.string) {
+            ds_destroy(&s);
         }
         dpif_close(dpif);
     }
@@ -1424,19 +1428,19 @@ dpctl_dump_e2e_stats(int argc, const char *argv[], struct dpctl_params *dpctl_p)
 static int
 dpctl_dump_e2e_flows(int argc, const char *argv[], struct dpctl_params *dpctl_p)
 {
-    struct ds s = DS_EMPTY_INITIALIZER;
     struct dpif *dpif;
     int error;
 
     error = opt_dpif_open(argc, argv, dpctl_p, 0, &dpif);
     if (!error) {
         struct hmap *portno_names = dpctl_get_portno_names(dpif, dpctl_p);
-
+        struct ds s = DS_EMPTY_INITIALIZER;
         struct ofputil_port_map port_map;
-        ofputil_port_map_init(&port_map);
-
         struct dpif_port_dump port_dump;
         struct dpif_port dpif_port;
+
+        ofputil_port_map_init(&port_map);
+
         DPIF_PORT_FOR_EACH (&dpif_port, &port_dump, dpif) {
             ofputil_port_map_put(&port_map,
                                  u16_to_ofp(odp_to_u32(dpif_port.port_no)),
@@ -1445,10 +1449,16 @@ dpctl_dump_e2e_flows(int argc, const char *argv[], struct dpctl_params *dpctl_p)
 
         error = dpif_dump_e2e_flows(dpif, portno_names, &port_map, &s);
 
+        ofputil_port_map_destroy(&port_map);
+        dpctl_free_portno_names(portno_names);
+
         if (!error) {
             dpctl_print(dpctl_p, "%s",ds_cstr(&s));
         } else {
             dpctl_error(dpctl_p, error, "Could not dump e2e cache flows");
+        }
+        if (s.string) {
+            ds_destroy(&s);
         }
         dpif_close(dpif);
     }
