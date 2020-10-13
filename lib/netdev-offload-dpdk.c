@@ -1230,7 +1230,7 @@ dump_flow_pattern(struct ds *s, const struct rte_flow_item *item)
             fragment_offset_mask = ipv4_mask->hdr.fragment_offset ==
                                    htons(RTE_IPV4_HDR_OFFSET_MASK |
                                          RTE_IPV4_HDR_MF_FLAG)
-                                   ? 0xFFFF
+                                   ? UINT16_MAX
                                    : ipv4_mask->hdr.fragment_offset;
             DUMP_PATTERN_ITEM(fragment_offset_mask, item->last,
                               "fragment_offset", "0x%"PRIx16,
@@ -1320,7 +1320,7 @@ dump_flow_pattern(struct ds *s, const struct rte_flow_item *item)
 
         ds_put_cstr(s, "ipv6 ");
         if (ipv6_spec) {
-            uint8_t is_frag_mask;
+            uint8_t has_frag_ext_mask;
 
             if (!ipv6_mask) {
                 ipv6_mask = &rte_flow_item_ipv6_mask;
@@ -1345,9 +1345,10 @@ dump_flow_pattern(struct ds *s, const struct rte_flow_item *item)
             DUMP_PATTERN_ITEM(ipv6_mask->hdr.hop_limits, NULL, "hop", "%"PRIu8,
                               ipv6_spec->hdr.hop_limits,
                               ipv6_mask->hdr.hop_limits, 0);
-            is_frag_mask = ipv6_mask->is_frag ? 0xFF : 0;
-            DUMP_PATTERN_ITEM(is_frag_mask, NULL, "is_frag", "%"PRIu8,
-                              ipv6_spec->is_frag, ipv6_mask->is_frag, 0);
+            has_frag_ext_mask = ipv6_mask->has_frag_ext ? UINT8_MAX : 0;
+            DUMP_PATTERN_ITEM(has_frag_ext_mask, NULL, "has_frag_ext",
+                              "%"PRIu8, ipv6_spec->has_frag_ext,
+                              ipv6_mask->has_frag_ext, 0);
         }
         ds_put_cstr(s, "/ ");
     } else if (item->type == RTE_FLOW_ITEM_TYPE_IPV6_FRAG_EXT) {
@@ -2322,7 +2323,7 @@ parse_flow_match(struct netdev *netdev,
                sizeof spec->hdr.dst_addr);
         if ((match->wc.masks.nw_frag & FLOW_NW_FRAG_ANY) &&
             (match->flow.nw_frag & FLOW_NW_FRAG_ANY)) {
-                spec->is_frag = 1;
+                spec->has_frag_ext = 1;
         }
 
         mask->hdr.proto = match->wc.masks.nw_proto;
@@ -2340,7 +2341,7 @@ parse_flow_match(struct netdev *netdev,
         proto = spec->hdr.proto & mask->hdr.proto;
         next_proto_mask = &mask->hdr.proto;
 
-        if (spec->is_frag) {
+        if (spec->has_frag_ext) {
             struct rte_flow_item_ipv6_frag_ext *frag_spec, *frag_mask,
                 *frag_last = NULL;
 
@@ -2380,8 +2381,8 @@ parse_flow_match(struct netdev *netdev,
                              frag_spec, frag_mask, frag_last);
         }
         if (match->wc.masks.nw_frag) {
-            /* frag=no is indicated by spec->is_frag=0 */
-            mask->is_frag = 1;
+            /* frag=no is indicated by spec->has_frag_ext=0 */
+            mask->has_frag_ext = 1;
             consumed_masks->nw_frag = 0;
         }
         consumed_masks->nw_proto = 0;
