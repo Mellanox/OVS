@@ -292,7 +292,7 @@ conntrack_offload_fill_item_common(struct ct_flow_offload_item *item,
                                    int dir)
 {
     item->ufid = conn->offloads.dir_info[dir].ufid;
-    item->odp_port = conn->offloads.dir_info[dir].port;
+    item->ct_match.odp_port = conn->offloads.dir_info[dir].port;
     item->dp = conn->offloads.dir_info[dir].dp;
     item->status = &conn->offloads.dir_info[dir].status;
 
@@ -1493,26 +1493,26 @@ conntrack_offload_fill_item_add(struct ct_flow_offload_item *item,
     bool reply = !!conn->master_conn ^ dir;
 
     if (reply) {
-        item->key = conn->rev_key;
+        item->ct_match.key = conn->rev_key;
         conntrack_swap_conn_key(&conn->key, &item->nat.key);
     } else {
-        item->key = conn->key;
+        item->ct_match.key = conn->key;
         conntrack_swap_conn_key(&conn->rev_key, &item->nat.key);
     }
 
     item->nat.mod_flags = 0;
-    if (memcmp(&item->nat.key.src.addr, &item->key.src.addr,
+    if (memcmp(&item->nat.key.src.addr, &item->ct_match.key.src.addr,
                sizeof item->nat.key.src)) {
         item->nat.mod_flags |= NAT_ACTION_SRC;
     }
-    if (item->nat.key.src.port != item->key.src.port) {
+    if (item->nat.key.src.port != item->ct_match.key.src.port) {
         item->nat.mod_flags |= NAT_ACTION_SRC_PORT;
     }
-    if (memcmp(&item->nat.key.dst.addr, &item->key.dst.addr,
+    if (memcmp(&item->nat.key.dst.addr, &item->ct_match.key.dst.addr,
                sizeof item->nat.key.dst)) {
         item->nat.mod_flags |= NAT_ACTION_DST;
     }
-    if (item->nat.key.dst.port != item->key.dst.port) {
+    if (item->nat.key.dst.port != item->ct_match.key.dst.port) {
         item->nat.mod_flags |= NAT_ACTION_DST_PORT;
     }
 
@@ -1569,7 +1569,7 @@ e2e_cache_trace_add_ct(struct conntrack *ct,
         conn = conn->master_conn;
     }
     conntrack_offload_fill_item_add(&item[0], conn, dir, mark, label);
-    item[0].odp_port = p->md.in_port.odp_port;
+    item[0].ct_match.odp_port = p->md.in_port.odp_port;
 
     dir_info = &conn->offloads.dir_info[dir];
     dir = ct_get_packet_dir(!reply);

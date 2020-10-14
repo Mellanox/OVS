@@ -118,6 +118,11 @@ enum ct_direction {
     CT_DIR_NUM,
 };
 
+struct ct_match {
+    odp_port_t odp_port;
+    struct conn_key key;
+};
+
 struct ct_flow_offload_item {
     int  op;
     ovs_u128 ufid;
@@ -125,8 +130,7 @@ struct ct_flow_offload_item {
     uint32_t ctid;
 
     /* matches */
-    odp_port_t odp_port;
-    struct conn_key key;
+    struct ct_match ct_match;
 
     /* actions */
     uint8_t ct_state;
