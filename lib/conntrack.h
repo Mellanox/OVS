@@ -123,7 +123,6 @@ struct ct_flow_offload_item {
     ovs_u128 ufid;
     void *dp;
     uint32_t ctid;
-    uint32_t *ctid_ptr;
 
     /* matches */
     odp_port_t odp_port;
