@@ -7784,6 +7784,8 @@ struct e2e_cache_thread_msg_queues {
  * del_merged_flow_hw = Amount of delete merged flow messages dispatched to
  *                      HW offload.
  * merged_flows_in_cache = Amount of merged flows in E2E cache.
+ * add_ct_flow_hw = Amount of successful CT offload operations to MT.
+ * add_ct_flow_err = Amount of failed CT offload operations MT.
  */
 struct e2e_cache_stats {
     atomic_count generated_msgs;
@@ -7800,6 +7802,8 @@ struct e2e_cache_stats {
     uint32_t add_merged_flow_hw;
     uint32_t del_merged_flow_hw;
     uint32_t merged_flows_in_cache;
+    uint32_t add_ct_mt_flow_hw;
+    uint32_t add_ct_mt_flow_err;
 };
 
 static struct e2e_cache_thread_msg_queues e2e_cache_thread_msg_queues = {
@@ -7843,6 +7847,8 @@ static struct e2e_cache_stats e2e_stats = {
     .add_merged_flow_hw = 0,
     .del_merged_flow_hw = 0,
     .merged_flows_in_cache = 0,
+    .add_ct_mt_flow_hw = 0,
+    .add_ct_mt_flow_err = 0,
 };
 
 static struct ovs_mutex flows_map_mutex = OVS_MUTEX_INITIALIZER;
@@ -7890,6 +7896,10 @@ dpif_netdev_dump_e2e_stats(struct ds *s)
                   stats->merged_flows_in_cache);
     ds_put_format(s, "\n%-45s : %"PRIu64"", "flows in e2e DB",
                   (uint64_t)hmap_count(&flows_map));
+    ds_put_format(s, "\n%-45s : %"PRIu32"", "successful CT MT flows to HW",
+                  stats->add_ct_mt_flow_hw);
+    ds_put_format(s, "\n%-45s : %"PRIu32"", "failed CT MT flows to HW",
+                  stats->add_ct_mt_flow_err);
 }
 
 static void
@@ -8742,8 +8752,13 @@ e2e_cache_offload_ct_mt_flows(struct dp_netdev *dp,
         memcpy(actions, mt_flows[i]->actions, mt_flows[i]->actions_size);
         ret = dp_netdev_ct_offload_add_cb(&offload, dp, &match, actions,
                                           mt_flows[i]->actions_size);
-        mt_flows[i]->offload_state = ret ? E2E_OL_STATE_CT_ERR
-                                         : E2E_OL_STATE_CT_HW;
+        if (OVS_LIKELY(ret == 0)) {
+            mt_flows[i]->offload_state = E2E_OL_STATE_CT_HW;
+            e2e_stats.add_ct_mt_flow_hw++;
+        } else {
+            mt_flows[i]->offload_state = E2E_OL_STATE_CT_ERR;
+            e2e_stats.add_ct_mt_flow_err++;
+        }
     }
     if (actions) {
         free(actions);
