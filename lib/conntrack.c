@@ -333,7 +333,6 @@ conntrack_offload_del_conn(struct conntrack *ct,
         if (!conntrack_offload_fill_item_common(&item[dir], conn_dir, dir)) {
             continue;
         }
-        item[dir].ctid = conn_dir->offloads.ctid;
         if (ct_e2e_cache_enabled) {
             ct->offload_class->conn_e2e_del(&item[dir].ufid);
         }
@@ -1456,6 +1455,17 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
 }
 
 static void
+conntrack_calc_ctid(const ovs_u128 *ufid_init,
+                    const ovs_u128 *ufid_rep,
+                    uint32_t *ctid)
+{
+    ovs_u128 ct_ufids[E2E_CACHE_MAX_TRACE] = {
+        [0] = ovs_u128_xor(*ufid_init, *ufid_rep), };
+
+    *ctid = hash_bytes(ct_ufids, sizeof ct_ufids, 0);
+}
+
+static void
 conntrack_swap_conn_key(const struct conn_key *key,
                         struct conn_key *swapped)
 {
@@ -1506,7 +1516,6 @@ conntrack_offload_fill_item_add(struct ct_flow_offload_item *item,
     item->label_mask.u64.hi = label.u64.hi ^ conn->label.u64.hi;
     item->label_mask.u64.lo = label.u64.lo ^ conn->label.u64.lo;
     item->status = &conn->offloads.dir_info[dir].status;
-    item->ctid_ptr = &conn->offloads.ctid;
 }
 
 static void
@@ -1532,8 +1541,8 @@ e2e_cache_trace_add_ct(struct conntrack *ct,
                        uint32_t mark,
                        ovs_u128 label)
 {
+    struct ct_flow_offload_item item[CT_DIR_NUM];
     uint32_t e2e_trace_size = p->e2e_trace_size;
-    struct ct_flow_offload_item item;
     struct ct_dir_info *dir_info;
     uint8_t e2e_seen_pkts;
     int dir;
@@ -1551,14 +1560,27 @@ e2e_cache_trace_add_ct(struct conntrack *ct,
                conn->master_conn->offloads.dir_info[dir].dp) {
         conn = conn->master_conn;
     }
-    conntrack_offload_fill_item_add(&item, conn, dir, mark, label);
-    item.odp_port = p->md.in_port.odp_port;
+    conntrack_offload_fill_item_add(&item[0], conn, dir, mark, label);
+    item[0].odp_port = p->md.in_port.odp_port;
 
     dir_info = &conn->offloads.dir_info[dir];
+    dir = ct_get_packet_dir(!reply);
+    if (conn->nat_conn &&
+        conn->nat_conn->offloads.dir_info[dir].dp) {
+        conn = conn->nat_conn;
+    } else if (conn->master_conn &&
+               conn->master_conn->offloads.dir_info[dir].dp) {
+        conn = conn->master_conn;
+    }
     if (!dir_info->e2e_flow) {
         dir_info->e2e_flow = true;
-        ct->offload_class->conn_get_ufid(&item, &dir_info->ufid);
-        ct->offload_class->conn_e2e_add(&item);
+        ct->offload_class->conn_get_ufid(&item[0], &dir_info->ufid);
+        item[0].ufid = dir_info->ufid;
+        /* Calc the opposite direction ufid, to shared counters. */
+        conntrack_offload_fill_item_add(&item[1], conn, dir, mark, label);
+        ct->offload_class->conn_get_ufid(&item[1], &item[1].ufid);
+        conntrack_calc_ctid(&dir_info->ufid, &item[1].ufid, &item[0].ctid);
+        ct->offload_class->conn_e2e_add(&item[0]);
     }
 
     /* Prevent sending E2E trace messages for every packet. Send only
@@ -1574,17 +1596,6 @@ e2e_cache_trace_add_ct(struct conntrack *ct,
     p->e2e_trace[e2e_trace_size] = dir_info->ufid;
     p->e2e_trace_size = e2e_trace_size + 1;
 
-    /* Check if the opposite direction flow already has a ufid. If so, trace
-     * it too so counters can be shared.
-     */
-    dir = ct_get_packet_dir(!reply);
-    if (conn->nat_conn &&
-        conn->nat_conn->offloads.dir_info[dir].dp) {
-        conn = conn->nat_conn;
-    } else if (conn->master_conn &&
-               conn->master_conn->offloads.dir_info[dir].dp) {
-        conn = conn->master_conn;
-    }
     if (!conn->offloads.dir_info[dir].e2e_flow) {
         p->e2e_trace_flags |= E2E_CACHE_TRACE_FLAG_ABORT;
         return;
@@ -1655,6 +1666,10 @@ conntrack_offload_add_conn(struct conntrack *ct,
                                          &item[CT_DIR_REP].ufid);
         *ufid[CT_DIR_INIT] = item[CT_DIR_INIT].ufid;
         *ufid[CT_DIR_REP] = item[CT_DIR_REP].ufid;
+        conntrack_calc_ctid(ufid[CT_DIR_INIT], ufid[CT_DIR_REP],
+                            &item[CT_DIR_INIT].ctid);
+        conntrack_calc_ctid(ufid[CT_DIR_INIT], ufid[CT_DIR_REP],
+                            &item[CT_DIR_REP].ctid);
         refcnt = xmalloc(sizeof *refcnt);
         ovs_refcount_init(refcnt);
         ovs_refcount_ref(refcnt);
