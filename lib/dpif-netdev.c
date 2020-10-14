@@ -858,6 +858,7 @@ struct e2e_cache_ovs_flow {
     struct hmap_node node;
     ovs_u128 ufid;
     struct nlattr *actions;
+    struct e2e_cache_ovs_flow *ct_peer;
     enum e2e_offload_state offload_state;
     uint16_t actions_size;
     struct hmap merged_counters; /* Map of merged flows counters
@@ -8562,6 +8563,9 @@ e2e_cache_flow_db_del(const ovs_u128 *ufid, struct dp_netdev *dp)
         if (ct_flow->offload_state == E2E_OL_STATE_CT_HW) {
             e2e_cache_ct_flow_offload_del(dp, ct_flow);
         }
+        if (ct_flow->ct_peer) {
+            ct_flow->ct_peer->ct_peer = NULL;
+        }
         ovsrcu_postpone(e2e_cache_flow_free, ct_flow);
     }
     e2e_cache_del_merged_flows(&merged_flows_to_delete);
@@ -8821,27 +8825,32 @@ e2e_cache_trace_tnl_pop(struct dp_packet *packet)
 
 static int
 e2e_cache_trace_info_to_flows(const struct e2e_cache_trace_info *trc_info,
-                              struct e2e_cache_ovs_flow *flows[],
-                              uint16_t *num_flows)
+                              struct e2e_cache_ovs_flow *flows[])
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 10);
-    uint16_t i, num_elements;
     const ovs_u128 *ufid;
     uint32_t hash;
+    uint16_t i;
 
-    for (i = 0, num_elements = 0; i < trc_info->num_elements; i++) {
+    for (i = 0; i < trc_info->num_elements; i++) {
         ufid = &trc_info->ufids[i];
         hash = hash_bytes(ufid, sizeof *ufid, 0);
-        flows[num_elements] = e2e_cache_flow_find(ufid, hash);
+        flows[i] = e2e_cache_flow_find(ufid, hash);
         VLOG_DBG_RL(&rl, "%s: ufids[%d]="UUID_FMT" flows[%d]=%p", __func__,
-                    i, UUID_ARGS((struct uuid *)ufid),
-                    num_elements, flows[num_elements]);
-        if (OVS_UNLIKELY(!flows[num_elements])) {
+                    i, UUID_ARGS((struct uuid *)ufid), i, flows[i]);
+        if (OVS_UNLIKELY(!flows[i])) {
             return -1;
         }
-        num_elements++;
+        if (i > 0 && flows[i - 1]->offload_state != E2E_OL_STATE_FLOW &&
+            flows[i]->offload_state != E2E_OL_STATE_FLOW) {
+            if (!flows[i - 1]->ct_peer) {
+                flows[i - 1]->ct_peer = flows[i];
+            }
+            if (!flows[i]->ct_peer) {
+                flows[i]->ct_peer = flows[i - 1];
+            }
+        }
     }
-    *num_flows = num_elements;
     return 0;
 }
 
@@ -8927,10 +8936,11 @@ e2e_cache_process_trace_info(struct dp_netdev *dp,
     uint16_t i, num_flows;
     int err;
 
-    err = e2e_cache_trace_info_to_flows(trc_info, mt_flows, &num_flows);
+    err = e2e_cache_trace_info_to_flows(trc_info, mt_flows);
     if (OVS_UNLIKELY(err)) {
         return -1;
     }
+    num_flows = trc_info->num_elements;
     if (e2e_stats.merged_flows_in_cache >= dp_netdev_e2e_cache_size) {
         e2e_cache_offload_ct_mt_flows(dp, mt_flows, num_flows);
         return -1;
