@@ -154,6 +154,7 @@ struct ct_flow_offload_item {
 
 /* hw-offload callbacks */
 struct conntrack_offload_class {
+    void (*conn_get_ufid)(struct ct_flow_offload_item *, ovs_u128 *);
     void (*conn_add)(struct ct_flow_offload_item *);
     void (*conn_del)(struct ct_flow_offload_item *);
     bool (*conn_active)(struct ct_flow_offload_item *, long long now);

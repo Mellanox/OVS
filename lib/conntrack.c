@@ -1578,9 +1578,13 @@ conntrack_offload_add_conn(struct conntrack *ct,
                                             label);
             ufid[dir] = &conn->offloads.dir_info[dir].ufid;
         }
-        ct->offload_class->conn_add(item);
+        ct->offload_class->conn_get_ufid(&item[CT_DIR_INIT],
+                                         &item[CT_DIR_INIT].ufid);
+        ct->offload_class->conn_get_ufid(&item[CT_DIR_REP],
+                                         &item[CT_DIR_REP].ufid);
         *ufid[CT_DIR_INIT] = item[CT_DIR_INIT].ufid;
         *ufid[CT_DIR_REP] = item[CT_DIR_REP].ufid;
+        ct->offload_class->conn_add(item);
         conn->offloads.flags |= CT_OFFLOAD_SKIP;
         if (conn->nat_conn) {
             conn->nat_conn->offloads.flags |= CT_OFFLOAD_SKIP;

@@ -271,6 +271,8 @@ static bool dpcls_lookup(struct dpcls *cls,
                          int *num_lookups_p);
 static void dp_netdev_get_mega_ufid(const struct match *match,
                                     ovs_u128 *mega_ufid);
+static void dp_netdev_fill_ct_match(struct match *match,
+                                    struct ct_flow_offload_item *offload);
 
 /* Set of supported meter flags */
 #define DP_SUPPORTED_METER_FLAGS_MASK \
@@ -964,6 +966,17 @@ dp_netdev_append_ct_offload(struct ct_flow_offload_item *offload)
 }
 
 static void
+dp_netdev_ct_offload_get_ufid(struct ct_flow_offload_item *offload,
+                              ovs_u128 *ufid)
+{
+    struct match match;
+
+    dp_netdev_fill_ct_match(&match, offload);
+    match.flow.in_port.odp_port = ODPP_NONE;
+    dp_netdev_get_mega_ufid(&match, ufid);
+}
+
+static void
 dp_netdev_ct_offload_add_item(struct ct_flow_offload_item *offload)
 {
     int dir;
@@ -1011,6 +1024,7 @@ dp_netdev_ct_offload_active(struct ct_flow_offload_item *offload,
 }
 
 static struct conntrack_offload_class dpif_ct_offload_class = {
+    .conn_get_ufid = dp_netdev_ct_offload_get_ufid,
     .conn_add = dp_netdev_ct_offload_add_item,
     .conn_del = dp_netdev_ct_offload_del_item,
     .conn_active = dp_netdev_ct_offload_active,
@@ -2967,8 +2981,6 @@ dp_netdev_ct_offload_add(struct dp_offload_item *offload_item, int dir)
     ofpbuf_init(&buf, 0);
     dp_netdev_create_ct_actions(&buf, &offload);
     actions = ofpbuf_at_assert(&buf, 0, sizeof(struct nlattr));
-
-    dp_netdev_get_mega_ufid((const struct match *)&match, &offload.ufid);
 
     ovs_mutex_lock(&offload_item->dp->port_mutex);
     if (OVS_UNLIKELY(!VLOG_DROP_DBG((&upcall_rl)))) {
