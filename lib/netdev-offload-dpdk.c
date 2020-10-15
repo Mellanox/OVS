@@ -2295,6 +2295,11 @@ enum ct_mode {
     CT_MODE_CT_CONN,
 };
 
+enum tnl_type {
+    TNL_TYPE_NONE,
+    TNL_TYPE_VXLAN,
+};
+
 struct act_vars {
     enum ct_mode ct_mode;
     bool pre_ct_tuple_rewrite;
@@ -2307,6 +2312,7 @@ struct act_vars {
     struct rte_flow_action *shared;
     uintptr_t ct_counter_key;
     struct flows_counter_key flows_counter_key;
+    enum tnl_type tnl_type;
 };
 
 static int
@@ -2759,10 +2765,6 @@ parse_vxlan_match(struct flow_patterns *patterns,
     struct flow *consumed_masks;
     int ret;
 
-    if (is_all_zeros(&match->wc.masks.tunnel, sizeof match->wc.masks.tunnel)) {
-        return 0;
-    }
-
     ret = parse_tnl_ip_match(patterns, match, IPPROTO_UDP);
     if (ret) {
         return -1;
@@ -2785,6 +2787,24 @@ parse_vxlan_match(struct flow_patterns *patterns,
     add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_VXLAN, vx_spec, vx_mask,
                      NULL);
     return 0;
+}
+
+static int
+parse_tnl_match(struct flow_patterns *patterns,
+                struct match *match,
+                struct netdev *netdev,
+                struct act_vars *act_vars)
+{
+    if (is_all_zeros(&match->wc.masks.tunnel, sizeof match->wc.masks.tunnel)) {
+        return 0;
+    }
+
+    if (!strcmp(netdev_get_type(netdev),"vxlan")) {
+        act_vars->tnl_type = TNL_TYPE_VXLAN;
+        return parse_vxlan_match(patterns, match);
+    }
+
+    return -1;
 }
 
 static int
@@ -2962,11 +2982,11 @@ parse_flow_match(struct netdev *netdev,
             parse_tnl_match_recirc(patterns, match, act_resources)) {
             return -1;
         }
-    }
-
-    if (!strcmp(netdev_get_type(netdev), "vxlan") &&
-        parse_vxlan_match(patterns, match)) {
-        return -1;
+        if (parse_tnl_match(patterns, match, netdev, act_vars)) {
+            return -1;
+        }
+    } else {
+        act_vars->tnl_type = TNL_TYPE_NONE;
     }
 
     act_vars->recirc_id = match->flow.recirc_id;
@@ -3846,10 +3866,21 @@ add_recirc_action(struct flow_actions *actions,
     return 0;
 }
 
-static void
+static int
 add_vxlan_decap_action(struct flow_actions *actions)
 {
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_VXLAN_DECAP, NULL);
+    return 0;
+}
+
+static int
+add_tnl_decap_action(struct flow_actions *actions,
+                     struct act_vars *act_vars)
+{
+    if (act_vars->tnl_type == TNL_TYPE_VXLAN) {
+        return add_vxlan_decap_action(actions);
+    }
+    return -1;
 }
 
 static int
@@ -4182,9 +4213,11 @@ parse_flow_actions(struct netdev *netdev,
     struct nlattr *nla;
     size_t left;
 
-    if (nl_actions_len != 0 && !strcmp(netdev_get_type(netdev), "vxlan") &&
-        act_vars->recirc_id == 0) {
-        add_vxlan_decap_action(actions);
+    if (nl_actions_len != 0 &&
+        act_vars->tnl_type != TNL_TYPE_NONE &&
+        act_vars->recirc_id == 0 &&
+        add_tnl_decap_action(actions, act_vars)) {
+        return -1;
     }
     if (add_count_action(actions, act_vars, act_resources)) {
         return -1;
