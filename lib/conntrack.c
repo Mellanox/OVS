@@ -312,6 +312,7 @@ conntrack_offload_del_conn(struct conntrack *ct,
 {
     struct ct_flow_offload_item item[CT_DIR_NUM];
     struct conn *conn_dir;
+    void *dp;
     int dir;
 
     if (!ct->offload_class || !ct->offload_class->conn_del) {
@@ -334,7 +335,8 @@ conntrack_offload_del_conn(struct conntrack *ct,
             continue;
         }
         if (ct_e2e_cache_enabled) {
-            ct->offload_class->conn_e2e_del(&item[dir].ufid);
+            dp = conn_dir->offloads.dir_info[dir].dp;
+            ct->offload_class->conn_e2e_del(&item[dir].ufid, dp);
         }
     }
     item[CT_DIR_INIT].refcnt = conn->offloads.refcnt;
