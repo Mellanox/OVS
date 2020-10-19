@@ -97,6 +97,9 @@ struct netdev_flow_api {
      *
      * On success returns a const pointer, on failure returns NULL */
     const struct dpif_sflow_attr *(*sflow_attr_get)(uint32_t gid);
+
+    /* Deinitializes the netdev flow api. */
+    void (*deinit_flow_api)(struct netdev *);
 };
 
 int netdev_register_flow_api_provider(const struct netdev_flow_api *);
