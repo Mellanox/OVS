@@ -45,6 +45,7 @@ struct netdev_hw_info {
     bool oor;		/* Out of Offload Resources ? */
     int offload_count;  /* Pending (non-offloaded) flow count */
     int pending_count;  /* Offloaded flow count */
+    void *offload_data; /* Offload metadata. */
 };
 
 enum hw_info_type {
