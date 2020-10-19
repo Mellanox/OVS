@@ -452,6 +452,7 @@ struct dp_flow_offload {
     struct ovs_mutex mutex;
     struct ovs_list list;
     uint64_t enqueued_item;
+    uint64_t ct_connections;
     pthread_cond_t cond;
 };
 
@@ -459,6 +460,7 @@ static struct dp_flow_offload dp_flow_offload = {
     .mutex = OVS_MUTEX_INITIALIZER,
     .list  = OVS_LIST_INITIALIZER(&dp_flow_offload.list),
     .enqueued_item = 0,
+    .ct_connections = 0,
 };
 
 static struct ovsthread_once offload_thread_once
@@ -3105,6 +3107,14 @@ dp_netdev_ct_offload_handle(struct dp_offload_item *offload_item)
                  dir == CT_DIR_INIT ? "init" : "reply",
                  UUID_ARGS((struct uuid *)&ct_offload[dir].ufid));
     }
+    if (!ret[CT_DIR_INIT] && !ret[CT_DIR_REP]) {
+        if (ct_offload[CT_DIR_INIT].op ==
+            DP_NETDEV_FLOW_OFFLOAD_OP_ADD) {
+            dp_flow_offload.ct_connections++;
+        } else {
+            dp_flow_offload.ct_connections--;
+        }
+    }
     if (ct_offload[CT_DIR_INIT].op == DP_NETDEV_FLOW_OFFLOAD_OP_ADD &&
         ret[CT_DIR_INIT] && ret[CT_DIR_REP]) {
         dp_release_ctid(*ct_offload->ctid_ptr);
@@ -4608,10 +4618,12 @@ dpif_netdev_offload_stats_get(struct dpif *dpif,
     enum {
         DP_NETDEV_HW_OFFLOADS_STATS_ENQUEUED,
         DP_NETDEV_HW_OFFLOADS_STATS_INSERTED,
+        DP_NETDEV_HW_OFFLOADS_STATS_CT_CONNS,
     };
     const char *names[] = {
         [DP_NETDEV_HW_OFFLOADS_STATS_ENQUEUED] = "Enqueued offloads",
         [DP_NETDEV_HW_OFFLOADS_STATS_INSERTED] = "Inserted offloads",
+        [DP_NETDEV_HW_OFFLOADS_STATS_CT_CONNS] = "   CT Connections",
     };
     struct dp_netdev *dp = get_dp_netdev(dpif);
     struct dp_netdev_port *port;
@@ -4641,6 +4653,8 @@ dpif_netdev_offload_stats_get(struct dpif *dpif,
     stats->counters[DP_NETDEV_HW_OFFLOADS_STATS_ENQUEUED].value =
                                                  dp_flow_offload.enqueued_item;
     stats->counters[DP_NETDEV_HW_OFFLOADS_STATS_INSERTED].value = nb_offloads;
+    stats->counters[DP_NETDEV_HW_OFFLOADS_STATS_CT_CONNS].value =
+                                                dp_flow_offload.ct_connections;
 
     for (i = 0; i < ARRAY_SIZE(names); i++) {
         snprintf(stats->counters[i].name, sizeof(stats->counters[i].name),
