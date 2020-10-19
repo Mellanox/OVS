@@ -11133,13 +11133,19 @@ static inline bool
 e2e_cache_flows_are_valid(struct e2e_cache_ovs_flow **netdev_flows,
                           uint16_t num)
 {
-    struct match *match;
+    struct e2e_cache_ovs_flow *flow;
+    const struct match *match;
     unsigned int left;
     struct nlattr *a;
     uint16_t i;
 
     for (i = 0; i < num; i++) {
-        match = &netdev_flows[i]->match;
+        flow = netdev_flows[i];
+        if (flow->offload_state != E2E_OL_STATE_FLOW) {
+            continue;
+        }
+
+        match = &flow->match;
         /* validate match */
         if ((match->flow.ipv6_label & match->wc.masks.ipv6_label) ||
             (match->flow.nw_tos & match->wc.masks.nw_tos) ||
@@ -11148,9 +11154,9 @@ e2e_cache_flows_are_valid(struct e2e_cache_ovs_flow **netdev_flows,
             /* TODO: add statistic counter */
             return false;
         }
+
         /* validate actions */
-        NL_ATTR_FOR_EACH (a, left, netdev_flows[i]->actions,
-                          netdev_flows[i]->actions_size) {
+        NL_ATTR_FOR_EACH (a, left, flow->actions, flow->actions_size) {
             enum ovs_action_attr type = nl_attr_type(a);
             if (type == OVS_ACTION_ATTR_USERSPACE ||
                 type == OVS_ACTION_ATTR_HASH ||
