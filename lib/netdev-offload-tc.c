@@ -51,6 +51,8 @@ static bool multi_mask_per_prio = false;
 static bool block_support = false;
 static uint16_t ct_state_support;
 
+static dpif_netlink_sflow_upcall_callback *upcall_cb;
+
 struct netlink_field {
     int offset;
     int flower_offset;
@@ -2180,6 +2182,12 @@ probe_tc_block_support(int ifindex)
     }
 }
 
+static void
+netdev_tc_register_sflow_upcall_cb(dpif_netlink_sflow_upcall_callback *cb)
+{
+    upcall_cb = cb;
+}
+
 static int
 netdev_tc_init_flow_api(struct netdev *netdev)
 {
@@ -2255,5 +2263,6 @@ const struct netdev_flow_api netdev_offload_tc = {
    .flow_get = netdev_tc_flow_get,
    .flow_del = netdev_tc_flow_del,
    .flow_get_n_flows = netdev_tc_get_n_flows,
+   .register_nl_sflow_upcall_cb = netdev_tc_register_sflow_upcall_cb,
    .init_flow_api = netdev_tc_init_flow_api,
 };
