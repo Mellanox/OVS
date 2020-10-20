@@ -233,34 +233,23 @@ tm_to_ct_dpif_tp(enum ct_timeout tm)
 static void
 conn_update_expiration__(struct conntrack *ct, struct conn *conn,
                          enum ct_timeout tm, long long now,
-                         uint32_t tp_value, bool protected)
-    OVS_REQUIRES(conn->lock)
+                         uint32_t tp_value)
+    OVS_REQUIRES(ct->ct_lock, conn->lock)
 {
     VLOG_DBG_RL(&rl, "Update timeout %s zone=%u with policy id=%d "
                 "val=%u sec.",
                 ct_timeout_str[tm], conn->key.zone, conn->tp_id, tp_value);
 
-    if (!protected) {
-        ovs_mutex_unlock(&conn->lock);
-
-        ovs_mutex_lock(&ct->ct_lock);
-        ovs_mutex_lock(&conn->lock);
-    }
     if (!conn->cleaned) {
         conn->expiration = now + tp_value * 1000;
         ovs_list_remove(&conn->exp_node);
         ovs_list_push_back(&ct->exp_lists[tm], &conn->exp_node);
     }
-    if (!protected) {
-        ovs_mutex_unlock(&conn->lock);
-        ovs_mutex_unlock(&ct->ct_lock);
-    }
-
-    ovs_mutex_lock(&conn->lock);
 }
 
 static uint32_t
 get_tp_id_val(struct conntrack *ct, uint32_t tp_id, enum ct_timeout tm)
+    OVS_REQUIRES(ct->ct_lock)
 {
     struct timeout_policy *tp;
     uint32_t val;
@@ -277,11 +266,12 @@ get_tp_id_val(struct conntrack *ct, uint32_t tp_id, enum ct_timeout tm)
 void
 conn_protected_update_expiration(struct conntrack *ct, struct conn *conn,
                                  enum ct_timeout tm, long long now)
+    OVS_REQUIRES(ct->ct_lock, conn->lock)
 {
     uint32_t tp_value;
 
     tp_value = get_tp_id_val(ct, conn->tp_id, tm);
-    conn_update_expiration__(ct, conn, tm, now, tp_value, true);
+    conn_update_expiration__(ct, conn, tm, now, tp_value);
 }
 
 /* The conn entry lock must be held on entry and exit. */
@@ -289,20 +279,16 @@ void
 conn_update_expiration(struct conntrack *ct, struct conn *conn,
                        enum ct_timeout tm, long long now)
     OVS_REQUIRES(conn->lock)
+    OVS_EXCLUDED(ct->ct_lock)
 {
-    uint32_t val;
-
     ovs_mutex_unlock(&conn->lock);
 
     ovs_mutex_lock(&ct->ct_lock);
     ovs_mutex_lock(&conn->lock);
-    val = get_tp_id_val(ct, conn->tp_id, tm);
-    ovs_mutex_unlock(&conn->lock);
+
+    conn_protected_update_expiration(ct, conn, tm, now);
+
     ovs_mutex_unlock(&ct->ct_lock);
-
-    ovs_mutex_lock(&conn->lock);
-
-    conn_update_expiration__(ct, conn, tm, now, val, false);
 }
 
 static void
