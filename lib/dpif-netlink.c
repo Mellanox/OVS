@@ -236,6 +236,8 @@ static unsigned int ovs_vport_mcgroup;
  * to using the compat interface. */
 static bool ovs_tunnels_out_of_tree = true;
 
+static sflow_upcall_callback *sflow_upcall_cb;
+
 static int dpif_netlink_init(void);
 static int open_dpif(const struct dpif_netlink_dp *, struct dpif **);
 static uint32_t dpif_netlink_port_get_pid(const struct dpif *,
@@ -2825,6 +2827,30 @@ dpif_netlink_recv_purge(struct dpif *dpif_)
     fat_rwlock_unlock(&dpif->upcall_lock);
 }
 
+static int
+dpif_netlink_sflow_upcall_cb(struct dpif_upcall_sflow *dupcall)
+{
+    return sflow_upcall_cb(dupcall);
+}
+
+static void
+dpif_netlink_register_sflow_upcall_cb(struct dpif *dpif,
+                                      sflow_upcall_callback *cb)
+{
+    const char *dpif_type_str = dpif_normalize_type(dpif_type(dpif));
+    struct netdev *dev;
+
+    sflow_upcall_cb = cb;
+    dev = netdev_get(dpif_type_str);
+    if (!dev) {
+        VLOG_ERR("%s: Can't find any netdev for dpif type: %s", __func__,
+                 dpif_type_str);
+        return;
+    }
+    netdev_regsiter_nl_sflow_upcall_cb(dev, dpif_netlink_sflow_upcall_cb);
+    netdev_close(dev);
+}
+
 static char *
 dpif_netlink_get_datapath_version(void)
 {
@@ -3990,7 +4016,7 @@ const struct dpif_class dpif_netlink_class = {
     NULL,                       /* register_upcall_cb */
     NULL,                       /* enable_upcall */
     NULL,                       /* disable_upcall */
-    NULL,                       /* register_sflow_upcall_cb */
+    dpif_netlink_register_sflow_upcall_cb,
     dpif_netlink_get_datapath_version, /* get_datapath_version */
     dpif_netlink_ct_dump_start,
     dpif_netlink_ct_dump_next,
