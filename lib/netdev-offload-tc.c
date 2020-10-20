@@ -19,12 +19,14 @@
 #include <errno.h>
 #include <linux/if_ether.h>
 #include <linux/psample.h>
+#include <poll.h>
 
 #include "dpif.h"
 #include "hash.h"
 #include "openvswitch/hmap.h"
 #include "openvswitch/match.h"
 #include "openvswitch/ofpbuf.h"
+#include "openvswitch/poll-loop.h"
 #include "openvswitch/thread.h"
 #include "openvswitch/types.h"
 #include "openvswitch/util.h"
@@ -2490,6 +2492,123 @@ netdev_tc_psample_init(void)
     return sock;
 }
 
+struct netdev_tc_psample {
+    struct nlattr *packet;      /* packet data */
+    int dp_group_id;            /* mapping id for sFlow offload */
+    int iifindex;               /* input ifindex */
+    int group_seq;              /* group sequence */
+};
+
+static int
+netdev_tc_psample_from_ofpbuf(struct netdev_tc_psample *psample,
+                              const struct ofpbuf *buf)
+{
+    static const struct nl_policy ovs_psample_policy[] = {
+        [PSAMPLE_ATTR_IIFINDEX] = { .type = NL_A_U16 },
+        [PSAMPLE_ATTR_SAMPLE_GROUP] = { .type = NL_A_U32 },
+        [PSAMPLE_ATTR_GROUP_SEQ] = { .type = NL_A_U32 },
+        [PSAMPLE_ATTR_DATA] = { .type = NL_A_UNSPEC },
+    };
+    struct nlattr *a[ARRAY_SIZE(ovs_psample_policy)];
+    struct genlmsghdr *genl;
+    struct nlmsghdr *nlmsg;
+    struct ofpbuf b;
+
+    b = ofpbuf_const_initializer(buf->data, buf->size);
+    nlmsg = ofpbuf_try_pull(&b, sizeof *nlmsg);
+    genl = ofpbuf_try_pull(&b, sizeof *genl);
+    if (!nlmsg || !genl || nlmsg->nlmsg_type != psample_family
+        || !nl_policy_parse(&b, 0, ovs_psample_policy, a,
+                            ARRAY_SIZE(ovs_psample_policy))) {
+        return EINVAL;
+    }
+
+    psample->iifindex = nl_attr_get_u16(a[PSAMPLE_ATTR_IIFINDEX]);
+    psample->dp_group_id = nl_attr_get_u32(a[PSAMPLE_ATTR_SAMPLE_GROUP]);
+    psample->group_seq = nl_attr_get_u16(a[PSAMPLE_ATTR_GROUP_SEQ]);
+    psample->packet = a[PSAMPLE_ATTR_DATA];
+
+    return 0;
+}
+
+static int
+netdev_tc_psample_parse_packet(struct netdev_tc_psample *psample,
+                               struct dpif_upcall_sflow *dupcall)
+{
+    const struct gid_node *node;
+
+    dp_packet_use_stub(&dupcall->packet,
+                       CONST_CAST(struct nlattr *,
+                                  nl_attr_get(psample->packet)) - 1,
+                       nl_attr_get_size(psample->packet) +
+                       sizeof(struct nlattr));
+    dp_packet_set_data(&dupcall->packet,
+                       (char *)dp_packet_data(&dupcall->packet) +
+                       sizeof(struct nlattr));
+    dp_packet_set_size(&dupcall->packet, nl_attr_get_size(psample->packet));
+
+    node = gid_find(psample->dp_group_id);
+    dupcall->sflow_attr = &node->sflow;
+    dupcall->iifindex = psample->iifindex;
+
+    return 0;
+}
+
+static int
+netdev_tc_psample_poll(struct dpif_upcall_sflow *dupcall,
+                       struct nl_sock *sock)
+{
+    for (;;) {
+        static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
+        struct netdev_tc_psample psample;
+        uint64_t buf_stub[4096 / 8];
+        struct ofpbuf buf;
+        int error;
+
+        ofpbuf_use_stub(&buf, buf_stub, sizeof buf_stub);
+        error = nl_sock_recv(sock, &buf, NULL, false);
+
+        if (!error) {
+            error = netdev_tc_psample_from_ofpbuf(&psample, &buf);
+            if (!error) {
+                    ofpbuf_uninit(&buf);
+                    error = netdev_tc_psample_parse_packet(&psample, dupcall);
+                    return error;
+            }
+        } else if (error != EAGAIN) {
+            VLOG_WARN_RL(&rl, "%s: error reading or parsing netlink (%s)",
+                         __func__, ovs_strerror(error));
+            nl_sock_drain(sock);
+            error = ENOBUFS;
+        }
+
+        ofpbuf_uninit(&buf);
+        if (error) {
+            return error;
+        }
+    }
+}
+
+static void *
+netdev_tc_psample_handler(void *arg)
+{
+    struct nl_sock *sock = CONST_CAST(struct nl_sock *, arg);
+
+    struct dpif_upcall_sflow dupcall;
+    int err;
+
+    while (true) {
+        err = netdev_tc_psample_poll(&dupcall, sock);
+        if (!err) {
+            upcall_cb(&dupcall);
+        }
+        nl_sock_wait(sock, POLLIN);
+        poll_block();
+    }
+
+    return NULL;
+}
+
 static int
 netdev_tc_init_flow_api(struct netdev *netdev)
 {
@@ -2533,13 +2652,19 @@ netdev_tc_init_flow_api(struct netdev *netdev)
     tc_add_del_qdisc(ifindex, false, 0, hook);
 
     if (ovsthread_once_start(&once)) {
+        struct nl_sock *sock;
+
         probe_tc_block_support(ifindex);
         /* Need to re-fetch block id as it depends on feature availability. */
         block_id = get_block_id_from_netdev(netdev);
 
         probe_multi_mask_per_prio(ifindex);
         probe_ct_state_support(ifindex);
-        netdev_tc_psample_init();
+        sock = netdev_tc_psample_init();
+        if (sock) {
+            ovs_thread_create("psample_handler", netdev_tc_psample_handler,
+                              sock);
+        }
         ovsthread_once_done(&once);
     }
 
