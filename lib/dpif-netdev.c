@@ -11579,6 +11579,7 @@ const struct dpif_class dpif_netdev_class = {
     dpif_netdev_register_upcall_cb,
     dpif_netdev_enable_upcall,
     dpif_netdev_disable_upcall,
+    NULL,                       /* register_sflow_upcall_cb */
     dpif_netdev_get_datapath_version,
     dpif_netdev_ct_dump_start,
     dpif_netdev_ct_dump_next,

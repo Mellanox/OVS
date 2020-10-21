@@ -441,6 +441,16 @@ struct dpif_class {
     /* Disables upcalls if 'dpif' directly executes upcall functions. */
     void (*disable_upcall)(struct dpif *);
 
+    /* When offloading sample action, psample sends the sampled packets to
+     * userspace by a netlink message. The thread polling psample socket
+     * will translate the psample netlink message to an sFlow format and call
+     * the sFlow upcall callback to send the sFlow packet to right monitoring
+     * host.
+     *
+     * Registers an upcall callback to process sFlow packet.
+     */
+    void (*register_sflow_upcall_cb)(struct dpif *, sflow_upcall_callback *);
+
     /* Get datapath version. Caller is responsible for freeing the string
      * returned.  */
     char *(*get_datapath_version)(void);

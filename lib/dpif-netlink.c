@@ -3990,6 +3990,7 @@ const struct dpif_class dpif_netlink_class = {
     NULL,                       /* register_upcall_cb */
     NULL,                       /* enable_upcall */
     NULL,                       /* disable_upcall */
+    NULL,                       /* register_sflow_upcall_cb */
     dpif_netlink_get_datapath_version, /* get_datapath_version */
     dpif_netlink_ct_dump_start,
     dpif_netlink_ct_dump_next,

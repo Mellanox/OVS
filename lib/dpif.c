@@ -1554,6 +1554,14 @@ dpif_disable_upcall(struct dpif *dpif)
 }
 
 void
+dpif_register_sflow_upcall_cb(struct dpif *dpif, sflow_upcall_callback *cb)
+{
+    if (dpif->dpif_class->register_sflow_upcall_cb) {
+        dpif->dpif_class->register_sflow_upcall_cb(dpif, cb);
+    }
+}
+
+void
 dpif_print_packet(struct dpif *dpif, struct dpif_upcall *upcall)
 {
     if (!VLOG_DROP_DBG(&dpmsg_rl)) {
