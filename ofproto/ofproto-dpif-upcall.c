@@ -409,6 +409,7 @@ static int udpif_flow_unprogram(struct udpif *udpif, struct udpif_key *ukey,
 
 static upcall_callback upcall_cb;
 static dp_purge_callback dp_purge_cb;
+static sflow_upcall_callback sflow_upcall_cb;
 
 static atomic_bool enable_megaflows = ATOMIC_VAR_INIT(true);
 static atomic_bool enable_ufid = ATOMIC_VAR_INIT(true);
@@ -463,6 +464,7 @@ udpif_create(struct dpif_backer *backer, struct dpif *dpif)
 
     dpif_register_upcall_cb(dpif, upcall_cb, udpif);
     dpif_register_dp_purge_cb(dpif, dp_purge_cb, udpif);
+    dpif_register_sflow_upcall_cb(dpif, sflow_upcall_cb);
 
     return udpif;
 }
@@ -1348,6 +1350,46 @@ out:
     }
     upcall_uninit(&upcall);
     return error;
+}
+
+int
+sflow_upcall_cb(struct dpif_upcall_sflow *dupcall)
+{
+    const struct dpif_sflow_attr *sflow_attr = dupcall->sflow_attr;
+    struct user_action_cookie *cookie;
+    struct ofproto_dpif *ofproto;
+    struct dpif_sflow *sflow;
+    uint32_t iifindex;
+    struct flow flow;
+
+    if (!sflow_attr) {
+        VLOG_WARN_RL(&rl, "%s: sflow_attr is NULL", __func__);
+        return EINVAL;
+    }
+
+    cookie = sflow_attr->userdata;
+    ofproto = ofproto_dpif_lookup_by_uuid(&cookie->ofproto_uuid);
+    if (!ofproto) {
+        VLOG_WARN_RL(&rl, "%s: could not find ofproto", __func__);
+        return ENODEV;
+    }
+
+    sflow = ofproto->sflow;
+    if (!sflow) {
+        VLOG_WARN_RL(&rl, "%s: could not find sflow", __func__);
+        return ENODEV;
+    }
+
+    memset(&flow, 0, sizeof flow);
+    if (sflow_attr->tunnel) {
+        memcpy(&flow.tunnel, sflow_attr->tunnel, sizeof flow.tunnel);
+    }
+    iifindex = dupcall->iifindex;
+    dpif_sflow_received(sflow, &dupcall->packet, &flow,
+                        netdev_ifindex_to_odp_port(iifindex),
+                        cookie, NULL);
+
+    return 0;
 }
 
 static size_t
