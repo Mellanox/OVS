@@ -8858,7 +8858,9 @@ e2e_cache_offload_ct_mt_flows(struct dp_netdev *dp,
 
     memset(&offload, 0, sizeof offload);
     for (i = 0; i < num_flows; i++) {
-        if (mt_flows[i]->offload_state != E2E_OL_STATE_CT_SW) {
+        /* Only non-offloaded CTs. Either to MT or cache. */
+        if (mt_flows[i]->offload_state != E2E_OL_STATE_CT_SW ||
+            !ovs_list_is_empty(&mt_flows[i]->associated_merged_flows)) {
             continue;
         }
         offload.ufid = mt_flows[i]->ufid;
@@ -8892,6 +8894,25 @@ e2e_cache_merge_flows(struct e2e_cache_ovs_flow **flows,
                       uint16_t num_flows,
                       struct e2e_cache_merged_flow *merged_flow,
                       struct ofpbuf *merged_actions);
+
+/* CT rules should be offloaded either to MT or cache, but not both. For a
+ * merged flow created, remove from HW the MT rules for its composing CT
+ * flows.
+ */
+static void
+e2e_cache_purge_ct_flows_from_hw(struct dp_netdev *dp,
+                                 struct e2e_cache_ovs_flow *mt_flows[],
+                                 uint16_t num_flows)
+{
+    uint16_t i;
+
+    for (i = 0; i < num_flows; i++) {
+        if (mt_flows[i]->offload_state == E2E_OL_STATE_CT_HW) {
+            e2e_cache_ct_flow_offload_del(dp, mt_flows[i]);
+            mt_flows[i]->offload_state = E2E_OL_STATE_CT_SW;
+        }
+    }
+}
 
 static int
 e2e_cache_process_trace_info(struct dp_netdev *dp,
@@ -8958,6 +8979,7 @@ e2e_cache_process_trace_info(struct dp_netdev *dp,
     if (OVS_UNLIKELY(err)) {
         goto remove_flow_from_db;
     }
+    e2e_cache_purge_ct_flows_from_hw(dp, mt_flows, num_flows);
     return 0;
 
 remove_flow_from_db:
