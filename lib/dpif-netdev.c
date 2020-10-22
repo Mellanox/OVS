@@ -466,7 +466,8 @@ struct dp_offload_thread {
     PADDED_MEMBERS(CACHE_LINE_SIZE,
         struct mpsc_queue queue;
         atomic_uint64_t enqueued_item;
-        atomic_uint64_t ct_connections;
+        atomic_uint64_t ct_uni_dir_connections;
+        atomic_uint64_t ct_bi_dir_connections;
         struct cmap megaflow_to_mark;
         struct cmap mark_to_flow;
     );
@@ -1090,14 +1091,16 @@ dp_netdev_offload_init(void)
             cmap_init(&dp_offload_threads[i].megaflow_to_mark);
             cmap_init(&dp_offload_threads[i].mark_to_flow);
             atomic_init(&dp_offload_threads[i].enqueued_item, 0);
-            atomic_init(&dp_offload_threads[i].ct_connections, 0);
+            atomic_init(&dp_offload_threads[i].ct_uni_dir_connections, 0);
+            atomic_init(&dp_offload_threads[i].ct_bi_dir_connections, 0);
             ovs_thread_create("hw_offload",
                               dp_netdev_flow_offload_main,
                               &dp_offload_threads[i]);
         }
         if (netdev_is_e2e_cache_enabled()) {
             atomic_init(&dp_offload_threads[i].enqueued_item, 0);
-            atomic_init(&dp_offload_threads[i].ct_connections, 0);
+            atomic_init(&dp_offload_threads[i].ct_uni_dir_connections, 0);
+            atomic_init(&dp_offload_threads[i].ct_bi_dir_connections, 0);
         }
         ovsthread_once_done(&offload_thread_start);
     }
@@ -3388,9 +3391,9 @@ dp_netdev_ct_offload_handle(struct dp_offload_thread_item *offload_item)
     if (!ret[CT_DIR_INIT] && !ret[CT_DIR_REP]) {
         if (ct_offload[CT_DIR_INIT].op ==
             DP_NETDEV_FLOW_OFFLOAD_OP_ADD) {
-            atomic_count_inc64(&ofl_thread->ct_connections);
+            atomic_count_inc64(&ofl_thread->ct_bi_dir_connections);
         } else {
-            atomic_count_dec64(&ofl_thread->ct_connections);
+            atomic_count_dec64(&ofl_thread->ct_bi_dir_connections);
         }
     }
 }
@@ -4923,18 +4926,21 @@ dpif_netdev_offload_stats_get(struct dpif *dpif,
     enum {
         DP_NETDEV_HW_OFFLOADS_STATS_ENQUEUED,
         DP_NETDEV_HW_OFFLOADS_STATS_INSERTED,
-        DP_NETDEV_HW_OFFLOADS_STATS_CT_CONNS,
+        DP_NETDEV_HW_OFFLOADS_STATS_CT_UNI_DIR_CONNS,
+        DP_NETDEV_HW_OFFLOADS_STATS_CT_BI_DIR_CONNS,
     };
     struct {
         const char *name;
         uint64_t total;
     } hwol_stats[] = {
         [DP_NETDEV_HW_OFFLOADS_STATS_ENQUEUED] =
-            { "Enqueued offloads", 0 },
+            { "     Enqueued offloads", 0 },
         [DP_NETDEV_HW_OFFLOADS_STATS_INSERTED] =
-            { "Inserted offloads", 0 },
-        [DP_NETDEV_HW_OFFLOADS_STATS_CT_CONNS] =
-            { "   CT Connections", 0 },
+            { "     Inserted offloads", 0 },
+        [DP_NETDEV_HW_OFFLOADS_STATS_CT_UNI_DIR_CONNS] =
+            { "CT uni-dir Connections", 0 },
+        [DP_NETDEV_HW_OFFLOADS_STATS_CT_BI_DIR_CONNS] =
+            { " CT bi-dir Connections", 0 },
     };
     struct dp_netdev *dp = get_dp_netdev(dpif);
     struct dp_netdev_port *port;
@@ -4978,8 +4984,10 @@ dpif_netdev_offload_stats_get(struct dpif *dpif,
         if (dp_offload_threads != NULL) {
             atomic_read_relaxed(&dp_offload_threads[tid].enqueued_item,
                                 &counts[DP_NETDEV_HW_OFFLOADS_STATS_ENQUEUED]);
-            atomic_read_relaxed(&dp_offload_threads[tid].ct_connections,
-                                &counts[DP_NETDEV_HW_OFFLOADS_STATS_CT_CONNS]);
+            atomic_read_relaxed(&dp_offload_threads[tid].ct_uni_dir_connections,
+                                &counts[DP_NETDEV_HW_OFFLOADS_STATS_CT_UNI_DIR_CONNS]);
+            atomic_read_relaxed(&dp_offload_threads[tid].ct_bi_dir_connections,
+                                &counts[DP_NETDEV_HW_OFFLOADS_STATS_CT_BI_DIR_CONNS]);
         }
 
         for (i = 0; i < ARRAY_SIZE(hwol_stats); i++) {
@@ -8469,6 +8477,40 @@ e2e_cache_flow_find(const ovs_u128 *ufid, uint32_t hash)
 }
 
 static void
+e2e_cache_update_ct_stats(struct e2e_cache_ovs_flow *mt_flow, int op,
+                          struct dp_netdev *dp)
+{
+    struct dp_offload_thread *ofl_thread;
+    struct e2e_cache_ovs_flow *ct_peer;
+
+    ovs_assert(dp);
+    ofl_thread = &dp_offload_threads[netdev_offload_thread_id()];
+
+    ct_peer = mt_flow->ct_peer;
+    if (op == DP_NETDEV_FLOW_OFFLOAD_OP_ADD) {
+        if (ct_peer &&
+            (ct_peer->offload_state == E2E_OL_STATE_CT_HW ||
+             !ovs_list_is_empty(&ct_peer->associated_merged_flows))) {
+            atomic_count_inc64(&ofl_thread->ct_bi_dir_connections);
+            atomic_count_dec64(&ofl_thread->ct_uni_dir_connections);
+        } else {
+            atomic_count_inc64(&ofl_thread->ct_uni_dir_connections);
+        }
+    } else if (op == DP_NETDEV_FLOW_OFFLOAD_OP_DEL) {
+        if (ct_peer &&
+            (ct_peer->offload_state == E2E_OL_STATE_CT_HW ||
+             !ovs_list_is_empty(&ct_peer->associated_merged_flows))) {
+            atomic_count_dec64(&ofl_thread->ct_bi_dir_connections);
+            atomic_count_inc64(&ofl_thread->ct_uni_dir_connections);
+        } else {
+            atomic_count_dec64(&ofl_thread->ct_uni_dir_connections);
+        }
+    } else {
+        OVS_NOT_REACHED();
+    }
+}
+
+static void
 e2e_cache_del_associated_merged_flows(struct e2e_cache_ovs_flow *flow,
                                       struct ovs_list *merged_flows_to_delete)
 {
@@ -8557,15 +8599,35 @@ e2e_cache_flow_db_del(const ovs_u128 *ufid, struct dp_netdev *dp)
     struct ovs_list merged_flows_to_delete =
         OVS_LIST_INITIALIZER(&merged_flows_to_delete);
     size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
-    struct e2e_cache_ovs_flow *ct_flow;
+    struct e2e_cache_ovs_flow *ct_flow, *iter_flow;
+    struct e2e_cache_merged_flow *merged_flow;
+    uint16_t i;
 
     ovs_mutex_lock(&flows_map_mutex);
     ct_flow = e2e_cache_flow_db_del_protected(ufid, hash,
                                               &merged_flows_to_delete);
     ovs_mutex_unlock(&flows_map_mutex);
 
+    /* Update CT stats affected by deletion of the merged flows. */
+    LIST_FOR_EACH (merged_flow, node.in_list, &merged_flows_to_delete) {
+        for (i = 0; i < merged_flow->associated_flows_len; i++) {
+            iter_flow = merged_flow->associated_flows[i].mt_flow;
+            if (iter_flow->offload_state == E2E_OL_STATE_FLOW) {
+                continue;
+            }
+            if (ovs_list_is_empty(&iter_flow->associated_merged_flows)) {
+                e2e_cache_update_ct_stats(iter_flow,
+                                          DP_NETDEV_FLOW_OFFLOAD_OP_DEL, dp);
+            }
+        }
+    }
     if (ct_flow) {
+        /* This is a CT MT flow that is deleted. If it is offloaded using MT
+         * remove it and update CT stats.
+         */
         if (ct_flow->offload_state == E2E_OL_STATE_CT_HW) {
+            e2e_cache_update_ct_stats(ct_flow, DP_NETDEV_FLOW_OFFLOAD_OP_DEL,
+                                      dp);
             e2e_cache_ct_flow_offload_del(dp, ct_flow);
         }
         if (ct_flow->ct_peer) {
@@ -8897,6 +8959,9 @@ e2e_cache_offload_ct_mt_flows(struct dp_netdev *dp,
             mt_flows[i]->offload_state = E2E_OL_STATE_CT_ERR;
             e2e_stats.add_ct_mt_flow_err++;
         }
+        /* Update CT stats affected by offloading those MT CT flows. */
+        e2e_cache_update_ct_stats(mt_flows[i], DP_NETDEV_FLOW_OFFLOAD_OP_ADD,
+                                  dp);
     }
     if (actions) {
         free(actions);
@@ -8995,6 +9060,15 @@ e2e_cache_process_trace_info(struct dp_netdev *dp,
         goto remove_flow_from_db;
     }
     e2e_cache_purge_ct_flows_from_hw(dp, mt_flows, num_flows);
+    for (i = 0; i < num_flows; i++) {
+        if (mt_flows[i]->offload_state == E2E_OL_STATE_FLOW ||
+            (i > 0 && mt_flows[i - 1]->offload_state != E2E_OL_STATE_FLOW)) {
+            continue;
+        }
+        /* Update CT stats affected by offloading the merged flow. */
+        e2e_cache_update_ct_stats(mt_flows[i], DP_NETDEV_FLOW_OFFLOAD_OP_ADD,
+                                  dp);
+    }
     return 0;
 
 remove_flow_from_db:
