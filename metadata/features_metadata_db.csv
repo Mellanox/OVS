@@ -6,3 +6,4 @@ name=ovs_dpdk_ct; type=features; upstream_status=in_progress;
 name=ovs_dpdk_frags; type=features; upstream_status=in_progress;
 name=ovs_dpdk_vdpa; type=features; upstream_status=in_progress;
 name=e2e_cache; type=features; upstream_status=NA;
+name=ovs_dpdk_mt_flow; type=OVS-DPDK; upstream_status=in_progress;
