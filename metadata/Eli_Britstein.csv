@@ -70,3 +70,4 @@ Change-Id=I496b4c4d42a003db852c6beb98446f24aaf7e604; subject=Update metadata - D
 Change-Id=I39f9c8b232d154c4c9f1899bad995b727b78faf8; subject=conntrack: Fix refcount for NAT scenarios; feature=dpdk; upstream_status=ignore; general=;
 Change-Id=I289c529e3c24746ad5457eaf526454abaf67fd27; subject=netdev-dpdk: Fix no port found with netdev_dpdk_get_netdev_by_devargs; feature=dpdk; upstream_status=ignore; general=;
 Change-Id=Idfc9b6c32da70753db880458bcf19336016a5351; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I8904744b4a157133a111e10d2970060f1d50b33a; subject=dpif-netdev: Replace port mutex by rw port lock; feature=mt-flow; upstream_status=in_progress; general=;

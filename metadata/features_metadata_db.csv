@@ -3,3 +3,4 @@ name=bug_fixes; type=fixes; upstream_status=ignore;
 name=bp_2_14; type=features; upstream_status=in_progress;
 name=dpdk; type=OVS-DPDK; upstream_status=NA;
 name=e2e_cache; type=features; upstream_status=NA;
+name=mt-flow; type=OVS-DPDK; upstream_status=in_progress;
