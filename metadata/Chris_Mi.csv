@@ -1,0 +1,10 @@
+sep=;
+Change-Id=I51805a458aaaf390cd5b7dc8704545612efb9593; subject=ovs-kmod-ctl: Load kernel module psample; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=I97bec186d8d38e7e62c2558434ebbb364f28eaf0; subject=dpif-netlink: Create psample netlink socket; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=Ib7d74e62860a00e68fcbbb7df3757df90193487a; subject=netdev-offload: Introduce sFlow attributes query by group ID API; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=Ib47adebe29f7777cdbd3582042c7722c1ca22556; subject=dpif: Introduce psample offload API; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=Ia09d3542cae4d3238e993bf1dab88faea45566b9; subject=dpif-netlink: Implement psample offload API; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=I75bea07b07e441c673f14e9286037efebeb02712; subject=ofproto: Add psample receive handler; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=I980083bc5eb176d79b31895a605245fa49d9eee9; subject=netdev-offload-tc: Introduce group ID management API; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=Id3c1fa4a1f3595ab5f4088b304e0ee4475bdbe39; subject=netdev-offload-tc: Add offload support for sFlow; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=I97ec021aac116dfc1d25f720ba2ef21b4c0958f1; subject=metadata: Update MD; feature=ofed_scripts; upstream_status=ignore; general=;
