@@ -1281,18 +1281,19 @@ static void
 get_tnl_masked(struct flow_tnl *dst_key, struct flow_tnl *dst_mask,
                struct flow_tnl *src_key, struct flow_tnl *src_mask)
 {
-    char *psrc_key, *psrc_mask;
-    char *pdst_key;
+    char *psrc_key;
+    char *pdst_key, *pdst_mask;
     int i;
 
     if (dst_mask) {
         memcpy(dst_mask, src_mask, sizeof *dst_mask);
+        memset(&dst_mask->metadata, 0, sizeof dst_mask->metadata);
 
         pdst_key = (char *)dst_key;
         psrc_key = (char *)src_key;
-        psrc_mask = (char *)src_mask;
+        pdst_mask = (char *)dst_mask;
         for (i = 0; i < sizeof *dst_key; i++) {
-            *pdst_key++ = *psrc_key++ & *psrc_mask++;
+            *pdst_key++ = *psrc_key++ & *pdst_mask++;
         }
     } else {
         memcpy(dst_key, src_key, sizeof *dst_key);
