@@ -58,3 +58,5 @@ Change-Id=I95196ee8b898b73d5c65bd7c0497a14db23232ac; subject=dpctl: Add offload 
 Change-Id=I328da02192c63182f07c5eebcfce2005910f6b8b; subject=dpctl: Add CT insertion/deletion rates statistics; feature=bp_2_14; upstream_status=in_progress; general=;
 Change-Id=I21bf441f90043730e1dc3467449c7b536d1b8665; subject=netdev-offload-dpdk: Preserve HW statistics for modified flows; feature=bp_2_14; upstream_status=in_progress; general=;
 Change-Id=I990b62c93fa4e884d4c4dd9ca2e59349bbed933e; subject=Update metadata - 2.14; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Id565c0ce656c853dbb7b46cb9c0a8ced96bb3ba7; subject=conntrack: Inroduce get ufid for a connection function; feature=dpdk; upstream_status=ignore; general=;
+Change-Id=I1aa0fc6b4c3eb386b90800793ebb194820037638; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
