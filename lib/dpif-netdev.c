@@ -8307,15 +8307,20 @@ e2e_cache_associate_merged_flow(struct e2e_cache_merged_flow *merged_flow,
                                 struct e2e_cache_ovs_flow *flows[],
                                 uint16_t num_flows)
 {
-    uint16_t i;
+    uint16_t i, j;
 
-    for (i = 0; i < num_flows; i++) {
+    for (j = 0, i = 0; j < num_flows; j++) {
+        if (flows[j]->offload_state != E2E_OL_STATE_FLOW && j > 0 &&
+            flows[j - 1]->offload_state != E2E_OL_STATE_FLOW) {
+            continue;
+        }
         merged_flow->associated_flows[i].index = i;
-        ovs_list_push_back(&flows[i]->associated_merged_flows,
+        ovs_list_push_back(&flows[j]->associated_merged_flows,
                            &merged_flow->associated_flows[i].list);
-        merged_flow->associated_flows[i].mt_flow = flows[i];
+        merged_flow->associated_flows[i].mt_flow = flows[j];
+        i++;
     }
-    merged_flow->associated_flows_len = num_flows;
+    merged_flow->associated_flows_len = i;
 }
 
 static void
