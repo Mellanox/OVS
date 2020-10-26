@@ -3139,7 +3139,7 @@ dp_netdev_create_ct_actions(struct ofpbuf *buf,
                             struct ct_flow_offload_item *offload)
 {
     size_t offset;
-    char helper[] = "offl,st(0x  ),id(0x        )";
+    char helper[] = "offl,st(0x  ),id_key(0x                )";
     char s[9];
     char *end;
 
@@ -3239,8 +3239,9 @@ dp_netdev_create_ct_actions(struct ofpbuf *buf,
     end = helper;
     ovs_strcat(helper, sizeof helper, &end, "offl,st(0x");
     ovs_strcat(helper, sizeof helper, &end, u32_to_hex(s, offload->ct_state));
-    ovs_strcat(helper, sizeof helper, &end, "),id(0x");
-    ovs_strcat(helper, sizeof helper, &end, u32_to_hex(s, offload->ctid));
+    ovs_strcat(helper, sizeof helper, &end, "),id_key(0x");
+    ovs_strcat(helper, sizeof helper, &end, uintptr_to_hex(s,
+                                                           offload->ctid_key));
     ovs_strcat(helper, sizeof helper, &end, ")");
 
     nl_msg_put_string(buf, OVS_CT_ATTR_HELPER, helper);

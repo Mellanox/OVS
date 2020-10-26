@@ -232,6 +232,7 @@ bool ovs_scan_len(const char *s, int *n, const char *format, ...);
 bool str_to_double(const char *, double *);
 
 char *u32_to_hex(char *, uint32_t);
+char *uintptr_to_hex(char *, uintptr_t);
 
 int hexit_value(unsigned char c);
 uintmax_t hexits_value(const char *s, size_t n, bool *ok);

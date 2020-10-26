@@ -989,6 +989,24 @@ u32_to_hex(char *buf, uint32_t x)
     return p;
 }
 
+/* Convert a uintptr_t into its hexadecimal string representation.
+ * Result is right-aligned in buf with no left-padding.
+ * Return value points to the start of the written string.
+ */
+char *
+uintptr_to_hex(char *buf, uintptr_t x)
+{
+    char *p = &buf[16];
+
+    *--p = '\0';
+    do {
+        *--p = "0123456789abcdef"[x & 0xf];
+        x >>= 4;
+    } while (x);
+
+    return p;
+}
+
 /* Returns the value of 'c' as a hexadecimal digit. */
 int
 hexit_value(unsigned char c)

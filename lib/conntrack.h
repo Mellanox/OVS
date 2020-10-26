@@ -127,7 +127,7 @@ struct ct_flow_offload_item {
     int  op;
     ovs_u128 ufid;
     void *dp;
-    uint32_t ctid;
+    uintptr_t ctid_key;
 
     /* matches */
     struct ct_match ct_match;

@@ -66,6 +66,7 @@ struct act_resources {
     uint32_t ct_match_label_id;
     uint32_t ct_action_label_id;
     uint32_t ct_shared_age_id;
+    uint32_t ctid;
 };
 
 #define NUM_RTE_FLOWS_PER_PORT 2
@@ -1556,6 +1557,74 @@ put_shared_age_id(uint32_t shared_age_id)
     put_context_data_by_id(&shared_age_id_md, NULL, shared_age_id);
 }
 
+static struct ds *
+dump_counter_id(struct ds *s, void *data)
+{
+    uintptr_t ct_id_key = *(uintptr_t *) data;
+
+    ds_put_format(s, "CT id key = 0x%"PRIxPTR, ct_id_key);
+    return s;
+}
+
+#define MIN_COUNTER_ID       1U
+#define NUM_COUNTER_IDS      (UINT32_MAX - 2U)
+
+static struct seq_pool *counter_id_pool = NULL;
+
+static uint32_t
+counter_id_alloc(void *arg OVS_UNUSED)
+{
+    unsigned int tid = netdev_offload_thread_id();
+    uint32_t counter_id;
+
+    if (OVS_UNLIKELY(!counter_id_pool)) {
+        /* if not yet initialized, do it here */
+        counter_id_pool = seq_pool_create(netdev_offload_dpdk_thread_nb(),
+                                          MIN_COUNTER_ID, NUM_COUNTER_IDS);
+    }
+
+    if (OVS_LIKELY(seq_pool_new_id(counter_id_pool, tid, &counter_id))) {
+        return counter_id;
+    }
+    return 0;
+}
+
+static void
+counter_id_free(const void *arg OVS_UNUSED, uint32_t counter_id)
+{
+    unsigned int tid = netdev_offload_thread_id();
+
+    seq_pool_free_id(counter_id_pool, tid, counter_id);
+}
+
+static struct context_metadata counter_id_md = {
+    .name = "counter_id",
+    .dump_context_data = dump_counter_id,
+    .maps_lock = OVS_MUTEX_INITIALIZER,
+    .d2i_map = CMAP_INITIALIZER,
+    .i2d_map = CMAP_INITIALIZER,
+    .id_alloc = &counter_id_alloc,
+    .id_free = &counter_id_free,
+    .data_size = sizeof(uintptr_t),
+};
+
+static int
+get_ct_counter_id(uintptr_t ctid_key, uint32_t *ct_id)
+{
+    struct context_data ct_id_ctx = {
+        .data = &ctid_key,
+    };
+
+    return get_context_data_id_by_data(&counter_id_md, &ct_id_ctx, NULL,
+                                       ct_id);
+}
+
+static void
+put_ct_counter_id(uint32_t ct_id)
+{
+    put_context_data_by_id(&counter_id_md, NULL, ct_id);
+}
+
 static void
 put_action_resources(struct netdev *netdev,
                      struct act_resources *act_resources)
@@ -1578,6 +1647,7 @@ put_action_resources(struct netdev *netdev,
     put_label_id(act_resources->ct_match_label_id);
     put_label_id(act_resources->ct_action_label_id);
     put_shared_age_id(act_resources->ct_shared_age_id);
+    put_ct_counter_id(act_resources->ctid);
 }
 
 /*
@@ -2169,7 +2239,6 @@ struct act_vars {
     uint32_t recirc_id;
     struct flow_tnl *tnl_key;
     struct flow_tnl tnl_mask;
-    uint32_t ctid;
     struct rte_flow_action_jump *jump;
     bool is_e2e_cache_flow;
     uint32_t app_flows_counter;
@@ -3814,14 +3883,20 @@ parse_ct_actions(struct flow_actions *actions,
             act_vars->ct_mode = CT_MODE_CT_NAT;
         } else if (nl_attr_type(cta) == OVS_CT_ATTR_HELPER) {
             const char *helper = nl_attr_get(cta);
+            uintptr_t ctid_key;
 
             if (strncmp(helper, "offl", strlen("offl"))) {
                 continue;
             }
 
-            if (!ovs_scan(helper, "offl,st(0x%"SCNx8"),id(0x%"SCNx32")",
-                          &ct_miss_ctx.state, &act_vars->ctid)) {
+            if (!ovs_scan(helper, "offl,st(0x%"SCNx8"),id_key(0x%"SCNxPTR")",
+                          &ct_miss_ctx.state, &ctid_key)) {
                 VLOG_ERR("Invalid offload helper: '%s'", helper);
+                return -1;
+            }
+
+            if (get_ct_counter_id(ctid_key, &act_resources->ctid)) {
+                VLOG_ERR("Could not create CT id");
                 return -1;
             }
 
@@ -3900,7 +3975,8 @@ create_ct_conn(struct netdev *netdev,
                      &act_resources->ct_nat_table_id)) {
         return -1;
     }
-    split_ct_conn_actions(actions, &ct_actions, &nat_actions, act_vars->ctid);
+    split_ct_conn_actions(actions, &ct_actions, &nat_actions,
+                          act_resources->ctid);
     fi->has_count[0] = true;
     ret = create_offload_flow(netdev, act_resources->ct_nat_table_id, items,
                               nat_actions.actions, error,
