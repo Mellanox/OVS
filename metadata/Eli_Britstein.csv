@@ -57,3 +57,6 @@ Change-Id=I95196ee8b898b73d5c65bd7c0497a14db23232ac; subject=dpctl: Add offload 
 Change-Id=I328da02192c63182f07c5eebcfce2005910f6b8b; subject=dpctl: Add CT insertion/deletion rates statistics; feature=bp_2_15; upstream_status=in_progress; general=;
 Change-Id=I6c951435c9b88aadeabc374fd152587d37c60ee8; subject=acinclude: Add -l:librte_bus_vdev.a to LIBS; feature=ovs_dpdk_vdpa; upstream_status=in_progress; general=;
 Change-Id=Id565c0ce656c853dbb7b46cb9c0a8ced96bb3ba7; subject=conntrack: Inroduce get ufid for a connection function; feature=bug_fixes; upstream_status=in_progress; general=;
+Change-Id=I8cf164e992416ebf57b0e7f61745f2c5ba90044d; subject=conntrack: Sync CT offloads with refcount; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I70b11c545265e9377c0c032218137bb4d050c964; subject=dpif-netdev: Refactor CT offload handling; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=Ib7dee6b05710a253dd604d9917831fc932ae5e28; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
