@@ -8,3 +8,5 @@ Change-Id=I75bea07b07e441c673f14e9286037efebeb02712; subject=ofproto: Add psampl
 Change-Id=I980083bc5eb176d79b31895a605245fa49d9eee9; subject=netdev-offload-tc: Introduce group ID management API; feature=bp_2_14; upstream_status=in_progress; general=;
 Change-Id=Id3c1fa4a1f3595ab5f4088b304e0ee4475bdbe39; subject=netdev-offload-tc: Add offload support for sFlow; feature=bp_2_14; upstream_status=in_progress; general=;
 Change-Id=I97ec021aac116dfc1d25f720ba2ef21b4c0958f1; subject=metadata: Update MD; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I7b925445b86d905aea908fcdc91ca81c99ba5e57; subject=compat: Add psample and tc sample action defines for older kernels; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=Ie59440f47257e94a00329df9ece4b280c39e486b; subject=metadata: Update MD; feature=ofed_scripts; upstream_status=ignore; general=;
