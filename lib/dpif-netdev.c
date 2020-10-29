@@ -2973,8 +2973,7 @@ dp_netdev_ct_offload_add(struct dp_offload_item *offload_item, int dir)
 
     port = netdev_ports_get(offload.odp_port, dpif_type_str);
     if (!port) {
-        ret = -1;
-        goto out;
+        return -1;
     }
 
     dp_netdev_fill_ct_match(&match, &offload);
@@ -3017,18 +3016,11 @@ dp_netdev_ct_offload_add(struct dp_offload_item *offload_item, int dir)
     }
     ret = netdev_flow_put(port, &match, actions, buf.size, &offload.ufid, &info,
                           NULL);
-    /* A memory barrier that makes sure that the lines will be executed by
-     * order, and offload.dont_free won't be changed before offload.status is
-     * updated.
-     */
     *offload.status = !ret;
-    atomic_thread_fence(memory_order_acquire);
-    *offload.dont_free = false;
     ovs_mutex_unlock(&offload_item->dp->port_mutex);
     netdev_close(port);
     ofpbuf_uninit(&buf);
 
-out:
     return ret;
 }
 
@@ -3038,12 +3030,8 @@ dp_netdev_ct_offload_del(struct dp_offload_item *offload_item, int dir)
     const char *dpif_type_str = dpif_normalize_type(offload_item->dp->class->type);
     struct ct_flow_offload_item offload = offload_item->ct_offload_item[dir];
     struct netdev *port;
-    int ret = 0;
+    int ret;
 
-    /* if a direction is not offloaded do not attempt to delete it from HW */
-    if (!offload.dp) {
-        return -1;
-    }
     port = netdev_ports_get(offload.odp_port, dpif_type_str);
     if (!port) {
         return -1;
@@ -3083,7 +3071,6 @@ dp_release_ctid(uint32_t ctid)
     id_pool_free_id(ctid_pool, ctid);
 }
 
-
 static void
 dp_netdev_ct_offload_handle(struct dp_offload_item *offload_item)
 {
@@ -3093,6 +3080,15 @@ dp_netdev_ct_offload_handle(struct dp_offload_item *offload_item)
     int ts_index = 0;
     const char *op;
     int dir;
+
+    if (ct_offload[CT_DIR_INIT].op == DP_NETDEV_FLOW_OFFLOAD_OP_ADD &&
+        ovs_refcount_unref(ct_offload[CT_DIR_INIT].refcnt) == 1) {
+        free(ct_offload[CT_DIR_INIT].refcnt);
+        return;
+    }
+    if (ct_offload[CT_DIR_INIT].op == DP_NETDEV_FLOW_OFFLOAD_OP_DEL) {
+        free(ct_offload[CT_DIR_INIT].refcnt);
+    }
 
     if (ct_offload[CT_DIR_INIT].op == DP_NETDEV_FLOW_OFFLOAD_OP_ADD) {
         dp_alloc_ctid(ct_offload->ctid_ptr);

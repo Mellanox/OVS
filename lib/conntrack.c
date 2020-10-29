@@ -316,6 +316,11 @@ conntrack_offload_del_conn(struct conntrack *ct,
         return;
     }
 
+    if (!conn->offloads.refcnt ||
+        ovs_refcount_unref(conn->offloads.refcnt) > 1) {
+        return;
+    }
+
     for (dir = 0; dir < CT_DIR_NUM; dir ++) {
         if (conn->nat_conn &&
             conn->nat_conn->offloads.dir_info[dir].dp) {
@@ -328,6 +333,8 @@ conntrack_offload_del_conn(struct conntrack *ct,
         }
         item[dir].ctid = conn_dir->offloads.ctid;
     }
+    item[CT_DIR_INIT].refcnt = conn->offloads.refcnt;
+    item[CT_DIR_REP].refcnt = NULL;
     ct->offload_class->conn_del(item);
 }
 
@@ -472,7 +479,7 @@ zone_limit_delete(struct conntrack *ct, uint16_t zone)
     return 0;
 }
 
-static int
+static void
 conn_clean_cmn(struct conntrack *ct, struct conn *conn)
     OVS_REQUIRES(ct->ct_lock)
 {
@@ -480,19 +487,8 @@ conn_clean_cmn(struct conntrack *ct, struct conn *conn)
         expectation_clean(ct, &conn->key);
     }
 
-    if (conn->offloads.dir_info[CT_DIR_INIT].dont_free ||
-        conn->offloads.dir_info[CT_DIR_REP].dont_free ||
-        (conn->nat_conn &&
-         (conn->nat_conn->offloads.dir_info[CT_DIR_INIT].dont_free ||
-          conn->nat_conn->offloads.dir_info[CT_DIR_REP].dont_free))) {
-        return -1;
-    }
-
     if (netdev_is_flow_api_enabled()) {
         conntrack_offload_del_conn(ct, conn);
-        if (conn->nat_conn) {
-            conntrack_offload_del_conn(ct, conn->nat_conn);
-        }
     }
 
     uint32_t hash = conn_key_hash(&conn->key, ct->hash_basis);
@@ -502,7 +498,6 @@ conn_clean_cmn(struct conntrack *ct, struct conn *conn)
     if (zl && zl->czl.zone_limit_seq == conn->zone_limit_seq) {
         zl->czl.count--;
     }
-    return 0;
 }
 
 /* Must be called with 'conn' of 'conn_type' CT_CONN_TYPE_DEFAULT.  Also
@@ -513,9 +508,7 @@ conn_clean(struct conntrack *ct, struct conn *conn)
 {
     ovs_assert(conn->conn_type == CT_CONN_TYPE_DEFAULT);
 
-    if (conn_clean_cmn(ct, conn)) {
-        return;
-    }
+    conn_clean_cmn(ct, conn);
     if (conn->nat_conn) {
         uint32_t hash = conn_key_hash(&conn->nat_conn->key, ct->hash_basis);
         cmap_remove(&ct->conns, &conn->nat_conn->cm_node, hash);
@@ -1507,7 +1500,6 @@ conntrack_offload_fill_item_add(struct ct_flow_offload_item *item,
     item->label_key = conn->label;
     item->label_mask.u64.hi = label.u64.hi ^ conn->label.u64.hi;
     item->label_mask.u64.lo = label.u64.lo ^ conn->label.u64.lo;
-    item->dont_free = &conn->offloads.dir_info[dir].dont_free;
     item->status = &conn->offloads.dir_info[dir].status;
     item->ctid_ptr = &conn->offloads.ctid;
 }
@@ -1523,7 +1515,6 @@ conntrack_offload_prepare_add(struct conn *conn,
 
     conn->offloads.dir_info[dir].port = packet->md.in_port.odp_port;
     conn->offloads.dir_info[dir].dp = dp;
-    conn->offloads.dir_info[dir].dont_free = true;
     conn->offloads.dir_info[dir].pkt_ct_state = packet->md.ct_state;
 }
 
@@ -1584,6 +1575,11 @@ conntrack_offload_add_conn(struct conntrack *ct,
                                          &item[CT_DIR_REP].ufid);
         *ufid[CT_DIR_INIT] = item[CT_DIR_INIT].ufid;
         *ufid[CT_DIR_REP] = item[CT_DIR_REP].ufid;
+        conn->offloads.refcnt = xmalloc(sizeof conn->offloads.refcnt);
+        ovs_refcount_init(conn->offloads.refcnt);
+        ovs_refcount_ref(conn->offloads.refcnt);
+        item[CT_DIR_INIT].refcnt = conn->offloads.refcnt;
+        item[CT_DIR_REP].refcnt = NULL;
         ct->offload_class->conn_add(item);
         conn->offloads.flags |= CT_OFFLOAD_SKIP;
         if (conn->nat_conn) {
