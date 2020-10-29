@@ -21,6 +21,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "dpif.h"
 #include "flow.h"
 
 struct ofpbuf;
@@ -59,5 +60,8 @@ int dpif_netlink_vport_get(const char *name, struct dpif_netlink_vport *reply,
 bool dpif_netlink_is_internal_device(const char *name);
 
 enum ovs_vport_type netdev_to_ovs_vport_type(const char *type);
+
+typedef int dpif_netlink_sflow_upcall_callback(struct dpif_upcall_sflow
+                                               *dupcall);
 
 #endif /* dpif-netlink.h */

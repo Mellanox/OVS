@@ -19,7 +19,6 @@
 #include "dpif-netlink-rtnl.h"
 
 #include <net/if.h>
-#include <linux/ip.h>
 #include <linux/rtnetlink.h>
 
 #include "dpif-netlink.h"
