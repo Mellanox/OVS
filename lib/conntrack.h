@@ -146,10 +146,10 @@ struct ct_flow_offload_item {
      */
     int *status;
 
-    /* dont_free flag protects a scenario of freeing the connection while the
-     * offload request has not been handled yet.
+    /* refcnt is used to handle a scenario in which a connection issued an
+     * offload request and was removed before the offload request is processed.
      */
-    bool *dont_free;
+    struct ovs_refcount *refcnt;
 };
 
 /* hw-offload callbacks */
