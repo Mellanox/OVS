@@ -3083,12 +3083,67 @@ dp_release_ctid(uint32_t ctid)
     id_pool_free_id(ctid_pool, ctid);
 }
 
+
+static void
+dp_netdev_ct_offload_handle(struct dp_offload_item *offload_item)
+{
+    struct ct_flow_offload_item *ct_offload = offload_item->ct_offload_item;
+    struct dp_netdev *dp = ct_offload->dp;
+    int ret[CT_DIR_NUM];
+    int ts_index = 0;
+    const char *op;
+    int dir;
+
+    if (ct_offload[CT_DIR_INIT].op == DP_NETDEV_FLOW_OFFLOAD_OP_ADD) {
+        dp_alloc_ctid(ct_offload->ctid_ptr);
+    }
+    for (dir = 0; dir < CT_DIR_NUM; dir++) {
+        switch (ct_offload[dir].op) {
+        case DP_NETDEV_FLOW_OFFLOAD_OP_ADD:
+            op = "add";
+            ret[dir] = dp_netdev_ct_offload_add(offload_item, dir);
+            break;
+        case DP_NETDEV_FLOW_OFFLOAD_OP_DEL:
+            op = "delete";
+            ret[dir] = dp_netdev_ct_offload_del(offload_item, dir);
+            break;
+        default:
+            OVS_NOT_REACHED();
+        }
+        VLOG_DBG("%s to %s ct(%s) flow "UUID_FMT,
+                 ret[dir] == 0 ? "succeed" : "failed", op,
+                 dir == CT_DIR_INIT ? "init" : "reply",
+                 UUID_ARGS((struct uuid *)&ct_offload[dir].ufid));
+    }
+    if (dp && !ret[CT_DIR_INIT] && !ret[CT_DIR_REP]) {
+        if (ct_offload[CT_DIR_INIT].op ==
+            DP_NETDEV_FLOW_OFFLOAD_OP_ADD) {
+            dp->offload_stats.ct_connections++;
+        } else {
+            dp->offload_stats.ct_connections--;
+        }
+    }
+    if (dp && (dp->offload_stats.ct_connections &
+               CT_CONN_TS_INTERVAL_MASK) == 0) {
+        ts_index &= CT_CONN_TS_MASK;
+        dp->offload_stats.timestamps[ts_index++] = time_msec();
+    }
+    if (ct_offload[CT_DIR_INIT].op == DP_NETDEV_FLOW_OFFLOAD_OP_ADD &&
+        ret[CT_DIR_INIT] && ret[CT_DIR_REP]) {
+        dp_release_ctid(*ct_offload->ctid_ptr);
+        *ct_offload->ctid_ptr = 0;
+    }
+    if (ct_offload[CT_DIR_INIT].op == DP_NETDEV_FLOW_OFFLOAD_OP_DEL &&
+        (!ret[CT_DIR_INIT] || !ret[CT_DIR_REP])) {
+        dp_release_ctid(ct_offload->ctid);
+    }
+}
+
 static void *
 dp_netdev_flow_offload_main(void *data OVS_UNUSED)
 {
     struct dp_offload_item *offload_item;
     struct ovs_list *list;
-    int ts_index = 0;
     const char *op;
     int ret;
 
@@ -3130,56 +3185,7 @@ dp_netdev_flow_offload_main(void *data OVS_UNUSED)
                      ret == 0 ? "succeed" : "failed", op,
                      UUID_ARGS((struct uuid *)&dp_offload->flow->mega_ufid));
         } else if (offload_item->type == DP_CT_OFFLOAD_ITEM) {
-            struct ct_flow_offload_item *ct_offload =
-                    offload_item->ct_offload_item;
-            struct dp_netdev *dp = ct_offload->dp;
-            int rets[CT_DIR_NUM];
-            int dir;
-
-            if (ct_offload[CT_DIR_INIT].op == DP_NETDEV_FLOW_OFFLOAD_OP_ADD) {
-                dp_alloc_ctid(ct_offload->ctid_ptr);
-            }
-            for (dir = 0; dir < CT_DIR_NUM; dir++) {
-                switch (ct_offload[dir].op) {
-                case DP_NETDEV_FLOW_OFFLOAD_OP_ADD:
-                    op = "add";
-                    ret = dp_netdev_ct_offload_add(offload_item, dir);
-                    break;
-                case DP_NETDEV_FLOW_OFFLOAD_OP_DEL:
-                    op = "delete";
-                    ret = dp_netdev_ct_offload_del(offload_item, dir);
-                    break;
-                default:
-                    OVS_NOT_REACHED();
-                }
-                rets[dir] = ret;
-                VLOG_DBG("%s to %s ct(%s) flow "UUID_FMT,
-                         ret == 0 ? "succeed" : "failed", op,
-                         dir == CT_DIR_INIT ? "init" : "reply",
-                         UUID_ARGS((struct uuid *)&ct_offload[dir].ufid));
-            }
-            if (dp && !rets[CT_DIR_INIT] && !rets[CT_DIR_REP]) {
-                if (ct_offload[CT_DIR_INIT].op ==
-                    DP_NETDEV_FLOW_OFFLOAD_OP_ADD) {
-                    dp->offload_stats.ct_connections++;
-                } else {
-                    dp->offload_stats.ct_connections--;
-                }
-            }
-            if (dp && (dp->offload_stats.ct_connections &
-                       CT_CONN_TS_INTERVAL_MASK) == 0) {
-                ts_index &= CT_CONN_TS_MASK;
-                dp->offload_stats.timestamps[ts_index++] = time_msec();
-            }
-            if (ct_offload[CT_DIR_INIT].op == DP_NETDEV_FLOW_OFFLOAD_OP_ADD &&
-                rets[CT_DIR_INIT] && rets[CT_DIR_REP]) {
-                dp_release_ctid(*ct_offload->ctid_ptr);
-                *ct_offload->ctid_ptr = 0;
-            }
-            if (ct_offload[CT_DIR_INIT].op == DP_NETDEV_FLOW_OFFLOAD_OP_DEL &&
-                (!rets[CT_DIR_INIT] || !rets[CT_DIR_REP])) {
-                dp_release_ctid(ct_offload->ctid);
-            }
+            dp_netdev_ct_offload_handle(offload_item);
         } else {
             OVS_NOT_REACHED();
         }
