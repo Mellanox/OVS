@@ -107,9 +107,9 @@ struct netdev_flow_api {
      * On success returns a const pointer, on failure returns NULL */
     const struct dpif_sflow_attr *(*sflow_attr_get)(uint32_t gid);
 
-    /* Queries a counter object. */
-    int (*counter_query)(struct netdev *, uint32_t, long long, long long,
-                         struct dpif_flow_stats *);
+    /* Queries a CT counter object. */
+    int (*ct_counter_query)(struct netdev *, uint32_t, long long, long long,
+                            struct dpif_flow_stats *);
 
     /* Deinitializes the netdev flow api. */
     void (*deinit_flow_api)(struct netdev *);
