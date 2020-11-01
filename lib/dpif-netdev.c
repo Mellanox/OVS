@@ -8921,6 +8921,7 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev,
     struct e2e_cache_merged_flow *merged_flow;
     struct dpif_flow_stats merged_stats;
     struct dpif_flow_attrs merged_attr;
+    struct ovs_list *merged_flow_node;
     struct e2e_cache_ovs_flow *flow;
     size_t hash;
     int ret;
@@ -8934,19 +8935,22 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev,
         return;
     }
     HMAP_FOR_EACH (mt_counter_item, node, &flow->merged_counters) {
-        /* Get the counter item from the global map. */
-        mapped_counter_item = e2e_cache_counter_find(mt_counter_item->hash);
-        if (!mapped_counter_item) {
-            VLOG_ERR_RL(&rl, "Failed to get counter item for ufid "UUID_FMT,
-                        UUID_ARGS((struct uuid *) &flow->ufid));
-            continue;
-        }
         if (flow->offload_state == E2E_OL_STATE_FLOW) {
+            /* Get the counter item from the global map. */
+            mapped_counter_item =
+                e2e_cache_counter_find(mt_counter_item->hash);
+            if (OVS_UNLIKELY(!mapped_counter_item)) {
+                VLOG_ERR_RL(&rl, "Failed to get counter item for ufid "
+                            UUID_FMT, UUID_ARGS((struct uuid *) &flow->ufid));
+                continue;
+            }
+
             /* Get one of the merged flows using this counter. */
-            merged_flow =
-                CONTAINER_OF(ovs_list_front(&mapped_counter_item->merged_flows),
-                             struct e2e_cache_merged_flow,
-                             flow_counter_list);
+            merged_flow_node =
+                ovs_list_front(&mapped_counter_item->merged_flows);
+            merged_flow = CONTAINER_OF(merged_flow_node,
+                                       struct e2e_cache_merged_flow,
+                                       flow_counter_list);
             /* Query the counter. */
             ret = netdev_flow_get(netdev, match, actions, &merged_flow->ufid,
                                   &merged_stats, &merged_attr, buf);
@@ -8959,7 +8963,7 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev,
             stats->n_packets += merged_stats.n_packets;
             stats->used = MAX(stats->used, merged_stats.used);
         } else {
-            netdev_counter_query(netdev, mapped_counter_item->hash, now,
+            netdev_counter_query(netdev, mt_counter_item->hash, now,
                                  prev_now, stats);
         }
     }
