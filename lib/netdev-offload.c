@@ -884,6 +884,69 @@ netdev_is_offload_rebalance_policy_enabled(void)
     return netdev_offload_rebalance_policy;
 }
 
+bool
+netdev_is_flow_counter_key_zero(const struct flows_counter_key *k)
+{
+    size_t i;
+
+    for (i = 0; i < ARRAY_SIZE(k->ufid_key); i++) {
+        if (k->ufid_key[i].u64.hi != 0 || k->ufid_key[i].u64.lo != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+char*
+netdev_flow_counter_key_to_string(const struct flows_counter_key *k,
+                                  char *string, size_t sz)
+{
+    char *ptr = string;
+    size_t i;
+
+    if (OVS_UNLIKELY(!sz)) {
+        return string;
+    }
+    sz--;
+
+    if (OVS_LIKELY(sz)) {
+        *ptr = '[';
+        ptr++;
+        sz--;
+    } else {
+        goto out;
+    }
+    for (i = 0; i < ARRAY_SIZE(k->ufid_key); i++) {
+        const ovs_u128 *ufid = &k->ufid_key[i];
+        int n;
+
+        if (ufid->u64.hi == 0 && ufid->u64.lo == 0) {
+            break;
+        }
+        if (OVS_UNLIKELY(sz < 35)) {
+            goto out;
+        }
+        if (i > 0) {
+            *ptr = ',';
+            ptr++;
+            sz--;
+        }
+        n = sprintf(ptr, "0x%"PRIx64"%"PRIx64, ufid->u64.hi, ufid->u64.lo);
+        if (OVS_UNLIKELY(n <= 0)) {
+            goto out;
+        }
+        ptr += (unsigned int)n;
+        sz -= (unsigned int)n;
+    }
+    if (OVS_LIKELY(sz)) {
+        *ptr = ']';
+        ptr++;
+    }
+out:
+    *ptr = '\0';
+    return string;
+}
+
 static void
 netdev_ports_flow_init(void)
 {

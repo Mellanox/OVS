@@ -20,6 +20,7 @@
 
 #include "openvswitch/netdev.h"
 #include "openvswitch/types.h"
+#include "dp-packet.h"
 #include "ovs-thread.h"
 #include "packets.h"
 #include "flow.h"
@@ -28,8 +29,6 @@
 extern "C" {
 #endif
 
-struct dp_packet_batch;
-struct dp_packet;
 struct netdev_class;
 struct netdev_rxq;
 struct netdev_saved_flags;
@@ -68,6 +67,21 @@ struct netdev_flow_dump {
     odp_port_t port;
     bool terse;
     struct nl_dump *nl_dump;
+};
+
+#define OFFLOAD_FLOWS_COUNTER_KEY_SIZE  E2E_CACHE_MAX_TRACE
+
+/* This is a maximal required buffer size for output argument
+ * of netdev_flow_counter_key_to_string().
+ */
+#define OFFLOAD_FLOWS_COUNTER_KEY_STRING_SIZE \
+    (OFFLOAD_FLOWS_COUNTER_KEY_SIZE * 35 + 3)
+
+struct flows_counter_key {
+    union {
+        uintptr_t ptr_key;
+        ovs_u128  ufid_key[OFFLOAD_FLOWS_COUNTER_KEY_SIZE];
+    };
 };
 
 /* Flow offloading. */
@@ -147,6 +161,9 @@ bool netdev_is_offload_rebalance_policy_enabled(void);
 int netdev_flow_get_n_flows(struct netdev *netdev, uint64_t *n_flows);
 bool netdev_is_e2e_cache_enabled(void);
 uint32_t netdev_get_e2e_cache_size(void);
+bool netdev_is_flow_counter_key_zero(const struct flows_counter_key *);
+char *netdev_flow_counter_key_to_string(const struct flows_counter_key *,
+                                        char *, size_t);
 
 struct dpif_port;
 int netdev_ports_insert(struct netdev *, const char *dpif_type,
