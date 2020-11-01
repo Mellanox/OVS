@@ -9144,8 +9144,8 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev,
             stats->n_packets += merged_stats.n_packets;
             stats->used = MAX(stats->used, merged_stats.used);
         } else {
-            netdev_counter_query(netdev, mt_counter_item->hash, now,
-                                 prev_now, stats);
+            netdev_ct_counter_query(netdev, mt_counter_item->hash, now,
+                                    prev_now, stats);
         }
     }
     ovs_mutex_unlock(&flows_map_mutex);

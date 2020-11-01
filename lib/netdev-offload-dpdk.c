@@ -4701,11 +4701,11 @@ netdev_offload_dpdk_flow_dump_destroy(struct netdev_flow_dump *dump)
 }
 
 static int
-netdev_offload_dpdk_counter_query(struct netdev *netdev OVS_UNUSED,
-                                  uint32_t app_counter_id,
-                                  long long now,
-                                  long long prev_now,
-                                  struct dpif_flow_stats *stats)
+netdev_offload_dpdk_ct_counter_query(struct netdev *netdev OVS_UNUSED,
+                                     uint32_t app_counter_id,
+                                     long long now,
+                                     long long prev_now,
+                                     struct dpif_flow_stats *stats)
 {
     struct shared_age_ctx_data shared_age_ctx_data;
     struct context_data shared_age_id_ctx = {
@@ -4764,5 +4764,5 @@ const struct netdev_flow_api netdev_offload_dpdk = {
     .hw_offload_stats_get = netdev_offload_dpdk_hw_offload_stats_get,
     .flow_dump_create = netdev_offload_dpdk_flow_dump_create,
     .flow_dump_destroy = netdev_offload_dpdk_flow_dump_destroy,
-    .counter_query = netdev_offload_dpdk_counter_query,
+    .ct_counter_query = netdev_offload_dpdk_ct_counter_query,
 };
