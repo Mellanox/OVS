@@ -8020,9 +8020,10 @@ e2e_cache_populate_offload_item(struct dp_offload_thread_item *offload_item,
 static void
 e2e_cache_disassociate_counters(struct e2e_cache_merged_flow *merged_flow)
 {
-    struct e2e_cache_counter_item *counter_next, *counter_item;
+    struct e2e_cache_counter_item *counter_item;
     struct e2e_cache_ovs_flow *mt_flow;
     struct ovs_list *next_counter;
+    uint32_t counter_hash;
     uint16_t i;
 
     /* If flow_counter_list is empty this means e2e_cache_associate_counters
@@ -8036,8 +8037,16 @@ e2e_cache_disassociate_counters(struct e2e_cache_merged_flow *merged_flow)
     ovs_mutex_lock(&flows_map_mutex);
     for (i = 0; i < merged_flow->associated_flows_len; i++) {
         mt_flow = merged_flow->associated_flows[i].mt_flow;
-        HMAP_FOR_EACH_SAFE (counter_item, counter_next, node,
-                            &mt_flow->merged_counters) {
+        counter_hash = (mt_flow->offload_state == E2E_OL_STATE_FLOW)
+                       ? merged_flow->flows_counter
+                       : merged_flow->ct_counter;
+        HMAP_FOR_EACH_WITH_HASH (counter_item, node, counter_hash,
+                                 &mt_flow->merged_counters) {
+            if (counter_item->hash == counter_hash) {
+                break;
+            }
+        }
+        if (OVS_LIKELY(counter_item)) {
             hmap_remove(&mt_flow->merged_counters, &counter_item->node);
             free(counter_item);
         }
