@@ -440,14 +440,16 @@ struct dp_flow_offload_item {
     size_t actions_len;
 };
 
+union dp_offload_thread_data {
+    struct dp_flow_offload_item flow_offload;
+    struct ct_flow_offload_item ct_offload[CT_DIR_NUM];
+};
+
 struct dp_offload_thread_item {
     struct mpsc_queue_node node;
     int type;
     struct dp_netdev *dp;
-    union {
-        struct dp_flow_offload_item flow_offload_item;
-        struct ct_flow_offload_item ct_offload_item[CT_DIR_NUM];
-    };
+    union dp_offload_thread_data data[0];
 };
 
 struct dp_offload_thread {
@@ -976,10 +978,11 @@ dp_netdev_append_ct_offload(struct ct_flow_offload_item *offload)
 
     dp_netdev_offload_init();
 
-    offload_item = xzalloc(sizeof *offload_item);
+    offload_item = xzalloc(sizeof *offload_item +
+                           sizeof offload_item->data->ct_offload);
     offload_item->type = DP_CT_OFFLOAD_ITEM;
-    memcpy(offload_item->ct_offload_item, offload,
-           sizeof offload_item->ct_offload_item);
+    memcpy(offload_item->data, offload,
+           sizeof offload_item->data->ct_offload);
     offload_item->dp = offload->dp;
 
     /* Use a symmetrical ufid hash for the two CT directions,
@@ -2623,7 +2626,7 @@ static int
 mark_to_flow_disassociate(struct dp_offload_thread_item *offload_item)
 {
     const char *dpif_type_str = dpif_normalize_type(offload_item->dp->class->type);
-    struct dp_netdev_flow *flow = offload_item->flow_offload_item.flow;
+    struct dp_netdev_flow *flow = offload_item->data->flow_offload.flow;
     struct cmap_node *mark_node = CONST_CAST(struct cmap_node *,
                                              &flow->mark_node);
     unsigned int tid = netdev_offload_thread_id();
@@ -2722,11 +2725,12 @@ dp_netdev_alloc_flow_offload(struct dp_netdev_pmd_thread *pmd,
     struct dp_offload_thread_item *offload_item;
     struct dp_flow_offload_item *offload;
 
-    offload_item = xzalloc(sizeof *offload_item);
+    offload_item = xzalloc(sizeof *offload_item +
+                           sizeof offload_item->data->flow_offload);
     offload_item->dp = pmd->dp;
     offload_item->type = DP_FLOW_OFFLOAD_ITEM;
 
-    offload = &offload_item->flow_offload_item;
+    offload = &offload_item->data->flow_offload;
     offload->flow = flow;
     offload->op = op;
 
@@ -2739,7 +2743,7 @@ static void
 dp_netdev_flow_offload_free(struct dp_offload_thread_item *offload_item)
 {
     struct dp_flow_offload_item *flow_offload =
-                                            &offload_item->flow_offload_item;
+                                            &offload_item->data->flow_offload;
 
     free(flow_offload->actions);
     free(offload_item);
@@ -2756,7 +2760,7 @@ dp_netdev_offload_item_unref(struct dp_offload_thread_item *offload_item)
 {
     switch (offload_item->type) {
     case DP_FLOW_OFFLOAD_ITEM:
-        dp_netdev_flow_unref(offload_item->flow_offload_item.flow);
+        dp_netdev_flow_unref(offload_item->data->flow_offload.flow);
         ovsrcu_postpone(dp_netdev_flow_offload_free, offload_item);
         break;
     case DP_CT_OFFLOAD_ITEM:
@@ -2771,7 +2775,7 @@ static void
 dp_netdev_append_flow_offload(struct dp_flow_offload_item *offload)
 {
     struct dp_offload_thread_item *offload_item = CONTAINER_OF(offload,
-            struct dp_offload_thread_item, flow_offload_item);
+            struct dp_offload_thread_item, data);
     unsigned int i;
 
     dp_netdev_offload_init();
@@ -2800,7 +2804,7 @@ dp_netdev_flow_offload_del(struct dp_offload_thread_item *offload_item)
 static int
 dp_netdev_flow_offload_put(struct dp_offload_thread_item *offload_item)
 {
-    struct dp_flow_offload_item *offload = &offload_item->flow_offload_item;
+    struct dp_flow_offload_item *offload = &offload_item->data->flow_offload;
     struct dp_netdev_flow *flow = offload->flow;
     odp_port_t in_port = flow->flow.in_port.odp_port;
     const char *dpif_type_str = dpif_normalize_type(offload_item->dp->class->type);
@@ -3035,7 +3039,8 @@ static int
 dp_netdev_ct_offload_add(struct dp_offload_thread_item *offload_item, int dir)
 {
     const char *dpif_type_str = dpif_normalize_type(offload_item->dp->class->type);
-    struct ct_flow_offload_item offload = offload_item->ct_offload_item[dir];
+    struct ct_flow_offload_item *offload =
+                                &offload_item->data->ct_offload[dir];
     struct offload_info info = { .flow_mark = INVALID_FLOW_MARK, };
     struct nlattr *actions;
     struct netdev *port;
@@ -3043,14 +3048,14 @@ dp_netdev_ct_offload_add(struct dp_offload_thread_item *offload_item, int dir)
     struct ofpbuf buf;
     int ret;
 
-    port = netdev_ports_get(offload.odp_port, dpif_type_str);
+    port = netdev_ports_get(offload->odp_port, dpif_type_str);
     if (!port) {
         return -1;
     }
 
-    dp_netdev_fill_ct_match(&match, &offload);
+    dp_netdev_fill_ct_match(&match, offload);
     ofpbuf_init(&buf, 0);
-    dp_netdev_create_ct_actions(&buf, &offload);
+    dp_netdev_create_ct_actions(&buf, offload);
     actions = ofpbuf_at_assert(&buf, 0, sizeof(struct nlattr));
 
     ovs_rwlock_rdlock(&offload_item->dp->port_rwlock);
@@ -3071,7 +3076,7 @@ dp_netdev_ct_offload_add(struct dp_offload_thread_item *offload_item, int dir)
         odp_flow_key_from_mask(&odp_parms, &mask_buf);
 
         ds_put_cstr(&ds, "ct_add: ");
-        odp_format_ufid(&offload.ufid, &ds);
+        odp_format_ufid(&offload->ufid, &ds);
         ds_put_cstr(&ds, " ");
         odp_flow_format(key_buf.data, key_buf.size,
                         mask_buf.data, mask_buf.size,
@@ -3086,9 +3091,9 @@ dp_netdev_ct_offload_add(struct dp_offload_thread_item *offload_item, int dir)
 
         ds_destroy(&ds);
     }
-    ret = netdev_flow_put(port, &match, actions, buf.size, &offload.ufid, &info,
-                          NULL);
-    *offload.status = !ret;
+    ret = netdev_flow_put(port, &match, actions, buf.size, &offload->ufid,
+                          &info, NULL);
+    *offload->status = !ret;
     ovs_rwlock_unlock(&offload_item->dp->port_rwlock);
     netdev_close(port);
     ofpbuf_uninit(&buf);
@@ -3100,17 +3105,18 @@ static int
 dp_netdev_ct_offload_del(struct dp_offload_thread_item *offload_item, int dir)
 {
     const char *dpif_type_str = dpif_normalize_type(offload_item->dp->class->type);
-    struct ct_flow_offload_item offload = offload_item->ct_offload_item[dir];
+    struct ct_flow_offload_item *offload =
+                                &offload_item->data->ct_offload[dir];
     struct netdev *port;
     int ret;
 
-    port = netdev_ports_get(offload.odp_port, dpif_type_str);
+    port = netdev_ports_get(offload->odp_port, dpif_type_str);
     if (!port) {
         return -1;
     }
 
     ovs_rwlock_rdlock(&offload_item->dp->port_rwlock);
-    ret = netdev_flow_del(port, &offload.ufid, NULL);
+    ret = netdev_flow_del(port, &offload->ufid, NULL);
     ovs_rwlock_unlock(&offload_item->dp->port_rwlock);
     netdev_close(port);
 
@@ -3154,7 +3160,7 @@ dp_release_ctid(uint32_t ctid)
 static void
 dp_netdev_ct_offload_handle(struct dp_offload_thread_item *offload_item)
 {
-    struct ct_flow_offload_item *ct_offload = offload_item->ct_offload_item;
+    struct ct_flow_offload_item *ct_offload = offload_item->data->ct_offload;
     struct dp_offload_thread *ofl_thread;
     int ret[CT_DIR_NUM];
     const char *op;
@@ -3258,7 +3264,7 @@ dp_netdev_flow_offload_main(void *arg)
 
             if (offload_item->type == DP_FLOW_OFFLOAD_ITEM) {
                 struct dp_flow_offload_item *dp_offload =
-                        &offload_item->flow_offload_item;
+                        &offload_item->data->flow_offload;
 
                 switch (dp_offload->op) {
                 case DP_NETDEV_FLOW_OFFLOAD_OP_ADD:
