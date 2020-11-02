@@ -63,3 +63,7 @@ Change-Id=I1aa0fc6b4c3eb386b90800793ebb194820037638; subject=Update metadata; fe
 Change-Id=I70b11c545265e9377c0c032218137bb4d050c964; subject=dpif-netdev: Refactor CT offload handling; feature=dpdk; upstream_status=ignore; general=;
 Change-Id=I8cf164e992416ebf57b0e7f61745f2c5ba90044d; subject=conntrack: Sync CT offloads with refcount; feature=dpdk; upstream_status=ignore; general=;
 Change-Id=Ib7dee6b05710a253dd604d9917831fc932ae5e28; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I77ba3af40d33902b3307cb0f4cdc7f85b134d296; subject=netdev-dpdk: Remove usage of RTE_ETH_DEV_CLOSE_REMOVE flag.; feature=bp_2_14; upstream_status=ignore; general=;
+Change-Id=I2a31f769603052b465fa9f66f0e1a8ce1e7d434f; subject=netdev-offload-dpdk: Adapt IPv6 fragmentation API; feature=bp_2_14; upstream_status=ignore; general=;
+Change-Id=I4b95a877f743f617cfa02cae26f889daef2c2d4c; subject=netdev-dpdk-vdpa: ---TBD--- disable rte_eth_vhost_get_queue_event; feature=bp_2_14; upstream_status=ignore; general=;
+Change-Id=I496b4c4d42a003db852c6beb98446f24aaf7e604; subject=Update metadata - DPDK 20.11; feature=ofed_scripts; upstream_status=ignore; general=;

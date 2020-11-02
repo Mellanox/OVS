@@ -1,0 +1,2 @@
+sep=;
+Change-Id=I7361c7aa19a357a30d4c5ec26946b790d1f9a110; subject=ovs-lib: Handle daemon segfaults during exit.; feature=bp_2_14; upstream_status=ignore; general=;

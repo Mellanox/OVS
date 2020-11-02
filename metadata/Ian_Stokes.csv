@@ -1,0 +1,2 @@
+sep=;
+Change-Id=I496045f6da321cf34e48190875f3419d42b4cfc3; subject=DPDK: Remove support for vhost-user zero-copy.; feature=bp_2_14; upstream_status=ignore; general=;
