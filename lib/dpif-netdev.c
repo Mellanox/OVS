@@ -8067,6 +8067,14 @@ e2e_cache_disassociate_counters(struct e2e_cache_merged_flow *merged_flow)
     struct ovs_list *next_counter;
     uint16_t i;
 
+    /* If flow_counter_list is empty this means e2e_cache_associate_counters
+     * was not executed for this e2e_cache_merged_flow.
+     * In such case ct_counter_list must also empty.
+     */
+    if (OVS_UNLIKELY(ovs_list_is_empty(&merged_flow->flow_counter_list))) {
+        return;
+    }
+
     ovs_mutex_lock(&flows_map_mutex);
     for (i = 0; i < merged_flow->associated_flows_len; i++) {
         mt_flow = merged_flow->associated_flows[i].mt_flow;
@@ -8895,6 +8903,8 @@ e2e_cache_process_trace_info(struct dp_netdev *dp,
     if (OVS_UNLIKELY(!merged_flow)) {
         return -1;
     }
+    ovs_list_init(&merged_flow->flow_counter_list);
+    ovs_list_init(&merged_flow->ct_counter_list);
     for (i = 0; i < num_flows; i++) {
         ovs_list_init(&merged_flow->associated_flows[i].list);
     }
