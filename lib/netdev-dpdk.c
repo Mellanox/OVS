@@ -5379,6 +5379,9 @@ netdev_dpdk_get_netdev_by_devargs(const char *devargs)
         goto out;
     }
     dev = netdev_dpdk_lookup_by_port_id(port_id);
+    if (!dev) {
+        goto out;
+    }
     ovs_mutex_lock(&dev->mutex);
     netdev = &dev->up;
     netdev_ref(netdev);
