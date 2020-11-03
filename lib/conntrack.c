@@ -1555,6 +1555,7 @@ conntrack_offload_add_conn(struct conntrack *ct,
         flags |= conn->master_conn->offloads.flags;
     }
     if ((flags & CT_OFFLOAD_BOTH) == CT_OFFLOAD_BOTH) {
+        struct ovs_refcount *refcnt;
         ovs_u128 *ufid[CT_DIR_NUM];
 
         for (dir = 0; dir < CT_DIR_NUM; dir ++) {
@@ -1575,17 +1576,19 @@ conntrack_offload_add_conn(struct conntrack *ct,
                                          &item[CT_DIR_REP].ufid);
         *ufid[CT_DIR_INIT] = item[CT_DIR_INIT].ufid;
         *ufid[CT_DIR_REP] = item[CT_DIR_REP].ufid;
-        conn->offloads.refcnt = xmalloc(sizeof conn->offloads.refcnt);
-        ovs_refcount_init(conn->offloads.refcnt);
-        ovs_refcount_ref(conn->offloads.refcnt);
-        item[CT_DIR_INIT].refcnt = conn->offloads.refcnt;
+        refcnt = xmalloc(sizeof *refcnt);
+        ovs_refcount_init(refcnt);
+        ovs_refcount_ref(refcnt);
+        item[CT_DIR_INIT].refcnt = refcnt;
         item[CT_DIR_REP].refcnt = NULL;
         ct->offload_class->conn_add(item);
         conn->offloads.flags |= CT_OFFLOAD_SKIP;
         if (conn->nat_conn) {
             conn->nat_conn->offloads.flags |= CT_OFFLOAD_SKIP;
+            conn->offloads.refcnt = refcnt;
         } else if (conn->master_conn) {
             conn->master_conn->offloads.flags |= CT_OFFLOAD_SKIP;
+            conn->master_conn->offloads.refcnt = refcnt;
         }
     }
 }
