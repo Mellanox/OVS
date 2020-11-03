@@ -60,4 +60,6 @@ Change-Id=Id565c0ce656c853dbb7b46cb9c0a8ced96bb3ba7; subject=conntrack: Inroduce
 Change-Id=I8cf164e992416ebf57b0e7f61745f2c5ba90044d; subject=conntrack: Sync CT offloads with refcount; feature=bp_2_15; upstream_status=in_progress; general=;
 Change-Id=I70b11c545265e9377c0c032218137bb4d050c964; subject=dpif-netdev: Refactor CT offload handling; feature=bp_2_15; upstream_status=in_progress; general=;
 Change-Id=Ib7dee6b05710a253dd604d9917831fc932ae5e28; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
-Change-Id=I4b95a877f743f617cfa02cae26f889daef2c2d4c; subject=netdev-dpdk-vdpa: ---TBD--- disable rte_eth_vhost_get_queue_event; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I289c529e3c24746ad5457eaf526454abaf67fd27; subject=netdev-dpdk: Fix no port found with netdev_dpdk_get_netdev_by_devargs; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I39f9c8b232d154c4c9f1899bad995b727b78faf8; subject=conntrack: Fix refcount for NAT scenarios; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=Idfc9b6c32da70753db880458bcf19336016a5351; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
