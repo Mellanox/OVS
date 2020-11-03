@@ -67,3 +67,6 @@ Change-Id=I77ba3af40d33902b3307cb0f4cdc7f85b134d296; subject=netdev-dpdk: Remove
 Change-Id=I2a31f769603052b465fa9f66f0e1a8ce1e7d434f; subject=netdev-offload-dpdk: Adapt IPv6 fragmentation API; feature=bp_2_14; upstream_status=ignore; general=;
 Change-Id=I4b95a877f743f617cfa02cae26f889daef2c2d4c; subject=netdev-dpdk-vdpa: ---TBD--- disable rte_eth_vhost_get_queue_event; feature=bp_2_14; upstream_status=ignore; general=;
 Change-Id=I496b4c4d42a003db852c6beb98446f24aaf7e604; subject=Update metadata - DPDK 20.11; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I39f9c8b232d154c4c9f1899bad995b727b78faf8; subject=conntrack: Fix refcount for NAT scenarios; feature=dpdk; upstream_status=ignore; general=;
+Change-Id=I289c529e3c24746ad5457eaf526454abaf67fd27; subject=netdev-dpdk: Fix no port found with netdev_dpdk_get_netdev_by_devargs; feature=dpdk; upstream_status=ignore; general=;
+Change-Id=Idfc9b6c32da70753db880458bcf19336016a5351; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
