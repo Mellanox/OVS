@@ -103,8 +103,8 @@ struct offload_info {
     /* Indicates if flow is for e2e cache*/
     bool is_e2e_cache_flow;
 
-    uint32_t flows_counter;
-    uintptr_t ct_counter;
+    uintptr_t ct_counter_key;
+    struct flows_counter_key flows_counter_key;
 };
 
 DECLARE_EXTERN_PER_THREAD_DATA(unsigned int, netdev_offload_thread_id);

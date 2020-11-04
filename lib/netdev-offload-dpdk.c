@@ -67,6 +67,7 @@ struct act_resources {
     uint32_t ct_action_label_id;
     uint32_t ct_shared_age_id;
     uint32_t ctid;
+    uint32_t counter_id;
 };
 
 #define NUM_RTE_FLOWS_PER_PORT 2
@@ -1411,9 +1412,9 @@ static struct context_metadata shared_age_ctx_md = {
 static struct ds *
 dump_shared_age_id(struct ds *s, void *data)
 {
-    uintptr_t shared_age_id = *(uintptr_t *) data;
+    uintptr_t shared_age_key = *(uintptr_t *) data;
 
-    ds_put_format(s, "shared_age_id=0x%"PRIxPTR, shared_age_id);
+    ds_put_format(s, "shared_age_key=0x%"PRIxPTR, shared_age_key);
     return s;
 }
 
@@ -1520,14 +1521,14 @@ static struct context_metadata shared_age_id_md = {
 
 static int
 get_shared_age_id(struct netdev *netdev,
-                  uintptr_t app_counter_id,
+                  uintptr_t app_counter_key,
                   uint32_t *shared_age_id,
                   struct rte_flow_shared_action **shared_action)
 {
     const char *devargs = netdev_dpdk_get_port_devargs(netdev);
     struct shared_age_ctx_data shared_age_ctx_data;
     struct context_data shared_age_id_ctx = {
-        .data = &app_counter_id,
+        .data = &app_counter_key,
     };
     int ret;
 
@@ -1560,9 +1561,11 @@ put_shared_age_id(uint32_t shared_age_id)
 static struct ds *
 dump_counter_id(struct ds *s, void *data)
 {
-    uintptr_t ct_id_key = *(uintptr_t *) data;
+    struct flows_counter_key *key = (struct flows_counter_key *) data;
+    char buffer[OFFLOAD_FLOWS_COUNTER_KEY_STRING_SIZE];
 
-    ds_put_format(s, "CT id key = 0x%"PRIxPTR, ct_id_key);
+    netdev_flow_counter_key_to_string(key, buffer, sizeof buffer);
+    ds_put_format(s, "counter_id_key=%s", buffer);
     return s;
 }
 
@@ -1605,14 +1608,15 @@ static struct context_metadata counter_id_md = {
     .i2d_map = CMAP_INITIALIZER,
     .id_alloc = &counter_id_alloc,
     .id_free = &counter_id_free,
-    .data_size = sizeof(uintptr_t),
+    .data_size = sizeof(struct flows_counter_key),
 };
 
 static int
 get_ct_counter_id(uintptr_t ctid_key, uint32_t *ct_id)
 {
+    struct flows_counter_key counter_id_key = { .ptr_key = ctid_key, };
     struct context_data ct_id_ctx = {
-        .data = &ctid_key,
+        .data = &counter_id_key,
     };
 
     return get_context_data_id_by_data(&counter_id_md, &ct_id_ctx, NULL,
@@ -1623,6 +1627,24 @@ static void
 put_ct_counter_id(uint32_t ct_id)
 {
     put_context_data_by_id(&counter_id_md, NULL, ct_id);
+}
+
+static int
+get_flows_counter_id(struct flows_counter_key *counter_key,
+                     uint32_t *counter_id)
+{
+    struct context_data ct_id_ctx = {
+        .data = counter_key,
+    };
+
+    return get_context_data_id_by_data(&counter_id_md, &ct_id_ctx, NULL,
+                                       counter_id);
+}
+
+static void
+put_flows_counter_id(uint32_t counter_id)
+{
+    put_context_data_by_id(&counter_id_md, NULL, counter_id);
 }
 
 static void
@@ -1648,6 +1670,7 @@ put_action_resources(struct netdev *netdev,
     put_label_id(act_resources->ct_action_label_id);
     put_shared_age_id(act_resources->ct_shared_age_id);
     put_ct_counter_id(act_resources->ctid);
+    put_flows_counter_id(act_resources->counter_id);
 }
 
 /*
@@ -2241,9 +2264,9 @@ struct act_vars {
     struct flow_tnl tnl_mask;
     struct rte_flow_action_jump *jump;
     bool is_e2e_cache_flow;
-    uint32_t app_flows_counter;
-    uintptr_t app_ct_counter;
     struct rte_flow_action *shared;
+    uintptr_t ct_counter_key;
+    struct flows_counter_key flows_counter_key;
 };
 
 static int
@@ -2432,7 +2455,7 @@ create_offload_flow(struct netdev *netdev,
         struct rte_flow_shared_action *shared_action = NULL;
         uint32_t ct_shared_age_id;
 
-        if (get_shared_age_id(netdev, act_vars->app_ct_counter,
+        if (get_shared_age_id(netdev, act_vars->ct_counter_key,
                               &ct_shared_age_id, &shared_action)) {
             goto err;
         }
@@ -3340,23 +3363,30 @@ netdev_offload_dpdk_mark_rss(struct flow_patterns *patterns,
     return flow_item.rte_flow[0];
 }
 
-static void
+static int
 add_count_action(struct flow_actions *actions,
-                 struct act_vars *act_vars)
+                 struct act_vars *act_vars,
+                 struct act_resources *act_resources)
 {
     struct rte_flow_action_count *count = xzalloc(sizeof *count);
 
-    if (act_vars->is_e2e_cache_flow && act_vars->app_flows_counter) {
+    if (act_vars->is_e2e_cache_flow &&
+        !netdev_is_flow_counter_key_zero(&act_vars->flows_counter_key)) {
+        if (get_flows_counter_id(&act_vars->flows_counter_key, &count->id)) {
+            free(count);
+            return -1;
+        }
         count->shared = 1;
-        count->id = act_vars->app_flows_counter;
+        act_resources->counter_id = count->id;
     }
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_COUNT, count);
 
-    if (act_vars->is_e2e_cache_flow && act_vars->app_ct_counter) {
+    if (act_vars->is_e2e_cache_flow && act_vars->ct_counter_key) {
         act_vars->shared =
             add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SHARED,
                             act_vars->shared);
     }
+    return 0;
 }
 
 static int
@@ -4149,7 +4179,9 @@ parse_flow_actions(struct netdev *netdev,
         act_vars->recirc_id == 0) {
         add_vxlan_decap_action(actions);
     }
-    add_count_action(actions, act_vars);
+    if (add_count_action(actions, act_vars, act_resources)) {
+        return -1;
+    }
     NL_ATTR_FOR_EACH_UNSAFE (nla, left, nl_actions, nl_actions_len) {
         if (nl_attr_type(nla) == OVS_ACTION_ATTR_OUTPUT) {
             if (add_output_action(netdev, actions, nla)) {
@@ -4157,7 +4189,9 @@ parse_flow_actions(struct netdev *netdev,
             }
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_DROP) {
             free_flow_actions(actions, true);
-            add_count_action(actions, act_vars);
+            if (add_count_action(actions, act_vars, act_resources)) {
+                return -1;
+            }
             add_flow_action(actions, RTE_FLOW_ACTION_TYPE_DROP, NULL);
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_SET ||
                    nl_attr_type(nla) == OVS_ACTION_ATTR_SET_MASKED) {
@@ -4347,8 +4381,9 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
     int ret;
 
     act_vars.is_e2e_cache_flow = info->is_e2e_cache_flow;
-    act_vars.app_flows_counter = info->flows_counter;
-    act_vars.app_ct_counter = info->ct_counter;
+    act_vars.ct_counter_key = info->ct_counter_key;
+    memcpy(&act_vars.flows_counter_key, &info->flows_counter_key,
+           sizeof info->flows_counter_key);
     ret = parse_flow_match(netdev, &patterns, match, &act_resources,
                            &act_vars);
     if (ret) {
@@ -4702,14 +4737,14 @@ netdev_offload_dpdk_flow_dump_destroy(struct netdev_flow_dump *dump)
 
 static int
 netdev_offload_dpdk_ct_counter_query(struct netdev *netdev OVS_UNUSED,
-                                     uintptr_t app_counter_id,
+                                     uintptr_t counter_key,
                                      long long now,
                                      long long prev_now,
                                      struct dpif_flow_stats *stats)
 {
     struct shared_age_ctx_data shared_age_ctx_data;
     struct context_data shared_age_id_ctx = {
-        .data = &app_counter_id,
+        .data = &counter_key,
     };
     struct rte_flow_query_age query_age;
     struct netdev *shared_age_netdev;
@@ -4721,7 +4756,7 @@ netdev_offload_dpdk_ct_counter_query(struct netdev *netdev OVS_UNUSED,
     if (get_context_data_id_by_data(&shared_age_id_md, &shared_age_id_ctx,
                                     NULL, &shared_age_id)) {
         VLOG_ERR_RL(&rl, "Could not get shared age id for "
-                    "app_counter_id=0x%"PRIxPTR, app_counter_id);
+                    "counter_key=0x%"PRIxPTR, counter_key);
         return -1;
     }
     ret = get_context_data_by_id(&shared_age_ctx_md, shared_age_id,

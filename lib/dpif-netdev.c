@@ -446,8 +446,8 @@ struct dp_flow_offload_item {
     struct match match;
     struct nlattr *actions;
     size_t actions_len;
-    uint32_t flows_counter;
-    uintptr_t ct_counter;
+    uintptr_t ct_counter_key;
+    struct flows_counter_key flows_counter_key;
 };
 
 union dp_offload_thread_data {
@@ -3051,8 +3051,9 @@ dp_netdev_flow_offload_put(struct dp_offload_thread_item *offload_item)
 
     info.flow_mark = mark;
     info.is_e2e_cache_flow = is_e2e_cache_flow;
-    info.flows_counter = offload->flows_counter;
-    info.ct_counter = offload->ct_counter;
+    info.ct_counter_key = offload->ct_counter_key;
+    memcpy(&info.flows_counter_key, &offload->flows_counter_key,
+           sizeof offload->flows_counter_key);
 
     port = netdev_ports_get(in_port, dpif_type_str);
     if (!port) {
@@ -8160,7 +8161,6 @@ e2e_cache_associate_counters(struct e2e_cache_merged_flow *merged_flow,
     flows_counter_key_hash = hash_bytes(&merged_flow->flows_counter_key,
                                         sizeof merged_flow->flows_counter_key,
                                         0);
-
     ovs_mutex_lock(&flows_map_mutex);
 
     for (mt_index = 0; mt_index < trc_info->num_elements; mt_index++) {
@@ -8332,10 +8332,11 @@ e2e_cache_merged_flow_offload_put(struct dp_netdev *dp,
     memcpy(flow_offload->actions, merged_flow->actions,
            merged_flow->actions_size);
     flow_offload->actions_len = merged_flow->actions_size;
-    offload_item->data->flow_offload.flows_counter =
-        hash_bytes(&merged_flow->flows_counter_key.ufid_key[0],
-                   sizeof merged_flow->flows_counter_key, 0);
-    offload_item->data->flow_offload.ct_counter = merged_flow->ct_counter_key;
+    offload_item->data->flow_offload.ct_counter_key =
+        merged_flow->ct_counter_key;
+    memcpy(&offload_item->data->flow_offload.flows_counter_key,
+           &merged_flow->flows_counter_key,
+           sizeof offload_item->data->flow_offload.flows_counter_key);
     err = dp_netdev_flow_offload_put(offload_item);
     free(flow_offload->actions);
     free(offload_item);
