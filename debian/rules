@@ -25,12 +25,12 @@ else
 PARALLEL =
 endif
 
-ifneq (,$(filter static,$(DEB_BUILD_OPTIONS)))
-BUILD_TYPE := --disable-shared --enable-static
-EXCLUDE := --exclude .so.* --exclude .so
-else
+ifneq (,$(filter shared,$(DEB_BUILD_OPTIONS)))
 BUILD_TYPE := --enable-shared --disable-static
 EXCLUDE := --exclude .a
+else
+BUILD_TYPE := --disable-shared --enable-static
+EXCLUDE := --exclude .so.* --exclude .so
 endif
 
 %:
@@ -39,7 +39,13 @@ endif
 override_dh_autoreconf:
 	dh_autoreconf --as-needed
 
-WITH_DPDK ?= $(shell dirname /opt/mellanox/dpdk/share/dpdk/*/.config)
+# WITH_DPDK is set only if /opt/mellanox/dpdk exists.
+DPDK_INSTALL ?= /opt/mellanox/dpdk
+ifneq (,$(shell readlink -e $(DPDK_INSTALL)))
+WITH_DPDK := --with-dpdk=$(DPDK_INSTALL)
+DPDK_PKGCONFIG := $(shell find $(DPDK_INSTALL) -type f -name libdpdk.pc -exec dirname {} \;)
+DPDK_LIB_DIR := $(shell PKG_CONFIG_PATH=$(DPDK_PKGCONFIG) pkg-config --libs-only-L libdpdk)
+endif
 
 BACKUP_PATH=debian/backup
 override_dh_auto_configure:
@@ -57,7 +63,7 @@ override_dh_auto_configure:
 	done
 	dh_auto_configure -- --enable-ssl \
 		$(BUILD_TYPE) \
-		--with-dpdk=$(WITH_DPDK) \
+		$(WITH_DPDK) \
 		$(DATAPATH_CONFIGURE_OPTS)
 
 # No need for 'make clean': debian/clean drops that
@@ -131,8 +137,8 @@ override_dh_install-indep:
 override_dh_missing:
 	dh_missing --fail-missing $(EXCLUDE)
 
-override_dh_shlibdebs:
-	dh_shlibdeps $@ -l$(WITH_DPDK)/lib
+override_dh_shlibdeps:
+	dh_shlibdeps $(shell echo '$(DPDK_LIB_DIR)' | sed 's;^-L;-l;')
 
 override_dh_installinit:
 	dh_installinit -R

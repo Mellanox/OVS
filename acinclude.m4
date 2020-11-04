@@ -346,51 +346,33 @@ AC_DEFUN([OVS_CHECK_DPDK], [
     DPDKLIB_FOUND=false
   else
     AC_MSG_RESULT([yes])
+    if test -d "$with_dpdk"; then
+       DPDK_INSTALL="$with_dpdk"
+    elif test -d "/opt/mellanox/dpdk"; then
+       DPDK_INSTALL=/opt/mellanox/dpdk
+    else
+       DPDK_INSTALL=/usr/local
+    fi
+    DPDK_PKGCONFIG="$(find ${DPDK_INSTALL} -type f -name libdpdk.pc -exec dirname {} \;)"
+    export PKG_CONFIG_PATH=${DPDK_PKGCONFIG}:${PKG_CONFIG_PATH}
     case "$with_dpdk" in
-      "shared" | "static" | "yes")
-        DPDK_AUTO_DISCOVER="true"
-        case "$with_dpdk" in
-          "shared" | "yes")
-             PKG_CHECK_MODULES([DPDK], [libdpdk], [
-                 DPDK_INCLUDE="$DPDK_CFLAGS"
-                 DPDK_LIB="$DPDK_LIBS"], [
-                 DPDK_INCLUDE="-I/usr/local/include/dpdk -I/usr/include/dpdk"
-                 DPDK_LIB="-ldpdk"])
-                 ;;
-           "static")
-             PKG_CHECK_MODULES_STATIC([DPDK], [libdpdk], [
-                 DPDK_INCLUDE="$DPDK_CFLAGS"
-                 DPDK_LIB="$DPDK_LIBS"], [
-                 DPDK_INCLUDE="-I/usr/local/include/dpdk -I/usr/include/dpdk"
-                 DPDK_LIB="-ldpdk"])
-                ;;
-        esac
-        ;;
-      *)
-        DPDK_AUTO_DISCOVER="false"
-        DPDK_INCLUDE_PATH="$with_dpdk/include"
-        # If 'with_dpdk' is passed install directory, point to headers
-        # installed in $DESTDIR/$prefix/include/dpdk
-        if test -e "$DPDK_INCLUDE_PATH/rte_config.h"; then
-           DPDK_INCLUDE="-I$DPDK_INCLUDE_PATH"
-        elif test -e "$DPDK_INCLUDE_PATH/dpdk/rte_config.h"; then
-           DPDK_INCLUDE="-I$DPDK_INCLUDE_PATH/dpdk"
-        fi
-        DPDK_LIB_DIR="$with_dpdk/lib"
-        DPDK_LIB="-ldpdk"
-        ;;
+       *)
+         PKG_CHECK_MODULES_STATIC([DPDK], [libdpdk], [],
+             [AC_MSG_ERROR([unable to use libdpdk.pc for static build])])
+             ;;
+       "shared")
+         PKG_CHECK_MODULES([DPDK], [libdpdk], [],
+             [AC_MSG_ERROR([unable to use libdpdk.pc for shared build])])
+             ;;
     esac
 
     ovs_save_CFLAGS="$CFLAGS"
     ovs_save_LDFLAGS="$LDFLAGS"
-    CFLAGS="$CFLAGS $DPDK_INCLUDE"
-    if test "$DPDK_AUTO_DISCOVER" = "false"; then
-      LDFLAGS="$LDFLAGS -L${DPDK_LIB_DIR}"
-    fi
+    CFLAGS="$CFLAGS $DPDK_CFLAGS"
 
-    AC_CHECK_HEADERS([rte_config.h], [], [
-      AC_MSG_ERROR([unable to find rte_config.h in $with_dpdk])
-    ], [AC_INCLUDES_DEFAULT])
+    AC_COMPILE_IFELSE(
+      [AC_LANG_PROGRAM([#include <rte_config.h>], [const char *x = RTE_VER_PREFIX ;])],
+      [], [AC_MSG_ERROR([unable to include rte_config.h from '$DPDK_CFLAGS'])])
 
     AC_CHECK_DECLS([RTE_LIBRTE_VHOST_NUMA, RTE_EAL_NUMA_AWARE_HUGEPAGES], [
       OVS_FIND_DEPENDENCY([get_mempolicy], [numa], [libnuma])
@@ -430,7 +412,7 @@ AC_DEFUN([OVS_CHECK_DPDK], [
     OVS_FIND_DEPENDENCY([dlopen], [dl], [libdl])
 
     AC_MSG_CHECKING([whether linking with dpdk works])
-    LIBS="$DPDK_LIB $LIBS"
+    LIBS="$DPDK_LIBS $LIBS"
     AC_LINK_IFELSE(
       [AC_LANG_PROGRAM([#include <rte_config.h>
                         #include <rte_eal.h>],
@@ -439,22 +421,15 @@ AC_DEFUN([OVS_CHECK_DPDK], [
       [AC_MSG_RESULT([yes])
        DPDKLIB_FOUND=true],
       [AC_MSG_RESULT([no])
-       if test "$DPDK_AUTO_DISCOVER" = "true"; then
-         AC_MSG_ERROR(m4_normalize([
-            Could not find DPDK library in default search path, update
-            PKG_CONFIG_PATH for pkg-config to find the .pc file in
-            non-standard location]))
-       else
-         AC_MSG_ERROR([Could not find DPDK libraries in $DPDK_LIB_DIR])
-       fi
+       AC_MSG_ERROR(m4_normalize([
+          Could not find DPDK library in default search path, update
+          PKG_CONFIG_PATH for pkg-config to find the .pc file in
+          non-standard location]))
       ])
 
     CFLAGS="$ovs_save_CFLAGS"
     LDFLAGS="$ovs_save_LDFLAGS"
-    if test "$DPDK_AUTO_DISCOVER" = "false"; then
-      OVS_LDFLAGS="$OVS_LDFLAGS -L$DPDK_LIB_DIR"
-    fi
-    OVS_CFLAGS="$OVS_CFLAGS $DPDK_INCLUDE"
+    OVS_CFLAGS="$OVS_CFLAGS $DPDK_CFLAGS"
     OVS_ENABLE_OPTION([-mssse3])
 
     # DPDK pmd drivers are not linked unless --whole-archive is used.
@@ -470,9 +445,9 @@ AC_DEFUN([OVS_CHECK_DPDK], [
     # will already have flagged just the right set of libs with
     # --whole-archive - in those cases do not wrap it once more.
     if [[ "$pkg_failed" != "no" ]];then
-      DPDK_vswitchd_LDFLAGS=-Wl,--whole-archive,$DPDK_LIB,--no-whole-archive
+      DPDK_vswitchd_LDFLAGS=-Wl,--whole-archive,$DPDK_LIBS,--no-whole-archive
     else
-      DPDK_vswitchd_LDFLAGS=`python3 ${srcdir}/python/build/pkgcfg.py $DPDK_LIB`
+      DPDK_vswitchd_LDFLAGS=`python3 ${srcdir}/python/build/pkgcfg.py $DPDK_LIBS`
     fi
 
     AC_SUBST([DPDK_vswitchd_LDFLAGS])
