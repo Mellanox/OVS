@@ -2258,7 +2258,7 @@ struct act_vars {
     struct rte_flow_action_jump *jump;
     bool is_e2e_cache_flow;
     uint32_t app_flows_counter;
-    uint32_t app_ct_counter;
+    uintptr_t app_ct_counter;
     struct rte_flow_action *shared;
 };
 
