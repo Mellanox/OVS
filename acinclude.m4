@@ -346,13 +346,22 @@ AC_DEFUN([OVS_CHECK_DPDK], [
     DPDKLIB_FOUND=false
   else
     AC_MSG_RESULT([yes])
+    if test -d "$with_dpdk"; then
+       DPDK_INSTALL="$with_dpdk"
+    elif test -d "/opt/mellanox/dpdk"; then
+       DPDK_INSTALL=/opt/mellanox/dpdk
+    else
+       DPDK_INSTALL=/usr/local
+    fi
+    DPDK_PKGCONFIG="$(find ${DPDK_INSTALL} -type f -name libdpdk.pc -exec dirname {} \;)"
+    export PKG_CONFIG_PATH=${DPDK_PKGCONFIG}:${PKG_CONFIG_PATH}
     case "$with_dpdk" in
       "shared")
           PKG_CHECK_MODULES([DPDK], [libdpdk], [
               DPDK_INCLUDE="$DPDK_CFLAGS"
               DPDK_LIB="$DPDK_LIBS"])
               ;;
-      "static" | "yes")
+      *)
           PKG_CHECK_MODULES_STATIC([DPDK], [libdpdk], [
               DPDK_INCLUDE="$DPDK_CFLAGS"
               DPDK_LIB="$DPDK_LIBS"])
@@ -383,9 +392,9 @@ AC_DEFUN([OVS_CHECK_DPDK], [
     ovs_save_LDFLAGS="$LDFLAGS"
     CFLAGS="$CFLAGS $DPDK_INCLUDE"
 
-    AC_CHECK_HEADERS([rte_config.h], [], [
-      AC_MSG_ERROR([unable to find rte_config.h in $with_dpdk])
-    ], [AC_INCLUDES_DEFAULT])
+    AC_COMPILE_IFELSE(
+      [AC_LANG_PROGRAM([#include <rte_config.h>], [const char *x = RTE_VER_PREFIX ;])],
+      [], [AC_MSG_ERROR([unable to include rte_config.h from '$DPDK_INCLUDE'])])
 
     AC_CHECK_DECLS([RTE_LIBRTE_VHOST_NUMA, RTE_EAL_NUMA_AWARE_HUGEPAGES], [
       OVS_FIND_DEPENDENCY([get_mempolicy], [numa], [libnuma])
