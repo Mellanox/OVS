@@ -910,12 +910,12 @@ struct e2e_cache_merged_flow {
     struct nlattr *actions;
     uint16_t actions_size;
     uint16_t associated_flows_len;
-    uint32_t flows_counter;
-    uintptr_t ct_counter;
     struct ovs_list flow_counter_list; /* Anchor for list of merged flows
                                           using the same flow counter. */
     struct ovs_list ct_counter_list; /* Anchor for list of merged flows
                                         using the same CT counter. */
+    uintptr_t ct_counter_key;
+    struct flows_counter_key flows_counter_key;
     struct match match;
     struct flow2flow_item associated_flows[0];
 };
@@ -7888,9 +7888,6 @@ static inline int
 e2e_cache_counter_cmp_key(const struct e2e_cache_counter_item *item,
                           const struct flows_counter_key *key)
 {
-    if (!key) {
-        return 0;
-    }
     if (item->is_ct) {
         /* In case of CT compare only first 128 bits where 'ptr_key'
          * resides. It's not enough to compare only 'ptr_key' - second
@@ -7930,11 +7927,7 @@ e2e_cache_counter_alloc(const struct flows_counter_key *key, size_t hash,
     item->hash = hash;
     item->is_ct = is_ct;
     ovs_list_init(&item->merged_flows);
-    if (key) {
-        memcpy(&item->key, key, sizeof *key);
-    } else {
-        memset(&item->key, 0, sizeof *key);
-    }
+    memcpy(&item->key, key, sizeof *key);
     return item;
 }
 
@@ -8124,10 +8117,12 @@ e2e_cache_populate_offload_item(struct dp_offload_thread_item *offload_item,
 static void
 e2e_cache_disassociate_counters(struct e2e_cache_merged_flow *merged_flow)
 {
+    size_t counter_hash, ct_counter_hash, flows_counter_hash;
+    struct flows_counter_key counter_key_on_stack;
+    const struct flows_counter_key *counter_key;
     struct e2e_cache_counter_item *counter_item;
     struct e2e_cache_ovs_flow *mt_flow;
     struct ovs_list *next_counter;
-    size_t counter_hash;
     uint16_t i;
 
     /* If flow_counter_list is empty this means e2e_cache_associate_counters
@@ -8138,16 +8133,27 @@ e2e_cache_disassociate_counters(struct e2e_cache_merged_flow *merged_flow)
         return;
     }
 
+    memset(&counter_key_on_stack, 0, sizeof counter_key_on_stack);
+    ct_counter_hash = merged_flow->ct_counter_key;
+    counter_key_on_stack.ptr_key = ct_counter_hash;
+    flows_counter_hash = hash_bytes(&merged_flow->flows_counter_key,
+                                    sizeof merged_flow->flows_counter_key,
+                                    0);
+
     ovs_mutex_lock(&flows_map_mutex);
     for (i = 0; i < merged_flow->associated_flows_len; i++) {
         mt_flow = merged_flow->associated_flows[i].mt_flow;
-        counter_hash = (mt_flow->offload_state == E2E_OL_STATE_FLOW)
-                       ? merged_flow->flows_counter
-                       : merged_flow->ct_counter;
+        if (mt_flow->offload_state == E2E_OL_STATE_FLOW) {
+            counter_hash = flows_counter_hash;
+            counter_key = &merged_flow->flows_counter_key;
+        } else {
+            counter_hash = ct_counter_hash;
+            counter_key = &counter_key_on_stack;
+        }
         HMAP_FOR_EACH_WITH_HASH (counter_item, node, counter_hash,
                                  &mt_flow->merged_counters) {
             if (counter_item->hash == counter_hash &&
-                !e2e_cache_counter_cmp_key(counter_item, NULL)) {
+                !e2e_cache_counter_cmp_key(counter_item, counter_key)) {
                 break;
             }
         }
@@ -8182,11 +8188,20 @@ e2e_cache_associate_counters(struct e2e_cache_merged_flow *merged_flow,
                              struct e2e_cache_ovs_flow *mt_flows[],
                              const struct e2e_cache_trace_info *trc_info)
 {
+    size_t counter_hash, ct_counter_key_hash, flows_counter_key_hash;
+    struct flows_counter_key counter_key_on_stack;
+    const struct flows_counter_key *counter_key;
     struct e2e_cache_counter_item *counter_item;
     uint16_t mt_index, flows_index = 0;
-    size_t counter_hash;
 
     BUILD_ASSERT_DECL(sizeof(size_t) >= sizeof(uintptr_t));
+
+    memset(&counter_key_on_stack, 0, sizeof counter_key_on_stack);
+    ct_counter_key_hash = merged_flow->ct_counter_key;
+    counter_key_on_stack.ptr_key = ct_counter_key_hash;
+    flows_counter_key_hash = hash_bytes(&merged_flow->flows_counter_key,
+                                        sizeof merged_flow->flows_counter_key,
+                                        0);
 
     ovs_mutex_lock(&flows_map_mutex);
 
@@ -8195,15 +8210,17 @@ e2e_cache_associate_counters(struct e2e_cache_merged_flow *merged_flow,
         bool counter_found = false;
 
         if (is_ct) {
-            counter_hash = merged_flow->ct_counter;
+            counter_key = &counter_key_on_stack;
+            counter_hash = ct_counter_key_hash;
         } else {
-            counter_hash = merged_flow->flows_counter;
+            counter_key = &merged_flow->flows_counter_key;
+            counter_hash = flows_counter_key_hash;
         }
         /* Search if this counter is already used by this flow. */
         HMAP_FOR_EACH_WITH_HASH (counter_item, node, counter_hash,
                                  &mt_flows[flows_index]->merged_counters) {
             if (counter_item->hash == counter_hash &&
-                !e2e_cache_counter_cmp_key(counter_item, NULL)) {
+                !e2e_cache_counter_cmp_key(counter_item, counter_key)) {
                 if (OVS_UNLIKELY(counter_item->is_ct != is_ct)) {
                     OVS_NOT_REACHED();
                 }
@@ -8213,7 +8230,8 @@ e2e_cache_associate_counters(struct e2e_cache_merged_flow *merged_flow,
         }
         /* If this counter is not in use by this flow, add it. */
         if (!counter_found) {
-            counter_item = e2e_cache_counter_alloc(NULL, counter_hash, is_ct);
+            counter_item = e2e_cache_counter_alloc(counter_key, counter_hash,
+                                                   is_ct);
             hmap_insert(&mt_flows[flows_index]->merged_counters,
                         &counter_item->node, counter_hash);
         }
@@ -8221,10 +8239,12 @@ e2e_cache_associate_counters(struct e2e_cache_merged_flow *merged_flow,
     }
 
     /* Search for an already existing CT counter item, or create if not. */
-    counter_hash = merged_flow->ct_counter;
-    counter_item = e2e_cache_counter_find(counter_hash, NULL);
+    counter_hash = ct_counter_key_hash;
+    counter_key = &counter_key_on_stack;
+    counter_item = e2e_cache_counter_find(counter_hash, counter_key);
     if (!counter_item) {
-        counter_item = e2e_cache_counter_alloc(NULL, counter_hash, true);
+        counter_item = e2e_cache_counter_alloc(counter_key, counter_hash,
+                                               true);
         hmap_insert(&counter_map, &counter_item->node, counter_hash);
     }
     /* Add the merged flow to the counter item. */
@@ -8232,10 +8252,12 @@ e2e_cache_associate_counters(struct e2e_cache_merged_flow *merged_flow,
                        &merged_flow->ct_counter_list);
 
     /* Search for an already existing flows counter item, or create if not. */
-    counter_hash = merged_flow->flows_counter;
-    counter_item = e2e_cache_counter_find(counter_hash, NULL);
+    counter_hash = flows_counter_key_hash;
+    counter_key = &merged_flow->flows_counter_key;
+    counter_item = e2e_cache_counter_find(counter_hash, counter_key);
     if (!counter_item) {
-        counter_item = e2e_cache_counter_alloc(NULL, counter_hash, false);
+        counter_item = e2e_cache_counter_alloc(counter_key, counter_hash,
+                                               false);
         hmap_insert(&counter_map, &counter_item->node, counter_hash);
     }
     /* Add the merged flow to the counter item. */
@@ -8277,12 +8299,12 @@ e2e_cache_calc_counters(struct e2e_cache_merged_flow *merged_flow,
                         struct e2e_cache_ovs_flow *mt_flows[],
                         const struct e2e_cache_trace_info *trc_info)
 {
-    uintptr_t ptr, ct_counter = UINTPTR_MAX;
+    uintptr_t ptr, ct_counter_key = UINTPTR_MAX;
     uint16_t mt_index, flows_index = 0;
-    ovs_u128 flow_ufids[E2E_CACHE_MAX_TRACE];
 
-    merged_flow->ct_counter = 0;
-    memset(flow_ufids, 0, sizeof flow_ufids);
+    merged_flow->ct_counter_key = 0;
+    memset(&merged_flow->flows_counter_key, 0,
+           sizeof merged_flow->flows_counter_key);
 
     for (mt_index = 0; mt_index < trc_info->num_elements; mt_index++) {
         if (trc_info->e2e_trace_ct_ufids & (1 << mt_index)) {
@@ -8294,20 +8316,21 @@ e2e_cache_calc_counters(struct e2e_cache_merged_flow *merged_flow,
              * for all CT in the trace.
              */
             ptr = (uintptr_t) mt_flows[mt_index];
-            if (ptr < ct_counter) {
-                ct_counter = ptr;
+            if (ptr < ct_counter_key) {
+                ct_counter_key = ptr;
             }
             ptr = (uintptr_t) mt_flows[mt_index - 1];
-            if (ptr < ct_counter) {
-                ct_counter = ptr;
+            if (ptr < ct_counter_key) {
+                ct_counter_key = ptr;
             }
         } else {
-            flow_ufids[flows_index++] = trc_info->ufids[mt_index];
+            merged_flow->flows_counter_key.ufid_key[flows_index++] =
+                trc_info->ufids[mt_index];
         }
     }
-    merged_flow->flows_counter = hash_bytes(flow_ufids, sizeof flow_ufids, 0);
+
     if (trc_info->e2e_trace_ct_ufids) {
-        merged_flow->ct_counter = ct_counter;
+        merged_flow->ct_counter_key = ct_counter_key;
     }
 }
 
@@ -8351,8 +8374,10 @@ e2e_cache_merged_flow_offload_put(struct dp_netdev *dp,
     memcpy(flow_offload->actions, merged_flow->actions,
            merged_flow->actions_size);
     flow_offload->actions_len = merged_flow->actions_size;
-    offload_item->data->flow_offload.flows_counter = merged_flow->flows_counter;
-    offload_item->data->flow_offload.ct_counter = merged_flow->ct_counter;
+    offload_item->data->flow_offload.flows_counter =
+        hash_bytes(&merged_flow->flows_counter_key.ufid_key[0],
+                   sizeof merged_flow->flows_counter_key, 0);
+    offload_item->data->flow_offload.ct_counter = merged_flow->ct_counter_key;
     err = dp_netdev_flow_offload_put(offload_item);
     free(flow_offload->actions);
     free(offload_item);
@@ -9208,7 +9233,7 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev,
     struct dpif_flow_attrs merged_attr;
     struct ovs_list *merged_flow_node;
     struct e2e_cache_ovs_flow *flow;
-    size_t hash;
+    uint32_t hash;
     int ret;
 
     hash = hash_bytes(mt_ufid, sizeof *mt_ufid, 0);
@@ -9223,7 +9248,8 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev,
         if (flow->offload_state == E2E_OL_STATE_FLOW) {
             /* Get the counter item from the global map. */
             mapped_counter_item =
-                e2e_cache_counter_find(mt_counter_item->hash, NULL);
+                e2e_cache_counter_find(mt_counter_item->hash,
+                                       &mt_counter_item->key);
             if (OVS_UNLIKELY(!mapped_counter_item)) {
                 VLOG_ERR_RL(&rl, "Failed to get counter item for ufid "
                             UUID_FMT, UUID_ARGS((struct uuid *) &flow->ufid));
@@ -9248,8 +9274,8 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev,
             stats->n_packets += merged_stats.n_packets;
             stats->used = MAX(stats->used, merged_stats.used);
         } else {
-            netdev_ct_counter_query(netdev, mt_counter_item->hash, now,
-                                    prev_now, stats);
+            netdev_ct_counter_query(netdev, mt_counter_item->key.ptr_key,
+                                    now, prev_now, stats);
         }
     }
     ovs_mutex_unlock(&flows_map_mutex);
