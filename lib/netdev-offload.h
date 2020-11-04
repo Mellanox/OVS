@@ -104,7 +104,7 @@ struct offload_info {
     bool is_e2e_cache_flow;
 
     uint32_t flows_counter;
-    uint32_t ct_counter;
+    uintptr_t ct_counter;
 };
 
 DECLARE_EXTERN_PER_THREAD_DATA(unsigned int, netdev_offload_thread_id);
@@ -148,8 +148,8 @@ int netdev_flow_del(struct netdev *, const ovs_u128 *,
                     struct dpif_flow_stats *);
 int netdev_hw_offload_stats_get(struct netdev *, uint64_t *counters);
 int netdev_init_flow_api(struct netdev *);
-int netdev_ct_counter_query(struct netdev *, uint32_t, long long, long long,
-                            struct dpif_flow_stats *);
+int netdev_ct_counter_query(struct netdev *, uintptr_t key, long long,
+                            long long, struct dpif_flow_stats *);
 void netdev_uninit_flow_api(struct netdev *);
 uint32_t netdev_get_block_id(struct netdev *);
 int netdev_get_hw_info(struct netdev *, int);
