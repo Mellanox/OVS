@@ -457,7 +457,7 @@ netdev_uninit_flow_api(struct netdev *netdev)
 
 int
 netdev_ct_counter_query(struct netdev *netdev,
-                        uint32_t counter,
+                        uintptr_t key,
                         long long now,
                         long long prev_now,
                         struct dpif_flow_stats *stats)
@@ -466,7 +466,7 @@ netdev_ct_counter_query(struct netdev *netdev,
         ovsrcu_get(const struct netdev_flow_api *, &netdev->flow_api);
 
     return (flow_api && flow_api->ct_counter_query)
-           ? flow_api->ct_counter_query(netdev, counter, now, prev_now, stats)
+           ? flow_api->ct_counter_query(netdev, key, now, prev_now, stats)
            : EOPNOTSUPP;
 }
 

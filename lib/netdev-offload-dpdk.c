@@ -1427,9 +1427,9 @@ static struct context_metadata shared_age_ctx_md = {
 static struct ds *
 dump_shared_age_id(struct ds *s, void *data)
 {
-    uint32_t shared_age_id = *(uint32_t *) data;
+    uintptr_t shared_age_id = *(uintptr_t *) data;
 
-    ds_put_format(s, "shared_age_id=%d", shared_age_id);
+    ds_put_format(s, "shared_age_id=0x%"PRIxPTR, shared_age_id);
     return s;
 }
 
@@ -1531,12 +1531,12 @@ static struct context_metadata shared_age_id_md = {
     .i2d_map = CMAP_INITIALIZER,
     .id_alloc = shared_age_id_alloc,
     .id_free = shared_age_id_free,
-    .data_size = sizeof(uint32_t),
+    .data_size = sizeof(uintptr_t),
 };
 
 static int
 get_shared_age_id(struct netdev *netdev,
-                  uint32_t app_counter_id,
+                  uintptr_t app_counter_id,
                   uint32_t *shared_age_id,
                   struct rte_flow_shared_action **shared_action)
 {
@@ -4708,7 +4708,7 @@ netdev_offload_dpdk_flow_dump_destroy(struct netdev_flow_dump *dump)
 
 static int
 netdev_offload_dpdk_ct_counter_query(struct netdev *netdev OVS_UNUSED,
-                                     uint32_t app_counter_id,
+                                     uintptr_t app_counter_id,
                                      long long now,
                                      long long prev_now,
                                      struct dpif_flow_stats *stats)
@@ -4727,7 +4727,7 @@ netdev_offload_dpdk_ct_counter_query(struct netdev *netdev OVS_UNUSED,
     if (get_context_data_id_by_data(&shared_age_id_md, &shared_age_id_ctx,
                                     NULL, &shared_age_id)) {
         VLOG_ERR_RL(&rl, "Could not get shared age id for "
-                    "app_counter_id=0x%08x", app_counter_id);
+                    "app_counter_id=0x%"PRIxPTR, app_counter_id);
         return -1;
     }
     ret = get_context_data_by_id(&shared_age_ctx_md, shared_age_id,
