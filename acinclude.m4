@@ -412,7 +412,7 @@ AC_DEFUN([OVS_CHECK_DPDK], [
     OVS_FIND_DEPENDENCY([dlopen], [dl], [libdl])
 
     AC_MSG_CHECKING([whether linking with dpdk works])
-    LIBS="$DPDK_LIBS $LIBS"
+    LIBS="$DPDK_LIBS $LIBS -l:librte_bus_vdev.a"
     AC_LINK_IFELSE(
       [AC_LANG_PROGRAM([#include <rte_config.h>
                         #include <rte_eal.h>],
