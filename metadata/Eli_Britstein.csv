@@ -71,3 +71,6 @@ Change-Id=I39f9c8b232d154c4c9f1899bad995b727b78faf8; subject=conntrack: Fix refc
 Change-Id=I289c529e3c24746ad5457eaf526454abaf67fd27; subject=netdev-dpdk: Fix no port found with netdev_dpdk_get_netdev_by_devargs; feature=dpdk; upstream_status=ignore; general=;
 Change-Id=Idfc9b6c32da70753db880458bcf19336016a5351; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I8904744b4a157133a111e10d2970060f1d50b33a; subject=dpif-netdev: Replace port mutex by rw port lock; feature=mt-flow; upstream_status=in_progress; general=;
+Change-Id=I6c951435c9b88aadeabc374fd152587d37c60ee8; subject=acinclude: Add -l:librte_bus_vdev.a to LIBS; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I445b6d7a6d128e02413e44fddc9d41879b825088; subject=Revert "netdev-dpdk-vdpa: ---TBD--- disable rte_eth_vhost_get_queue_event"; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I449e3babe0a56ec7835e7e3b0f25c88ecb6794cc; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
