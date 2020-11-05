@@ -231,7 +231,7 @@ netdev_dpdk_vdpa_queue_state(struct netdev_dpdk_vdpa_relay *relay,
     uint32_t q_id;
     int err = 0;
 
-    while (!/*rte_eth_vhost_get_queue_event(port, &event)*/0) {
+    while (!rte_eth_vhost_get_queue_event(port, &event)) {
         q_id = (event.rx ? event.queue_id * 2 : event.queue_id * 2 + 1);
         if ((event.queue_id >= relay->num_queues) && event.enable) {
             VLOG_ERR("netdev_dpdk_vdpa_queue_state: "
