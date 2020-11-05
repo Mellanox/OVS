@@ -16,3 +16,5 @@ Change-Id=I2a39fa51e6d20190af1c04e7e39c675490661fe1; subject=netdev-offload: Fix
 Change-Id=I4ea09430b0259eb21c693adf149e4fe4ed6b3f74; subject=dpif-netdev: Do not attempt to destroy offload if disabled; feature=dpdk; upstream_status=ignore; general=;
 Change-Id=Id8fb0a1646b830e5ecd54c6ce03f8ef8025e5ac5; subject=debian: Update manpages path; feature=bp_2_14; upstream_status=NA; general=;
 Change-Id=Id4141fa1900dd070d39538501a357d016c9f4447; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Icc3da81041b1ca78ee3d728878b114930aad6305; subject=build: Use meson pkg-config for DPDK link; feature=bp_2_14; upstream_status=NA; general=;
+Change-Id=I8fb187cf496bf8dffb7f74d5f4816e847844f273; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
