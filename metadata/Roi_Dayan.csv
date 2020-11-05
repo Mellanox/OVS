@@ -1,2 +1,5 @@
 sep=;
 Change-Id=Id2d8c7521280a50f7858b8e425b9534f2f406e24; subject=tc: Use skip_hw flag when probing tc features; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=I4ba244a62de26aae98b9e5537fa8d51b11beacc6; subject=netdev-offload: Add e2e-enable config option; feature=e2e_cache; upstream_status=NA; general=;
+Change-Id=I3e066e734a4209d689adaad39b26a2f60cb7d4bd; subject=tc: Support cacheable ingress; feature=e2e_cache; upstream_status=NA; general=;
+Change-Id=Ia4ebf231ac299c7c0827dc2fd81d6334e5900306; subject=metadata: update; feature=ofed_scripts; upstream_status=ignore; general=;
