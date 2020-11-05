@@ -56,6 +56,16 @@
 #define TCA_DUMP_FLAGS_TERSE (1 << 0)
 #endif
 
+#ifndef TCA_INGRESS_ATTR_FLAG_CACHEABLE
+#define TCA_INGRESS_ATTR_FLAG_CACHEABLE (1 << 0)
+
+enum {
+    TCA_INGRESS_ATTR_UNSPEC,
+    TCA_INGRESS_ATTR_FLAGS, /* u32 */
+    __TCA_INGRESS_ATTR_MAX,
+};
+#endif
+
 #if TCA_MAX < 15
 #define TCA_CHAIN 11
 #define TCA_INGRESS_BLOCK 13
@@ -67,6 +77,8 @@ VLOG_DEFINE_THIS_MODULE(tc);
 static struct vlog_rate_limit error_rl = VLOG_RATE_LIMIT_INIT(60, 5);
 
 static enum tc_offload_policy tc_policy = TC_POLICY_NONE;
+
+static bool tc_e2e_cache = false;
 
 struct tc_pedit_key_ex {
     enum pedit_header_type htype;
@@ -271,7 +283,16 @@ tc_add_del_qdisc(int ifindex, bool add, uint32_t block_id,
         nl_msg_put_string(&request, TCA_KIND, "ingress");
     }
 
-    nl_msg_put_unspec(&request, TCA_OPTIONS, NULL, 0);
+    if (hook == TC_INGRESS && add && tc_e2e_cache) {
+        size_t opt_offset;
+        opt_offset = nl_msg_start_nested(&request, TCA_OPTIONS);
+        nl_msg_put_u32(&request, TCA_INGRESS_ATTR_FLAGS,
+                       TCA_INGRESS_ATTR_FLAG_CACHEABLE);
+        nl_msg_end_nested(&request, opt_offset);
+    } else {
+        nl_msg_put_unspec(&request, TCA_OPTIONS, NULL, 0);
+    }
+
     if (hook == TC_INGRESS && block_id) {
         nl_msg_put_u32(&request, TCA_INGRESS_BLOCK, block_id);
     }
@@ -3005,4 +3026,12 @@ tc_set_policy(const char *policy)
     }
 
     VLOG_INFO("tc: Using policy '%s'", policy);
+}
+
+void tc_set_e2e_cache(bool enable)
+{
+    tc_e2e_cache = enable;
+    if (enable) {
+        VLOG_INFO("tc: e2e_cache: enabled");
+    }
 }

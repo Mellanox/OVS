@@ -371,5 +371,6 @@ int parse_netlink_to_tc_flower(struct ofpbuf *reply,
                                struct tc_flower *flower,
                                bool terse);
 void tc_set_policy(const char *policy);
+void tc_set_e2e_cache(bool enable);
 
 #endif /* tc.h */

@@ -779,6 +779,7 @@ netdev_set_flow_api_enabled(const struct smap *ovs_other_config)
 
         if (ovsthread_once_start(&once_e2e)) {
             e2e_cache_enabled = true;
+            tc_set_e2e_cache(true);
             ovsthread_once_done(&once_e2e);
         }
     }
