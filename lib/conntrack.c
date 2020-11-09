@@ -1589,6 +1589,8 @@ conntrack_offload_add_conn(struct conntrack *ct,
         } else if (conn->master_conn) {
             conn->master_conn->offloads.flags |= CT_OFFLOAD_SKIP;
             conn->master_conn->offloads.refcnt = refcnt;
+        } else {
+            conn->offloads.refcnt = refcnt;
         }
     }
 }
