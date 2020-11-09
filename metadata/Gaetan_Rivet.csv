@@ -3,3 +3,5 @@ Change-Id=Icc3da81041b1ca78ee3d728878b114930aad6305; subject=build: Use meson pk
 Change-Id=I1ee663855372970026b64e9c7355f731ecf64d42; subject=conntrack-tp: Fix and simplify locking for expiration updates; feature=bug_fixes; upstream_status=in_progress; general=;
 Change-Id=I2a39fa51e6d20190af1c04e7e39c675490661fe1; subject=netdev-offload: Fix invalid flow mark, set it to 0; feature=bug_fixes; upstream_status=in_progress; general=;
 Change-Id=I4ea09430b0259eb21c693adf149e4fe4ed6b3f74; subject=dpif-netdev: Do not attempt to destroy offload if disabled; feature=bug_fixes; upstream_status=in_progress; general=;
+Change-Id=I54b9b8c0978a2af469d3967f300807855d4d6ba1; subject=conntrack: Fix basic CT-offload refcount; feature=ovs_dpdk_ct; upstream_status=NA; general=;
+Change-Id=I3bf6a111c3fabe4f2a9f3346a16ef9ae9067324c; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
