@@ -948,13 +948,13 @@ dp_netdev_offload_init(void)
 {
     static struct ovsthread_once offload_thread_start =
                                                     OVSTHREAD_ONCE_INITIALIZER;
-    unsigned int nb_offload_thread = netdev_offload_thread_nb();
     unsigned int i;
 
     if (ovsthread_once_start(&offload_thread_start)) {
-        dp_offload_threads = xcalloc(nb_offload_thread,
+        dp_offload_threads = xcalloc(netdev_offload_thread_nb() +
+                                     netdev_is_e2e_cache_enabled(),
                                      sizeof *dp_offload_threads);
-        for (i = 0; i < nb_offload_thread; i++) {
+        for (i = 0; i < netdev_offload_thread_nb(); i++) {
             mpsc_queue_init(&dp_offload_threads[i].queue);
             cmap_init(&dp_offload_threads[i].megaflow_to_mark);
             cmap_init(&dp_offload_threads[i].mark_to_flow);
@@ -963,6 +963,10 @@ dp_netdev_offload_init(void)
             ovs_thread_create("hw_offload",
                               dp_netdev_flow_offload_main,
                               &dp_offload_threads[i]);
+        }
+        if (netdev_is_e2e_cache_enabled()) {
+            atomic_init(&dp_offload_threads[i].enqueued_item, 0);
+            atomic_init(&dp_offload_threads[i].ct_connections, 0);
         }
         ovsthread_once_done(&offload_thread_start);
     }
@@ -4755,7 +4759,7 @@ dpif_netdev_offload_stats_get(struct dpif *dpif,
         return EINVAL;
     }
 
-    nb_thread = netdev_offload_thread_nb();
+    nb_thread = netdev_offload_thread_nb() + netdev_is_e2e_cache_enabled();
     stats->size = ARRAY_SIZE(hwol_stats) * (nb_thread + 1);
     stats->counters = xcalloc(stats->size, sizeof *stats->counters);
 

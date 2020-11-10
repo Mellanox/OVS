@@ -582,19 +582,30 @@ netdev_offload_thread_init(void)
 {
     static atomic_count next_id = ATOMIC_COUNT_INIT(0);
     bool thread_is_hw_offload;
+    bool thread_is_e2e_cache;
+    bool thread_is_ct_clean;
     bool thread_is_rcu;
 
     thread_is_hw_offload = !strncmp(get_subprogram_name(),
                                     "hw_offload", strlen("hw_offload"));
     thread_is_rcu = !strncmp(get_subprogram_name(), "urcu", strlen("urcu"));
+    thread_is_e2e_cache = !strncmp(get_subprogram_name(), "e2e_cache",
+                                   strlen("e2e_cache"));
+    thread_is_ct_clean = !strncmp(get_subprogram_name(), "ct_clean",
+                                  strlen("ct_clean"));
 
     /* Panic if any other thread besides offload and RCU tries
      * to initialize their thread ID. */
-    ovs_assert(thread_is_hw_offload || thread_is_rcu);
+    ovs_assert(thread_is_hw_offload || thread_is_rcu || thread_is_e2e_cache ||
+               thread_is_ct_clean);
 
     if (*netdev_offload_thread_id_get() == OVSTHREAD_ID_UNSET) {
         unsigned int id;
 
+        if (thread_is_e2e_cache || thread_is_ct_clean) {
+            id = netdev_offload_thread_nb();
+            return *netdev_offload_thread_id_get() = id;
+        }
         if (thread_is_rcu) {
             /* RCU will compete with other threads for shared object access.
              * Reclamation functions using a thread ID must be thread-safe.

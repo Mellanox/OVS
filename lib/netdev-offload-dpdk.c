@@ -136,6 +136,12 @@ struct netdev_offload_dpdk_data {
     struct ovs_mutex map_lock;
 };
 
+static unsigned int
+netdev_offload_dpdk_thread_nb(void)
+{
+    return netdev_offload_thread_nb() + netdev_is_e2e_cache_enabled();
+}
+
 static int
 offload_data_init(struct netdev *netdev)
 {
@@ -144,7 +150,7 @@ offload_data_init(struct netdev *netdev)
     data = xzalloc(sizeof *data);
     ovs_mutex_init(&data->map_lock);
     cmap_init(&data->ufid_to_rte_flow);
-    data->rte_flow_counters = xcalloc(netdev_offload_thread_nb(),
+    data->rte_flow_counters = xcalloc(netdev_offload_dpdk_thread_nb(),
                                       sizeof *data->rte_flow_counters);
 
     netdev->hw_info.offload_data = data;
@@ -551,9 +557,9 @@ context_delayed_release_init(void)
     if (ovsthread_once_start(&init_once)) {
         size_t i;
 
-        context_release_lists = xcalloc(netdev_offload_thread_nb(),
+        context_release_lists = xcalloc(netdev_offload_dpdk_thread_nb(),
                                         sizeof *context_release_lists);
-        for (i = 0; i < netdev_offload_thread_nb(); i++) {
+        for (i = 0; i < netdev_offload_dpdk_thread_nb(); i++) {
             ovs_list_init(&context_release_lists[i]);
         }
         ovsthread_once_done(&init_once);
@@ -847,7 +853,7 @@ label_id_alloc(void *arg OVS_UNUSED)
     uint32_t label_id;
 
     if (ovsthread_once_start(&label_id_init)) {
-        label_id_pool = seq_pool_create(netdev_offload_thread_nb(),
+        label_id_pool = seq_pool_create(netdev_offload_dpdk_thread_nb(),
                                         MIN_LABEL_ID, MAX_LABEL_ID);
         ovsthread_once_done(&label_id_init);
     }
@@ -915,7 +921,7 @@ zone_id_alloc(void *arg OVS_UNUSED)
     uint32_t zone_id;
 
     if (ovsthread_once_start(&zone_id_init)) {
-        zone_id_pool = seq_pool_create(netdev_offload_thread_nb(),
+        zone_id_pool = seq_pool_create(netdev_offload_dpdk_thread_nb(),
                                        MIN_ZONE_ID, MAX_ZONE_ID);
         ovsthread_once_done(&zone_id_init);
     }
@@ -974,7 +980,7 @@ table_id_alloc(void *arg OVS_UNUSED)
     uint32_t id;
 
     if (ovsthread_once_start(&table_id_init)) {
-        table_id_pool = seq_pool_create(netdev_offload_thread_nb(),
+        table_id_pool = seq_pool_create(netdev_offload_dpdk_thread_nb(),
                                         MIN_TABLE_ID, MAX_TABLE_ID);
         ovsthread_once_done(&table_id_init);
     }
@@ -1070,7 +1076,7 @@ ct_ctx_id_alloc(void *arg OVS_UNUSED)
     uint32_t id;
 
     if (ovsthread_once_start(&ct_ctx_init)) {
-        ct_ctx_pool = seq_pool_create(netdev_offload_thread_nb(),
+        ct_ctx_pool = seq_pool_create(netdev_offload_dpdk_thread_nb(),
                                       MIN_CT_CTX_ID, MAX_CT_CTX_ID);
         ovsthread_once_done(&ct_ctx_init);
     }
@@ -1155,7 +1161,7 @@ tnl_id_alloc(void *arg OVS_UNUSED)
     uint32_t id;
 
     if (ovsthread_once_start(&tnl_id_init)) {
-        tnl_id_pool = seq_pool_create(netdev_offload_thread_nb(),
+        tnl_id_pool = seq_pool_create(netdev_offload_dpdk_thread_nb(),
                                       MIN_TUNNEL_ID, MAX_TUNNEL_ID);
         ovsthread_once_done(&tnl_id_init);
     }
@@ -4190,7 +4196,7 @@ netdev_offload_dpdk_hw_offload_stats_get(struct netdev *netdev,
     unsigned int tid;
 
     data = netdev->hw_info.offload_data;
-    for (tid = 0; tid < netdev_offload_thread_nb(); tid++) {
+    for (tid = 0; tid < netdev_offload_dpdk_thread_nb(); tid++) {
         counters[tid] = atomic_count_get64(&data->rte_flow_counters[tid]);
     }
     return 0;
