@@ -337,8 +337,21 @@ AC_DEFUN([OVS_CHECK_DPDK], [
   AC_ARG_WITH([dpdk],
               [AC_HELP_STRING([--with-dpdk=static|shared|yes],
                               [Specify "static" or "shared" depending on the
-                              DPDK libraries to use])],
+                              DPDK libraries to use. A custom DPDK install path
+                              can be used otherwise for local builds. In that case
+                              DPDK will be linked with the default library type
+                              as configured by meson, unless overriden using
+                              --with-dpdk-link.])],
               [have_dpdk=true])
+
+  AC_ARG_WITH([dpdk-link],
+              [AC_HELP_STRING([--with-dpdk-link=static|shared],
+                              [When using a custom DPDK install path through
+                              --with-dpdk, configure which type of the DPDK
+                              library is linked, static archive or shared object.
+                              Older pkg-config cannot force shared link, so currently
+                              this value will use the default link type set by meson.])],
+              [])
 
   AC_MSG_CHECKING([whether dpdk is enabled])
   if test "$have_dpdk" != true || test "$with_dpdk" = no; then
@@ -364,36 +377,43 @@ AC_DEFUN([OVS_CHECK_DPDK], [
         export PKG_CONFIG_PATH="${DPDK_PKGCONFIG}"
     fi
     case "$with_dpdk" in
-      "shared")
-          PKG_CHECK_MODULES([DPDK], [libdpdk], [
-              DPDK_INCLUDE="$DPDK_CFLAGS"
-              DPDK_LIB="$DPDK_LIBS"])
-              ;;
-      *)
-          PKG_CHECK_MODULES_STATIC([DPDK], [libdpdk], [
-              DPDK_INCLUDE="$DPDK_CFLAGS"
-              DPDK_LIB="$DPDK_LIBS"])
+       "static"|"shared") DPDK_LINK="$with_dpdk" ;;
+       *) DPDK_LINK="$with_dpdk_link" ;;
+    esac
+    case "$DPDK_LINK" in
+       ""|"static")
+         PKG_CHECK_MODULES_STATIC([DPDK], [libdpdk], [
+             DPDK_INCLUDE="$DPDK_CFLAGS"
+             DPDK_LIB="$DPDK_LIBS"],
+             [AC_MSG_ERROR([unable to use libdpdk.pc for static build])])
 
-          dnl Statically linked private DPDK objects of form
-          dnl -l:file.a must be positioned between
-          dnl --whole-archive ... --no-whole-archive linker parameters.
-          dnl Old pkg-config versions misplace --no-whole-archive parameter
-          dnl and put it next to --whole-archive.
-          AC_MSG_CHECKING([for faulty pkg-config version])
-          echo "$DPDK_LIB" | grep -q 'whole-archive.*l:lib.*no-whole-archive'
-          status=$?
-          case $status in
-            0)
-              AC_MSG_RESULT([no])
-              ;;
-            1)
-              AC_MSG_RESULT([yes])
-              AC_MSG_ERROR([Please upgrade pkg-config])
-              ;;
-            *)
-              AC_MSG_ERROR([grep exited with status $status])
-              ;;
-          esac
+         dnl Statically linked private DPDK objects of form
+         dnl -l:file.a must be positioned between
+         dnl --whole-archive ... --no-whole-archive linker parameters.
+         dnl Old pkg-config versions misplace --no-whole-archive parameter
+         dnl and put it next to --whole-archive.
+         AC_MSG_CHECKING([for faulty pkg-config version])
+         echo "$DPDK_LIB" | grep -q 'whole-archive.*l:lib.*no-whole-archive'
+         status=$?
+         case $status in
+           0)
+             AC_MSG_RESULT([no])
+             ;;
+           1)
+             AC_MSG_RESULT([yes])
+             AC_MSG_ERROR([Please upgrade pkg-config])
+             ;;
+           *)
+             AC_MSG_ERROR([grep exited with status $status])
+             ;;
+         esac
+         ;;
+       *)
+         PKG_CHECK_MODULES([DPDK], [libdpdk], [
+             DPDK_INCLUDE="$DPDK_CFLAGS"
+             DPDK_LIB="$DPDK_LIBS"],
+             [AC_MSG_ERROR([unable to use libdpdk.pc for shared build])])
+         ;;
     esac
 
     ovs_save_CFLAGS="$CFLAGS"
