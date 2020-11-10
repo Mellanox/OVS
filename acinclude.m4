@@ -336,9 +336,21 @@ AC_DEFUN([OVS_CHECK_DPDK], [
   AC_ARG_WITH([dpdk],
               [AC_HELP_STRING([--with-dpdk=static|shared|/path/to/dpdk],
                               [Specify "static" or "shared" depending on the
-                              DPDK libraries to use only if built using Meson
-                              OR the DPDK build directory in case of Make])],
+                              DPDK libraries to use. A custom DPDK install path
+                              can be used otherwise for local builds. In that case
+                              DPDK will be linked with the default library type
+                              as configured by meson, unless overriden using
+                              --with-dpdk-link.])],
               [have_dpdk=true])
+
+  AC_ARG_WITH([dpdk-link],
+              [AC_HELP_STRING([--with-dpdk-link=static|shared],
+                              [When using a custom DPDK install path through
+                              --with-dpdk, configure which type of the DPDK
+                              library is linked, static archive or shared object.
+                              Older pkg-config cannot force shared link, so currently
+                              this value will use the default link type set by meson.])],
+              [])
 
   AC_MSG_CHECKING([whether dpdk is enabled])
   if test "$have_dpdk" != true || test "$with_dpdk" = no; then
@@ -364,11 +376,15 @@ AC_DEFUN([OVS_CHECK_DPDK], [
         export PKG_CONFIG_PATH="${DPDK_PKGCONFIG}"
     fi
     case "$with_dpdk" in
-       *)
+       "static"|"shared") DPDK_LINK="$with_dpdk" ;;
+       *) DPDK_LINK="$with_dpdk_link" ;;
+    esac
+    case "$DPDK_LINK" in
+       ""|"static")
          PKG_CHECK_MODULES_STATIC([DPDK], [libdpdk], [],
              [AC_MSG_ERROR([unable to use libdpdk.pc for static build])])
              ;;
-       "shared")
+       *)
          PKG_CHECK_MODULES([DPDK], [libdpdk], [],
              [AC_MSG_ERROR([unable to use libdpdk.pc for shared build])])
              ;;
