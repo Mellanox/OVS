@@ -1822,6 +1822,21 @@ netdev_dpdk_lookup_by_domain_id(const uint16_t domain_id)
     return NULL;
 }
 
+static struct netdev_dpdk *
+netdev_dpdk_lookup_by_devargs(const char *devargs)
+    OVS_REQUIRES(dpdk_mutex)
+{
+    struct netdev_dpdk *dev;
+
+    LIST_FOR_EACH (dev, list_node, &dpdk_list) {
+        if (!strcmp(dev->devargs, devargs)) {
+            return dev;
+        }
+    }
+
+    return NULL;
+}
+
 static dpdk_port_t
 netdev_dpdk_get_port_by_mac(const char *mac_str)
 {
@@ -5474,17 +5489,13 @@ netdev_dpdk_get_netdev_by_devargs(const char *devargs)
 {
     struct netdev *netdev = NULL;
     struct netdev_dpdk *dev;
-    dpdk_port_t port_id;
 
     ovs_mutex_lock(&dpdk_mutex);
-    port_id = netdev_dpdk_get_port_by_devargs(devargs);
-    if (!rte_eth_dev_is_valid_port(port_id)) {
-        goto out;
-    }
-    dev = netdev_dpdk_lookup_by_port_id(port_id);
+    dev = netdev_dpdk_lookup_by_devargs(devargs);
     if (!dev) {
         goto out;
     }
+
     ovs_mutex_lock(&dev->mutex);
     netdev = &dev->up;
     netdev_ref(netdev);
