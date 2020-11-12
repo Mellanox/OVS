@@ -62,3 +62,5 @@ Change-Id=Ic57c141a178aa2eb8f1027f240220939a948b866; subject=Revert "dpif-netdev
 Change-Id=Id433c02479ff317a1a5114e8059b4ee53c66a5b9; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=Id4bc6483691977ce4d69d5725a07001c576accb8; subject=netdev-dpdk: Add option to configure VF MAC address.; feature=dpdk; upstream_status=accepted; general=;
 Change-Id=I29a98839f496ab8d263000a8419f6b75241535c7; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=If24607a3aa41be8a431c403ff75c4fea4a3a448d; subject=netdev-dpdk: Do not parse devargs when unnecessary; feature=mt-flow; upstream_status=NA; general=;
+Change-Id=I7940841ea448fef451546fbe4e1663790ee36952; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
