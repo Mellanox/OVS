@@ -175,20 +175,22 @@ offload_data_destroy(struct netdev *netdev)
 
 static void
 offload_data_lock(struct netdev *netdev)
+    OVS_ACQUIRES(
+        ((struct netdev_offload_dpdk_data *)netdev->hw_info.offload_data)->
+            map_lock)
 {
-    struct netdev_offload_dpdk_data *data;
-
-    data = netdev->hw_info.offload_data;
-    ovs_mutex_lock(&data->map_lock);
+    ovs_mutex_lock(&((struct netdev_offload_dpdk_data *)
+                            netdev->hw_info.offload_data)->map_lock);
 }
 
 static void
 offload_data_unlock(struct netdev *netdev)
+    OVS_RELEASES(
+        ((struct netdev_offload_dpdk_data *)netdev->hw_info.offload_data)->
+            map_lock)
 {
-    struct netdev_offload_dpdk_data *data;
-
-    data = netdev->hw_info.offload_data;
-    ovs_mutex_unlock(&data->map_lock);
+    ovs_mutex_unlock(&((struct netdev_offload_dpdk_data *)
+                            netdev->hw_info.offload_data)->map_lock);
 }
 
 static struct cmap *
