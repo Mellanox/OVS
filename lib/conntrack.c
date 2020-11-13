@@ -369,7 +369,7 @@ conntrack_init(void *dp)
     ovs_mutex_lock(&ct->ct_lock);
     cmap_init(&ct->conns);
     for (unsigned i = 0; i < ARRAY_SIZE(ct->exp_lists); i++) {
-        ovs_list_init(&ct->exp_lists[i]);
+        rculist_init(&ct->exp_lists[i]);
     }
     hmap_init(&ct->zone_limits);
     ct->zone_limit_seq = 0;
@@ -527,7 +527,7 @@ conn_clean(struct conntrack *ct, struct conn *conn)
         uint32_t hash = conn_key_hash(&conn->nat_conn->key, ct->hash_basis);
         cmap_remove(&ct->conns, &conn->nat_conn->cm_node, hash);
     }
-    ovs_list_remove(&conn->exp_node);
+    rculist_remove(&conn->exp->node);
     conn->cleaned = true;
     ovsrcu_postpone(delete_conn, conn);
     atomic_count_dec(&ct->n_conn);
@@ -539,7 +539,7 @@ conn_clean_one(struct conntrack *ct, struct conn *conn)
 {
     conn_clean_cmn(ct, conn);
     if (conn->conn_type == CT_CONN_TYPE_DEFAULT) {
-        ovs_list_remove(&conn->exp_node);
+        rculist_remove(&conn->exp->node);
         conn->cleaned = true;
         atomic_count_dec(&ct->n_conn);
     }
@@ -1137,8 +1137,8 @@ conn_not_found(struct conntrack *ct, struct dp_packet *pkt,
      * can limit DoS impact. */
 nat_res_exhaustion:
     free(nat_conn);
-    ovs_list_remove(&nc->exp_node);
-    delete_conn_cmn(nc);
+    rculist_remove(&nc->exp->node);
+    ovsrcu_postpone(delete_conn_cmn, nc);
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 5);
     VLOG_WARN_RL(&rl, "Unable to NAT due to tuple space exhaustion - "
                  "if DoS attack, use firewalling and/or zone partitioning.");
@@ -1800,7 +1800,8 @@ set_label(struct dp_packet *pkt, struct conn *conn,
 static long long
 ct_sweep(struct conntrack *ct, long long now, size_t limit)
 {
-    struct conn *conn, *next;
+    struct conn *conn;
+    struct conn_exp_node *conn_it;
     long long min_expiration = LLONG_MAX;
     struct ct_flow_offload_item item;
     enum ct_timeout tm = 0;
@@ -1811,7 +1812,8 @@ ct_sweep(struct conntrack *ct, long long now, size_t limit)
     ovs_mutex_lock(&ct->ct_lock);
 
     for (unsigned i = 0; i < N_CT_TM; i++) {
-        LIST_FOR_EACH_SAFE (conn, next, exp_node, &ct->exp_lists[i]) {
+        RCULIST_FOR_EACH (conn_it, node, &ct->exp_lists[i]) {
+            conn = conn_it->up;
             ovs_mutex_lock(&conn->lock);
             hw_updated = false;
             for (dir = 0; ct->offload_class &&
@@ -2712,6 +2714,7 @@ new_conn(struct conntrack *ct, struct dp_packet *pkt, struct conn_key *key,
 static void
 delete_conn_cmn(struct conn *conn)
 {
+    free(conn->exp);
     free(conn->nat_info);
     free(conn->alg);
     free(conn);

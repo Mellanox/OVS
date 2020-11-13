@@ -231,6 +231,20 @@ tm_to_ct_dpif_tp(enum ct_timeout tm)
 }
 
 static void
+conn_init_expiration__(struct conntrack *ct, struct conn *conn,
+                       enum ct_timeout tm, long long now,
+                       uint32_t tp_value)
+{
+    conn->expiration = now + tp_value * 1000;
+    if (conn->exp != NULL) {
+        ovsrcu_postpone(free, conn->exp);
+    }
+    conn->exp = xmalloc(sizeof *conn->exp);
+    conn->exp->up = conn;
+    rculist_push_back(&ct->exp_lists[tm], &conn->exp->node);
+}
+
+static void
 conn_update_expiration__(struct conntrack *ct, struct conn *conn,
                          enum ct_timeout tm, long long now,
                          uint32_t tp_value)
@@ -241,9 +255,8 @@ conn_update_expiration__(struct conntrack *ct, struct conn *conn,
                 ct_timeout_str[tm], conn->key.zone, conn->tp_id, tp_value);
 
     if (!conn->cleaned) {
-        conn->expiration = now + tp_value * 1000;
-        ovs_list_remove(&conn->exp_node);
-        ovs_list_push_back(&ct->exp_lists[tm], &conn->exp_node);
+        rculist_remove(&conn->exp->node);
+        conn_init_expiration__(ct, conn, tm, now, tp_value);
     }
 }
 
@@ -289,15 +302,6 @@ conn_update_expiration(struct conntrack *ct, struct conn *conn,
     conn_protected_update_expiration(ct, conn, tm, now);
 
     ovs_mutex_unlock(&ct->ct_lock);
-}
-
-static void
-conn_init_expiration__(struct conntrack *ct, struct conn *conn,
-                       enum ct_timeout tm, long long now,
-                       uint32_t tp_value)
-{
-    conn->expiration = now + tp_value * 1000;
-    ovs_list_push_back(&ct->exp_lists[tm], &conn->exp_node);
 }
 
 /* ct_lock must be held. */

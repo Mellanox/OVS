@@ -29,6 +29,7 @@
 #include "openvswitch/list.h"
 #include "openvswitch/types.h"
 #include "packets.h"
+#include "rculist.h"
 #include "unaligned.h"
 #include "dp-packet.h"
 
@@ -91,12 +92,17 @@ struct ct_offloads {
     struct ct_dir_info dir_info[CT_DIR_NUM];
 };
 
+struct conn_exp_node {
+    struct rculist node;
+    struct conn *up;
+};
+
 struct conn {
     /* Immutable data. */
     struct conn_key key;
     struct conn_key rev_key;
     struct conn_key master_key; /* Only used for orig_tuple support. */
-    struct ovs_list exp_node;
+    struct conn_exp_node *exp;
     struct cmap_node cm_node;
     struct nat_action_info_t *nat_info;
     char *alg;
@@ -162,7 +168,7 @@ enum ct_timeout {
 struct conntrack {
     struct ovs_mutex ct_lock; /* Protects 2 following fields. */
     struct cmap conns OVS_GUARDED;
-    struct ovs_list exp_lists[N_CT_TM] OVS_GUARDED;
+    struct rculist exp_lists[N_CT_TM] OVS_GUARDED;
     struct hmap zone_limits OVS_GUARDED;
     struct hmap timeout_policies OVS_GUARDED;
     uint32_t hash_basis; /* Salt for hashing a connection key. */
