@@ -5199,6 +5199,7 @@ netdev_dpdk_vdpa_reconfigure(struct netdev *netdev)
 
         err = netdev_dpdk_mempool_configure(dev);
         if (err && err != EEXIST) {
+            ovs_mutex_unlock(&dev->mutex);
             return err;
         }
     }
