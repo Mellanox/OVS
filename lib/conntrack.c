@@ -1847,6 +1847,7 @@ conn_batch_clean(struct conntrack *ct,
 }
 
 #define CT_SWEEP_BATCH_SIZE 32
+#define CT_SWEEP_QUIESCE_INTERVAL_MS 10
 
 /* Delete the expired connections from 'ctb', up to 'limit'. Returns the
  * earliest expiration time among the remaining connections in 'ctb'.  Returns
@@ -1861,6 +1862,8 @@ ct_sweep(struct conntrack *ct, long long now, size_t limit)
     size_t batch_count = 0;
     long long min_expiration = LLONG_MAX;
     struct ct_flow_offload_item item;
+    long long int next_rcu_quiesce;
+    long long int start = now;
     enum ct_timeout tm = 0;
     size_t count = 0;
     bool hw_updated;
@@ -1868,7 +1871,20 @@ ct_sweep(struct conntrack *ct, long long now, size_t limit)
 
     ovs_mutex_lock(&ct->ct_lock);
 
+    next_rcu_quiesce = now + CT_SWEEP_QUIESCE_INTERVAL_MS;
     for (unsigned i = 0; i < N_CT_TM; i++) {
+
+        /* Quiesce outside of RCU list iteration,
+         * no reference should be held. */
+        if (now >= next_rcu_quiesce) {
+rcu_quiesce:
+            ovs_mutex_unlock(&ct->ct_lock);
+            ovsrcu_quiesce();
+            now = time_msec();
+            next_rcu_quiesce = now + CT_SWEEP_QUIESCE_INTERVAL_MS;
+            ovs_mutex_lock(&ct->ct_lock);
+        }
+
         RCULIST_FOR_EACH (conn_it, node, &ct->exp_lists[i]) {
             bool next_list = false;
 
@@ -1913,6 +1929,16 @@ ct_sweep(struct conntrack *ct, long long now, size_t limit)
                 conn_batch_clean(ct, conn_batch, &batch_count);
             }
 
+            /* Attempt quiescing at fixed interval. */
+            if (time_msec() >= next_rcu_quiesce) {
+                /* Do not delay further releasing batched conns if any. */
+                conn_batch_clean(ct, conn_batch, &batch_count);
+                /* Restarting rculist iteration after quiescing should be fine,
+                 * we are always reading the list front.
+                 */
+                goto rcu_quiesce;
+            }
+
             if (hw_updated) {
                 continue;
             }
@@ -1932,7 +1958,7 @@ ct_sweep(struct conntrack *ct, long long now, size_t limit)
 out:
     conn_batch_clean(ct, conn_batch, &batch_count);
     VLOG_DBG("conntrack cleanup %"PRIuSIZE" entries in %lld msec", count,
-             time_msec() - now);
+             time_msec() - start);
     ovs_mutex_unlock(&ct->ct_lock);
     return min_expiration;
 }
