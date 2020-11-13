@@ -602,10 +602,10 @@ conntrack_destroy(struct conntrack *ct)
     cmap_destroy(&ct->zone_limits);
 
     struct timeout_policy *tp;
-    HMAP_FOR_EACH_POP (tp, node, &ct->timeout_policies) {
+    CMAP_FOR_EACH (tp, node, &ct->timeout_policies) {
         free(tp);
     }
-    hmap_destroy(&ct->timeout_policies);
+    cmap_destroy(&ct->timeout_policies);
 
     ovs_mutex_unlock(&ct->ct_lock);
     ovs_mutex_destroy(&ct->ct_lock);
