@@ -1825,20 +1825,19 @@ ct_sweep(struct conntrack *ct, long long now, size_t limit)
             for (dir = 0; ct->offload_class &&
                           ct->offload_class->conn_active && dir < CT_DIR_NUM;
                  dir++) {
-                if (!conn_get_tm(conn, &tm) &&
+                if (!hw_updated && !conn_get_tm(conn, &tm) &&
                     conntrack_offload_fill_item_common(&item, conn, dir) &&
                     ct->offload_class->conn_active(&item, now,
-                                                   conn->prev_query) &&
-                    !hw_updated) {
+                                                   conn->prev_query)) {
                     conn_protected_update_expiration(ct, conn, tm, now);
                     hw_updated = true;
                 }
-                if (conn->nat_conn && !conn_get_tm(conn->nat_conn, &tm) &&
+                if (!hw_updated && conn->nat_conn &&
+                    !conn_get_tm(conn->nat_conn, &tm) &&
                     conntrack_offload_fill_item_common(&item, conn->nat_conn,
                                                        dir) &&
                     ct->offload_class->conn_active(&item, now,
-                                                   conn->prev_query) &&
-                    !hw_updated) {
+                                                   conn->prev_query)) {
                     conn_protected_update_expiration(ct, conn, tm, now);
                     hw_updated = true;
                 }
