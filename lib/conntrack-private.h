@@ -109,6 +109,9 @@ struct conn {
     struct conn *nat_conn; /* The NAT 'conn' context, if there is one. */
     struct conn *master_conn; /* The master 'conn' context if this is a NAT
                                * 'conn' */
+    atomic_flag reclaimed; /* False during the lifetime of the connection,
+                            * True as soon as a thread has started freeing
+                            * its memory. */
 
     /* Mutable data. */
     struct ovs_mutex lock; /* Guards all mutable fields. */
@@ -198,8 +201,8 @@ struct conntrack {
 };
 
 /* Lock acquisition order:
- *    1. 'ct_lock'
- *    2. 'conn->lock'
+ *    1. 'conn->lock'
+ *    2. 'ct_lock'
  *    3. 'resources_lock'
  */
 
