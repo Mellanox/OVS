@@ -38,3 +38,6 @@ Change-Id=I6f989601aeb02d7e46cbf9a932845191b2d64ab0; subject=dpif-netdev: Do not
 Change-Id=Ie869e0e267aa048b7fbe02d0cb35a66b3c8fa0ba; subject=dpif-netdev: Do not alloc full flow-offload for ct-offload; feature=ovs_dpdk_mt_flow; upstream_status=NA; general=;
 Change-Id=I91f2bab669790faaecab57f13ec139a805e69d6c; subject=netdev-dpdk: remove rte-flow API access locks; feature=ovs_dpdk_mt_flow; upstream_status=in_progress; general=;
 Change-Id=Iddccbbc9c0f57f5af8fb2b690180c9804cf65112; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I3ce8842dcdd10742cde6facfc38ce3264b532cbf; subject=netdev-dpdk: Fix VDPA dev mutex release on config error; feature=bp_2_15; upstream_status=NA; general=;
+Change-Id=I2dbdf6ac2343cf88b61052554f5db1384e906d8d; subject=netdev-offload-dpdk: Rewrite offload-data locks for Safety-Analysis; feature=bp_2_15; upstream_status=NA; general=;
+Change-Id=If15b13c5fc6ac80c3422d7765feb3f47a5787e7e; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
