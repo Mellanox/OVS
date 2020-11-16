@@ -18,6 +18,7 @@
 #define NETDEV_DPDK_H
 
 #include <config.h>
+#include <stdint.h>
 
 #include "openvswitch/compiler.h"
 
@@ -75,6 +76,10 @@ const char *
 netdev_dpdk_get_port_devargs(struct netdev *netdev);
 struct netdev *
 netdev_dpdk_get_netdev_by_devargs(const char *devargs);
+uint16_t
+netdev_dpdk_get_domain_id_by_netdev(const struct netdev *netdev);
+struct netdev *
+netdev_dpdk_get_netdev_by_domain_id(uint16_t domain_id);
 
 #else
 
