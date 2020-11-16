@@ -445,6 +445,7 @@ struct netdev_dpdk {
         struct dpdk_tx_queue *tx_q;
         struct rte_eth_link link;
         bool is_uplink_port; /* True=uplink port, false=representor port. */
+        uint16_t domain_id;
     );
 
     PADDED_MEMBERS_CACHELINE_MARKER(CACHE_LINE_SIZE, cacheline1,
@@ -1157,6 +1158,7 @@ dpdk_eth_dev_init(struct netdev_dpdk *dev)
 
     dev->is_uplink_port = !(*info.dev_flags & RTE_ETH_DEV_REPRESENTOR) &&
         info.switch_info.domain_id != RTE_ETH_DEV_SWITCH_DOMAIN_ID_INVALID;
+    dev->domain_id = info.switch_info.domain_id;
 
     n_rxq = MIN(info.max_rx_queues, dev->up.n_rxq);
     n_txq = MIN(info.max_tx_queues, dev->up.n_txq);
@@ -1798,6 +1800,21 @@ netdev_dpdk_lookup_by_port_id(dpdk_port_t port_id)
 
     LIST_FOR_EACH (dev, list_node, &dpdk_list) {
         if (dev->port_id == port_id) {
+            return dev;
+        }
+    }
+
+    return NULL;
+}
+
+static struct netdev_dpdk *
+netdev_dpdk_lookup_by_domain_id(const uint16_t domain_id)
+    OVS_REQUIRES(dpdk_mutex)
+{
+    struct netdev_dpdk *dev;
+
+    LIST_FOR_EACH (dev, list_node, &dpdk_list) {
+        if (dev->domain_id == domain_id) {
             return dev;
         }
     }
@@ -5465,6 +5482,43 @@ netdev_dpdk_get_netdev_by_devargs(const char *devargs)
         goto out;
     }
     dev = netdev_dpdk_lookup_by_port_id(port_id);
+    if (!dev) {
+        goto out;
+    }
+    ovs_mutex_lock(&dev->mutex);
+    netdev = &dev->up;
+    netdev_ref(netdev);
+    ovs_mutex_unlock(&dev->mutex);
+
+out:
+    ovs_mutex_unlock(&dpdk_mutex);
+    return netdev;
+}
+
+uint16_t
+netdev_dpdk_get_domain_id_by_netdev(const struct netdev *netdev)
+{
+    uint16_t domain_id = RTE_ETH_DEV_SWITCH_DOMAIN_ID_INVALID;
+    struct netdev_dpdk *dev;
+
+    if (!is_dpdk_class(netdev->netdev_class)) {
+        goto out;
+    }
+
+    dev = netdev_dpdk_cast(netdev);
+    domain_id = dev->domain_id;
+out:
+    return domain_id;
+}
+
+struct netdev *
+netdev_dpdk_get_netdev_by_domain_id(uint16_t domain_id)
+{
+    struct netdev *netdev = NULL;
+    struct netdev_dpdk *dev;
+
+    ovs_mutex_lock(&dpdk_mutex);
+    dev = netdev_dpdk_lookup_by_domain_id(domain_id);
     if (!dev) {
         goto out;
     }
