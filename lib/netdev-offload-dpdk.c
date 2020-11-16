@@ -1382,9 +1382,8 @@ disassociate_flow_id(uint32_t flow_id)
     return disassociate_id_data(&flow_miss_ctx_md, flow_id);
 }
 
-#define MAX_DEVARGS_LEN 64
 struct shared_age_ctx_data {
-    char devargs[MAX_DEVARGS_LEN];
+    uint16_t domain_id;
     struct rte_flow_shared_action *shared_action;
 };
 
@@ -1394,8 +1393,8 @@ dump_shared_age_ctx(struct ds *s, void *data)
     struct shared_age_ctx_data *shared_age_ctx_data =
         (struct shared_age_ctx_data *) data;
 
-    ds_put_format(s, "devargs=%s, shared_action=%p",
-                  shared_age_ctx_data->devargs,
+    ds_put_format(s, "domain_id=%"PRIu16", shared_action=%p",
+                  shared_age_ctx_data->domain_id,
                   shared_age_ctx_data->shared_action);
     return s;
 }
@@ -1429,7 +1428,7 @@ shared_age_id_alloc(void *arg)
     static struct ovsthread_once shared_age_id_init = OVSTHREAD_ONCE_INITIALIZER;
     struct shared_age_ctx_data shared_age_ctx_data;
     unsigned int tid = netdev_offload_thread_id();
-    const char *devargs = (const char *) arg;
+    uint16_t domain_id = *(uint16_t *) arg;
     struct rte_flow_action_age age_conf = {
         .timeout = 0xFFFFFF,
     };
@@ -1448,15 +1447,11 @@ shared_age_id_alloc(void *arg)
                                              MAX_SHARED_AGE_ID);
         ovsthread_once_done(&shared_age_id_init);
     }
-    if (OVS_UNLIKELY(!devargs)) {
-        return 0;
-    }
     if (!seq_pool_new_id(shared_age_id_pool, tid, &shared_age_id)) {
         return 0;
     }
-    strncpy(shared_age_ctx_data.devargs, devargs,
-            sizeof shared_age_ctx_data.devargs);
-    netdev = netdev_dpdk_get_netdev_by_devargs(devargs);
+    shared_age_ctx_data.domain_id = domain_id;
+    netdev = netdev_dpdk_get_netdev_by_domain_id(domain_id);
     if (!netdev) {
         goto deallocate_id;
     }
@@ -1497,7 +1492,7 @@ shared_age_id_free(const void *arg OVS_UNUSED, uint32_t shared_age_id)
         return;
     }
 
-    netdev = netdev_dpdk_get_netdev_by_devargs(shared_age_ctx_data.devargs);
+    netdev = netdev_dpdk_get_netdev_by_domain_id(shared_age_ctx_data.domain_id);
     if (!netdev) {
         return;
     }
@@ -1525,7 +1520,7 @@ get_shared_age_id(struct netdev *netdev,
                   uint32_t *shared_age_id,
                   struct rte_flow_shared_action **shared_action)
 {
-    const char *devargs = netdev_dpdk_get_port_devargs(netdev);
+    uint16_t domain_id = netdev_dpdk_get_domain_id_by_netdev(netdev);
     struct shared_age_ctx_data shared_age_ctx_data;
     struct context_data shared_age_id_ctx = {
         .data = &app_counter_key,
@@ -1533,8 +1528,7 @@ get_shared_age_id(struct netdev *netdev,
     int ret;
 
     if (get_context_data_id_by_data(&shared_age_id_md, &shared_age_id_ctx,
-                                    CONST_CAST(void *, devargs),
-                                    shared_age_id)) {
+                                    &domain_id, shared_age_id)) {
         return -1;
     }
 
@@ -1547,7 +1541,7 @@ get_shared_age_id(struct netdev *netdev,
     *shared_action = shared_age_ctx_data.shared_action;
 out:
     if (ret) {
-        put_context_data_by_id(&shared_age_id_md, devargs, *shared_age_id);
+        put_context_data_by_id(&shared_age_id_md, &domain_id, *shared_age_id);
     }
     return 0;
 }
@@ -4767,10 +4761,10 @@ netdev_offload_dpdk_ct_counter_query(struct netdev *netdev OVS_UNUSED,
         goto err;
     }
     shared_age_netdev =
-        netdev_dpdk_get_netdev_by_devargs(shared_age_ctx_data.devargs);
+       netdev_dpdk_get_netdev_by_domain_id(shared_age_ctx_data.domain_id);
     if (!shared_age_netdev) {
-        VLOG_ERR_RL(&rl, "Could not get netdev for devargs=%s",
-                    shared_age_ctx_data.devargs);
+        VLOG_ERR_RL(&rl, "Could not get netdev for domain_id=%"PRIu16,
+                    shared_age_ctx_data.domain_id);
         ret = -1;
         goto err;
     }
@@ -4783,7 +4777,7 @@ netdev_offload_dpdk_ct_counter_query(struct netdev *netdev OVS_UNUSED,
     }
     netdev_close(shared_age_netdev);
 err:
-    put_context_data_by_id(&shared_age_id_md, shared_age_ctx_data.devargs,
+    put_context_data_by_id(&shared_age_id_md, &shared_age_ctx_data.domain_id,
                            shared_age_id);
     return ret;
 }
