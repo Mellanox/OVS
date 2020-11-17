@@ -60,3 +60,5 @@ Change-Id=I2dbdf6ac2343cf88b61052554f5db1384e906d8d; subject=netdev-offload-dpdk
 Change-Id=If15b13c5fc6ac80c3422d7765feb3f47a5787e7e; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=Ic57c141a178aa2eb8f1027f240220939a948b866; subject=Revert "dpif-netdev: Revert using locked queue for offloads"; feature=mt-flow; upstream_status=NA; general=;
 Change-Id=Id433c02479ff317a1a5114e8059b4ee53c66a5b9; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Id4bc6483691977ce4d69d5725a07001c576accb8; subject=netdev-dpdk: Add option to configure VF MAC address.; feature=dpdk; upstream_status=accepted; general=;
+Change-Id=I29a98839f496ab8d263000a8419f6b75241535c7; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
