@@ -446,7 +446,7 @@ union dp_offload_thread_data {
 };
 
 struct dp_offload_thread_item {
-    struct mpsc_queue_node node;
+    struct ovs_list node;
     int type;
     struct dp_netdev *dp;
     union dp_offload_thread_data data[0];
@@ -454,7 +454,9 @@ struct dp_offload_thread_item {
 
 struct dp_offload_thread {
     PADDED_MEMBERS(CACHE_LINE_SIZE,
-        struct mpsc_queue queue;
+        struct ovs_mutex mutex;
+        struct ovs_list list;
+        pthread_cond_t cond;
         atomic_uint64_t enqueued_item;
         atomic_uint64_t ct_connections;
         struct cmap megaflow_to_mark;
@@ -953,7 +955,11 @@ dp_netdev_offload_init(void)
         dp_offload_threads = xcalloc(nb_offload_thread,
                                      sizeof *dp_offload_threads);
         for (i = 0; i < nb_offload_thread; i++) {
-            mpsc_queue_init(&dp_offload_threads[i].queue);
+
+            ovs_list_init(&dp_offload_threads[i].list);
+            ovs_mutex_init(&dp_offload_threads[i].mutex);
+            xpthread_cond_init(&dp_offload_threads[i].cond, NULL);
+
             cmap_init(&dp_offload_threads[i].megaflow_to_mark);
             cmap_init(&dp_offload_threads[i].mark_to_flow);
             atomic_init(&dp_offload_threads[i].enqueued_item, 0);
@@ -990,8 +996,14 @@ dp_netdev_append_ct_offload(struct ct_flow_offload_item *offload)
     i = netdev_offload_ufid_to_thread_id(
                                     ovs_u128_xor(offload[CT_DIR_INIT].ufid,
                                                  offload[CT_DIR_REP].ufid));
-    mpsc_queue_insert(&dp_offload_threads[i].queue, &offload_item->node);
+
+    ovs_mutex_lock(&dp_offload_threads[i].mutex);
+
+    ovs_list_push_back(&dp_offload_threads[i].list, &offload_item->node);
     atomic_count_inc64(&dp_offload_threads[i].enqueued_item);
+    xpthread_cond_signal(&dp_offload_threads[i].cond);
+
+    ovs_mutex_unlock(&dp_offload_threads[i].mutex);
 }
 
 static void
@@ -2780,8 +2792,14 @@ dp_netdev_append_flow_offload(struct dp_flow_offload_item *offload)
 
     dp_netdev_offload_init();
     i = netdev_offload_ufid_to_thread_id(offload->flow->mega_ufid);
-    mpsc_queue_insert(&dp_offload_threads[i].queue, &offload_item->node);
+
+    ovs_mutex_lock(&dp_offload_threads[i].mutex);
+
+    ovs_list_push_back(&dp_offload_threads[i].list, &offload_item->node);
     atomic_count_inc64(&dp_offload_threads[i].enqueued_item);
+    xpthread_cond_signal(&dp_offload_threads[i].cond);
+
+    ovs_mutex_unlock(&dp_offload_threads[i].mutex);
 }
 
 static int
@@ -3217,8 +3235,6 @@ dp_netdev_ct_offload_handle(struct dp_offload_thread_item *offload_item)
     }
 }
 
-#define DP_NETDEV_OFFLOAD_BACKOFF_MIN 1
-#define DP_NETDEV_OFFLOAD_BACKOFF_MAX 64
 #define DP_NETDEV_OFFLOAD_QUIESCE_INTERVAL_MS 10
 
 static void *
@@ -3226,82 +3242,68 @@ dp_netdev_flow_offload_main(void *arg)
 {
     struct dp_offload_thread_item *offload_item;
     struct dp_offload_thread *ofl_thread = arg;
-    enum mpsc_queue_poll_result poll_result;
     long long int next_rcu_quiesce;
-    struct mpsc_queue *queue;
-    uint64_t backoff;
+    struct ovs_list *list = &ofl_thread->list;
+    struct ovs_list *elt;
     const char *op;
     int ret;
 
-    queue = &ofl_thread->queue;
-    if (!mpsc_queue_acquire(queue)) {
-        VLOG_ERR("failed to register as consumer of the offload queue.\n");
-        return NULL;
-    }
-
-    backoff = DP_NETDEV_OFFLOAD_BACKOFF_MIN;
     for (;;) {
-        struct mpsc_queue_node *node;
 
-        while ((poll_result = mpsc_queue_poll(queue, &node)) ==
-               MPSC_QUEUE_EMPTY) {
-            xnanosleep(backoff * 1E6);
-            if (backoff < DP_NETDEV_OFFLOAD_BACKOFF_MAX) {
-                backoff <<= 1;
-            }
+        ovs_mutex_lock(&ofl_thread->mutex);
+
+        if (ovs_list_is_empty(list)) {
+            ovsrcu_quiesce_start();
+            ovs_mutex_cond_wait(&ofl_thread->cond,
+                                &ofl_thread->mutex);
+            ovsrcu_quiesce_end();
         }
+        elt = ovs_list_pop_front(list);
+        atomic_count_dec64(&ofl_thread->enqueued_item);
 
-        backoff = DP_NETDEV_OFFLOAD_BACKOFF_MIN;
+        ovs_mutex_unlock(&ofl_thread->mutex);
+
         next_rcu_quiesce = time_msec() + DP_NETDEV_OFFLOAD_QUIESCE_INTERVAL_MS;
-        do {
-            if (poll_result == MPSC_QUEUE_RETRY) {
-                continue;
-            }
+        offload_item = CONTAINER_OF(elt, struct dp_offload_thread_item, node);
 
-            offload_item = CONTAINER_OF(node, struct dp_offload_thread_item,
-                                        node);
-            atomic_count_dec64(&ofl_thread->enqueued_item);
+        if (offload_item->type == DP_FLOW_OFFLOAD_ITEM) {
+            struct dp_flow_offload_item *dp_offload =
+                    &offload_item->data->flow_offload;
 
-            if (offload_item->type == DP_FLOW_OFFLOAD_ITEM) {
-                struct dp_flow_offload_item *dp_offload =
-                        &offload_item->data->flow_offload;
-
-                switch (dp_offload->op) {
-                case DP_NETDEV_FLOW_OFFLOAD_OP_ADD:
-                    op = "add";
-                    ret = dp_netdev_flow_offload_put(offload_item);
-                    break;
-                case DP_NETDEV_FLOW_OFFLOAD_OP_MOD:
-                    op = "modify";
-                    ret = dp_netdev_flow_offload_put(offload_item);
-                    break;
-                case DP_NETDEV_FLOW_OFFLOAD_OP_DEL:
-                    op = "delete";
-                    ret = dp_netdev_flow_offload_del(offload_item);
-                    break;
-                default:
-                    OVS_NOT_REACHED();
-                }
-                VLOG_DBG("%s to %s netdev flow "UUID_FMT,
-                         ret == 0 ? "succeed" : "failed", op,
-                         UUID_ARGS(
-                             (struct uuid *)&dp_offload->flow->mega_ufid));
-            } else if (offload_item->type == DP_CT_OFFLOAD_ITEM) {
-                dp_netdev_ct_offload_handle(offload_item);
-            } else {
+            switch (dp_offload->op) {
+            case DP_NETDEV_FLOW_OFFLOAD_OP_ADD:
+                op = "add";
+                ret = dp_netdev_flow_offload_put(offload_item);
+                break;
+            case DP_NETDEV_FLOW_OFFLOAD_OP_MOD:
+                op = "modify";
+                ret = dp_netdev_flow_offload_put(offload_item);
+                break;
+            case DP_NETDEV_FLOW_OFFLOAD_OP_DEL:
+                op = "delete";
+                ret = dp_netdev_flow_offload_del(offload_item);
+                break;
+            default:
                 OVS_NOT_REACHED();
             }
+            VLOG_DBG("%s to %s netdev flow "UUID_FMT,
+                     ret == 0 ? "succeed" : "failed", op,
+                     UUID_ARGS(
+                         (struct uuid *)&dp_offload->flow->mega_ufid));
+        } else if (offload_item->type == DP_CT_OFFLOAD_ITEM) {
+            dp_netdev_ct_offload_handle(offload_item);
+        } else {
+            OVS_NOT_REACHED();
+        }
 
-            dp_netdev_offload_item_unref(offload_item);
+        dp_netdev_offload_item_unref(offload_item);
 
-            /* Do RCU synchronization at fixed interval. */
-            if (time_msec() > next_rcu_quiesce) {
-                if (!ovsrcu_try_quiesce()) {
-                    next_rcu_quiesce += DP_NETDEV_OFFLOAD_QUIESCE_INTERVAL_MS;
-                }
+        /* Do RCU synchronization at fixed interval. */
+        if (time_msec() > next_rcu_quiesce) {
+            if (!ovsrcu_try_quiesce()) {
+                next_rcu_quiesce += DP_NETDEV_OFFLOAD_QUIESCE_INTERVAL_MS;
             }
-        } while ((poll_result = mpsc_queue_poll(queue, &node)) !=
-                 MPSC_QUEUE_EMPTY);
+        }
     }
 
     return NULL;
