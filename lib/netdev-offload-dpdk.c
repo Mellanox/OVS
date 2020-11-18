@@ -2131,11 +2131,13 @@ struct act_vars {
     struct flows_counter_key flows_counter_key;
     enum tnl_type tnl_type;
     bool is_outer_ipv4;
+    struct ds s_extra;
 };
 
 static void
 dump_flow_action(struct ds *s, struct ds *s_extra,
-                 const struct rte_flow_action *actions)
+                 const struct rte_flow_action *actions,
+                 struct act_vars *act_vars)
 {
     if (actions->type == RTE_FLOW_ACTION_TYPE_MARK) {
         const struct rte_flow_action_mark *mark = actions->conf;
@@ -2305,6 +2307,13 @@ dump_flow_action(struct ds *s, struct ds *s_extra,
         ds_put_cstr(s, "/ ");
     } else if (actions->type == RTE_FLOW_ACTION_TYPE_SHARED) {
         ds_put_format(s, "SHARED %p ", actions->conf);
+    } else if (actions->type == RTE_FLOW_ACTION_TYPE_RAW_DECAP) {
+        const struct rte_flow_action_raw_decap *raw_decap = actions->conf;
+
+        ds_put_cstr(s, "raw_decap index 0 / ");
+        if (raw_decap) {
+            ds_put_format(s_extra, "%s", ds_cstr(&act_vars->s_extra));
+        }
     } else {
         ds_put_format(s, "unknown rte flow action (%d)\n", actions->type);
     }
@@ -2314,7 +2323,8 @@ static struct ds *
 dump_flow(struct ds *s, struct ds *s_extra,
           const struct rte_flow_attr *attr,
           const struct rte_flow_item *items,
-          const struct rte_flow_action *actions)
+          const struct rte_flow_action *actions,
+          struct act_vars *act_vars)
 {
     if (attr) {
         dump_flow_attr(s, attr);
@@ -2325,7 +2335,7 @@ dump_flow(struct ds *s, struct ds *s_extra,
     }
     ds_put_cstr(s, "end actions ");
     while (actions && actions->type != RTE_FLOW_ACTION_TYPE_END) {
-        dump_flow_action(s, s_extra, actions++);
+        dump_flow_action(s, s_extra, actions++, act_vars);
     }
     ds_put_cstr(s, "end");
     return s;
@@ -2338,7 +2348,8 @@ create_rte_flow(struct netdev *netdev,
                 const struct rte_flow_action *actions,
                 struct rte_flow_error *error,
                 struct flow_item *fi,
-                int pos)
+                int pos,
+                struct act_vars *act_vars)
 {
     struct ds s_extra = DS_EMPTY_INITIALIZER;
     struct ds s = DS_EMPTY_INITIALIZER;
@@ -2353,7 +2364,7 @@ create_rte_flow(struct netdev *netdev,
         data = netdev->hw_info.offload_data;
         atomic_count_inc64(&data->rte_flow_counters[tid]);
         if (!VLOG_DROP_DBG(&rl)) {
-            dump_flow(&s, &s_extra, attr, items, actions);
+            dump_flow(&s, &s_extra, attr, items, actions, act_vars);
             extra_str = ds_cstr(&s_extra);
             VLOG_DBG_RL(&rl, "%s: rte_flow 0x%"PRIxPTR" %s  flow create %d %s",
                         netdev_get_name(netdev), (intptr_t) fi->rte_flow[pos],
@@ -2369,7 +2380,7 @@ create_rte_flow(struct netdev *netdev,
         VLOG_RL(&rl, level, "%s: rte_flow creation failed: %d (%s).",
                 netdev_get_name(netdev), error->type, error->message);
         if (!vlog_should_drop(&this_module, level, &rl)) {
-            dump_flow(&s, &s_extra, attr, items, actions);
+            dump_flow(&s, &s_extra, attr, items, actions, act_vars);
             extra_str = ds_cstr(&s_extra);
             VLOG_RL(&rl, level, "%s: Failed flow: %s  flow create %d %s",
                     netdev_get_name(netdev), extra_str,
@@ -2385,7 +2396,8 @@ static int
 add_e2e_miss_flow(struct netdev *netdev,
                   const char *devargs,
                   uint32_t e2e_table_id,
-                  uint32_t table_id)
+                  uint32_t table_id,
+                  struct act_vars *act_vars)
 {
     struct rte_flow_item miss_items[] = {
         { .type = RTE_FLOW_ITEM_TYPE_ETH, },
@@ -2417,7 +2429,7 @@ add_e2e_miss_flow(struct netdev *netdev,
     }
 
     ret = create_rte_flow(netdev, &attr, miss_items, miss_actions,
-                          &error, &flow_item, 0);
+                          &error, &flow_item, 0, act_vars);
     if (ret) {
         return -1;
     }
@@ -2434,7 +2446,8 @@ static int
 add_miss_flow(struct netdev *netdev,
               const char *devargs,
               uint32_t table_id,
-              uint32_t mark_id);
+              uint32_t mark_id,
+              struct act_vars *act_vars);
 static int
 create_offload_flow(struct netdev *netdev,
                     const uint32_t group_id,
@@ -2475,7 +2488,7 @@ create_offload_flow(struct netdev *netdev,
                 goto err;
             }
             if (add_e2e_miss_flow(netdev, fi->devargs, fi->self_e2e_table_id,
-                                  self_table_id)) {
+                                  self_table_id, act_vars)) {
                 goto err;
             }
         }
@@ -2501,12 +2514,13 @@ create_offload_flow(struct netdev *netdev,
                     goto err;
                 }
                 if (add_e2e_miss_flow(netdev, fi->devargs,
-                                      fi->next_e2e_table_id, next_table_id)) {
+                                      fi->next_e2e_table_id,
+                                      next_table_id, act_vars)) {
                     goto err;
                 }
             }
             if (add_miss_flow(netdev, fi->devargs, next_table_id,
-                              act_resources->flow_miss_ctx_id)) {
+                              act_resources->flow_miss_ctx_id, act_vars)) {
                 goto err;
             }
         }
@@ -2528,7 +2542,8 @@ create_offload_flow(struct netdev *netdev,
         }
         act_vars->shared->conf = shared_action;
     }
-    ret = create_rte_flow(netdev, &attr, items, actions, error, fi, pos);
+    ret = create_rte_flow(netdev, &attr, items, actions,
+                          error, fi, pos, act_vars);
     if (act_vars->shared) {
         act_vars->shared->conf = NULL;
     }
@@ -3429,7 +3444,8 @@ add_flow_mark_rss_actions(struct flow_actions *actions,
 static struct rte_flow *
 netdev_offload_dpdk_mark_rss(struct flow_patterns *patterns,
                              struct netdev *netdev,
-                             uint32_t flow_mark)
+                             uint32_t flow_mark,
+                             struct act_vars *act_vars)
 {
     struct flow_actions actions = { .actions = NULL, .cnt = 0 };
     struct flow_item flow_item = { .devargs = NULL };
@@ -3444,7 +3460,7 @@ netdev_offload_dpdk_mark_rss(struct flow_patterns *patterns,
     add_flow_mark_rss_actions(&actions, flow_mark, netdev);
 
     create_rte_flow(netdev, &flow_attr, patterns->items, actions.actions,
-                    &error, &flow_item, 0);
+                    &error, &flow_item, 0, act_vars);
 
     free_flow_actions(&actions, true);
     return flow_item.rte_flow[0];
@@ -3662,10 +3678,10 @@ parse_set_actions(struct flow_actions *actions,
     return 0;
 }
 
-/* Maximum number of items in struct rte_flow_action_vxlan_encap.
- * ETH / IPv4(6) / UDP / VXLAN / END
+/* Maximum number of items in vxlan/geneve encap/decap.
+ * ETH / IPv4(6) / UDP / VXLAN(GENEVE) / END
  */
-#define ACTION_VXLAN_ENCAP_ITEMS_NUM 5
+#define TUNNEL_ITEMS_NUM 5
 
 static int
 add_vxlan_encap_action(struct flow_actions *actions,
@@ -3675,7 +3691,7 @@ add_vxlan_encap_action(struct flow_actions *actions,
     const struct udp_header *udp;
     struct vxlan_data {
         struct rte_flow_action_vxlan_encap conf;
-        struct rte_flow_item items[ACTION_VXLAN_ENCAP_ITEMS_NUM];
+        struct rte_flow_item items[TUNNEL_ITEMS_NUM];
     } *vxlan_data;
     BUILD_ASSERT_DECL(offsetof(struct vxlan_data, conf) == 0);
     const void *vxlan;
@@ -3828,7 +3844,8 @@ static int
 add_miss_flow(struct netdev *netdev,
               const char *devargs,
               uint32_t table_id,
-              uint32_t mark_id)
+              uint32_t mark_id,
+              struct act_vars *act_vars)
 {
     struct rte_flow_item miss_items[] = {
         { .type = RTE_FLOW_ITEM_TYPE_ETH, },
@@ -3863,7 +3880,7 @@ add_miss_flow(struct netdev *netdev,
 
     miss_mark.id = mark_id;
     ret = create_rte_flow(netdev, &attr, miss_items, miss_actions,
-                          &error, &flow_item, 0);
+                          &error, &flow_item, 0, act_vars);
     if (ret) {
         return -1;
     }
@@ -3929,10 +3946,46 @@ add_recirc_action(struct flow_actions *actions,
     return 0;
 }
 
+static void
+dump_raw_decap(struct act_vars *act_vars)
+{
+    ds_init(&act_vars->s_extra);
+    ds_put_format(&act_vars->s_extra, "set raw_decap eth / udp / ");
+    if (act_vars->is_outer_ipv4) {
+        ds_put_format(&act_vars->s_extra, "ipv4 / ");
+    } else {
+        ds_put_format(&act_vars->s_extra, "ipv6 / ");
+    }
+    ds_put_format(&act_vars->s_extra, "geneve / end_set");
+}
+
 static int
 add_vxlan_decap_action(struct flow_actions *actions)
 {
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_VXLAN_DECAP, NULL);
+    return 0;
+}
+
+static int
+add_geneve_decap_action(struct flow_actions *actions,
+                        struct act_vars *act_vars)
+{
+    struct rte_flow_action_raw_decap *conf;
+
+    conf = xmalloc(sizeof (struct rte_flow_action_raw_decap));
+    conf->size = sizeof (struct eth_header) +
+                 sizeof (struct udp_header) +
+                 sizeof (struct geneve_opt) +
+                 (act_vars->is_outer_ipv4 ?
+                  sizeof (struct ip_header) :
+                  sizeof (struct ovs_16aligned_ip6_hdr));
+
+    conf->data = NULL;
+
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_RAW_DECAP, conf);
+    if (VLOG_IS_DBG_ENABLED()) {
+        dump_raw_decap(act_vars);
+    }
     return 0;
 }
 
@@ -3942,6 +3995,9 @@ add_tnl_decap_action(struct flow_actions *actions,
 {
     if (act_vars->tnl_type == TNL_TYPE_VXLAN) {
         return add_vxlan_decap_action(actions);
+    }
+    if (act_vars->tnl_type == TNL_TYPE_GENEVE) {
+        return add_geneve_decap_action(actions, act_vars);
     }
     return -1;
 }
@@ -4148,7 +4204,8 @@ split_pre_post_ct_actions(const struct rte_flow_action *actions,
     while (actions && actions->type != RTE_FLOW_ACTION_TYPE_END) {
         if (actions->type == RTE_FLOW_ACTION_TYPE_VXLAN_DECAP ||
             actions->type == RTE_FLOW_ACTION_TYPE_SET_TAG ||
-            actions->type == RTE_FLOW_ACTION_TYPE_SET_META) {
+            actions->type == RTE_FLOW_ACTION_TYPE_SET_META ||
+            actions->type == RTE_FLOW_ACTION_TYPE_RAW_DECAP) {
             add_flow_action(pre_ct_actions, actions->type, actions->conf);
         } else {
             add_flow_action(post_ct_actions, actions->type, actions->conf);
@@ -4506,7 +4563,7 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
         if (act_vars.vport == ODPP_NONE && act_vars.recirc_id == 0) {
             flow_item.rte_flow[0] =
                 netdev_offload_dpdk_mark_rss(&patterns, netdev,
-                                             info->flow_mark);
+                                             info->flow_mark, &act_vars);
         } else {
             flow_item.rte_flow[0] = NULL;
         }
