@@ -311,30 +311,25 @@ ufid_to_rte_flow_data_unref(struct netdev *netdev,
     ovsrcu_postpone(free, data);
 }
 
-static inline int
+static inline void
 ufid_to_rte_flow_disassociate(struct netdev *netdev,
-                              const ovs_u128 *ufid)
+                              struct ufid_to_rte_flow_data *data)
 {
     struct cmap *map = offload_data_map(netdev);
-    struct ufid_to_rte_flow_data *data;
     size_t hash;
 
     offload_data_lock(netdev);
-    data = ufid_to_rte_flow_data_find_protected(netdev, ufid);
 
-    if (!data) {
-        offload_data_unlock(netdev);
-        VLOG_WARN("ufid "UUID_FMT" is not associated with an rte flow",
-                  UUID_ARGS((struct uuid *) ufid));
-        return -1;
-    }
-
+    /* Usual CMAP usage requires to make sure, under the critical section the
+     * object has not been yet removed by another thread. However, in our case
+     * here, the key is ufid which is handled only by this thread. Thus no need
+     * to search again here.
+     */
     hash = hash_bytes(&data->ufid, sizeof data->ufid, 0);
     cmap_remove(map, CONST_CAST(struct cmap_node *, &data->node), hash);
     ufid_to_rte_flow_data_unref(netdev, data);
-    offload_data_unlock(netdev);
 
-    return 0;
+    offload_data_unlock(netdev);
 }
 
 /* A generic data structure used for mapping data to id and id to data. The
@@ -4750,6 +4745,7 @@ out:
 static int
 netdev_offload_dpdk_remove_flows(struct ufid_to_rte_flow_data *rte_flow_data)
 {
+    struct ufid_to_rte_flow_data *data;
     struct netdev *flow_netdev;
     struct flows_handle *flows;
     struct netdev *netdev;
@@ -4794,7 +4790,8 @@ netdev_offload_dpdk_remove_flows(struct ufid_to_rte_flow_data *rte_flow_data)
         netdev_close(flow_netdev);
     }
 
-    ret = ufid_to_rte_flow_disassociate(netdev, ufid);
+    ufid_to_rte_flow_disassociate(netdev, data);
+    ret = 0;
 out:
     free_flow_handle(flows);
     return ret;
