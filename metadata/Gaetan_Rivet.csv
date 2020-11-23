@@ -71,3 +71,16 @@ Change-Id=I7213cc15ea133cced37cb407a334e81123be7182; subject=Update metadata; fe
 Change-Id=I3b316452f6163178a7da606cb71a5ada87d255a7; subject=dp-packet: Fix address-of-packed-member warning; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I2b2026b16b7691bdd7b4870e4bfcc62ec0b1b66e; subject=Revert "seq-pool: Provide lockless implementation for single-threaded cases"; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I2cdb0e808ba2555c79e2779fdc5c28e2d1ea3242; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I8b3a52975fab3c024e40f3a5e4f71fe500ca2aa3; subject=conntrack: Short-circuit offload queries; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I94b47b4831bd9bae28ec50276b1962ef67fa7db0; subject=conntrack: Use rcu-lists to store conn expirations; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I7692905a8d7307abfc250c976b40750d0ee56217; subject=conntrack: Use a cmap to store zone limits; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I03280117efbd744298e25841e521cffc70113620; subject=conntrack-tp: Use a cmap to store timeout policies; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I86d26ab2c1ef7db5290b6b19ced96b2a1516b4f6; subject=conntrack: Refactor conn locking in ct-sweep; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Ia76667b32581de15aa7c648585c08544f42bf6b5; subject=conntrack: Batch connection cleaning; feature=dpdk; upstream_status=NA; general=;
+Change-Id=If2a6bf094faa9075049c4e81bcd924f69617c003; subject=conntrack: Quiesce ct-sweep at fixed intervals; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I811467ddf253eb44356754105937ea6b8fb12ad1; subject=conntrack: Inverse conn and ct lock precedence; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I28a804ec4ad95277128bbae6cb779d546f550f31; subject=conntrack: Do not schedule zero ms timers; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I262c7ae1c0ed98ff36e398764aa4b9a178f9d770; subject=conntrack: Do not rate limit ct-sweep; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I65146aebd7ff969f98700413376de5b221da633a; subject=conntrack: Do not log empty ct-sweep; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Iaba7d8e894fb4eeccd3888ae3d68d1b9257ce48e; subject=conntrack: Use an atomic conn expiration value; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Ib47d2994c28253a7d44f95816a454768bfbe9457; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
