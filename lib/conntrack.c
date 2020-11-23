@@ -1847,6 +1847,8 @@ ct_sweep(struct conntrack *ct, long long now, size_t limit)
 
     for (unsigned i = 0; i < N_CT_TM; i++) {
         RCULIST_FOR_EACH (conn_it, node, &ct->exp_lists[i]) {
+            bool next_list = false;
+
             conn = conn_it->up;
             ovs_mutex_lock(&conn->lock);
             hw_updated = false;
@@ -1871,23 +1873,30 @@ ct_sweep(struct conntrack *ct, long long now, size_t limit)
                 }
             }
             conn->prev_query = now;
+
+            if (!hw_updated &&
+                (now < conn->expiration || count >= limit)) {
+                min_expiration = MIN(min_expiration, conn->expiration);
+                next_list = true;
+            }
+
+            ovs_mutex_unlock(&conn->lock);
+
             if (hw_updated) {
-                ovs_mutex_unlock(&conn->lock);
                 continue;
             }
-            if (now < conn->expiration || count >= limit) {
-                min_expiration = MIN(min_expiration, conn->expiration);
-                ovs_mutex_unlock(&conn->lock);
-                if (count >= limit) {
-                    /* Do not check other lists. */
-                    COVERAGE_INC(conntrack_long_cleanup);
-                    goto out;
-                }
-                break;
-            } else {
-                ovs_mutex_unlock(&conn->lock);
-                conn_clean(ct, conn);
+
+            if (count >= limit) {
+                /* Do not check other lists. */
+                COVERAGE_INC(conntrack_long_cleanup);
+                goto out;
             }
+
+            if (next_list) {
+                break;
+            }
+
+            conn_clean(ct, conn);
             count++;
         }
     }
