@@ -1819,6 +1819,27 @@ set_label(struct dp_packet *pkt, struct conn *conn,
 }
 
 
+
+static void
+conn_batch_clean(struct conntrack *ct,
+                 struct conn **conns, size_t *batch_count)
+    OVS_REQUIRES(ct->ct_lock)
+{
+    size_t i;
+
+    if (*batch_count == 0) {
+        return;
+    }
+
+    for (i = 0; i < *batch_count; i++) {
+        conn_clean(ct, conns[i]);
+    }
+
+    *batch_count = 0;
+}
+
+#define CT_SWEEP_BATCH_SIZE 32
+
 /* Delete the expired connections from 'ctb', up to 'limit'. Returns the
  * earliest expiration time among the remaining connections in 'ctb'.  Returns
  * LLONG_MAX if 'ctb' is empty.  The return value might be smaller than 'now',
@@ -1828,6 +1849,8 @@ ct_sweep(struct conntrack *ct, long long now, size_t limit)
 {
     struct conn *conn;
     struct conn_exp_node *conn_it;
+    struct conn *conn_batch[CT_SWEEP_BATCH_SIZE];
+    size_t batch_count = 0;
     long long min_expiration = LLONG_MAX;
     struct ct_flow_offload_item item;
     enum ct_timeout tm = 0;
@@ -1866,13 +1889,21 @@ ct_sweep(struct conntrack *ct, long long now, size_t limit)
             }
             conn->prev_query = now;
 
-            if (!hw_updated &&
-                (now < conn->expiration || count >= limit)) {
-                min_expiration = MIN(min_expiration, conn->expiration);
-                next_list = true;
+            if (!hw_updated) {
+                if (now < conn->expiration || count >= limit) {
+                    min_expiration = MIN(min_expiration, conn->expiration);
+                    next_list = true;
+                } else {
+                    conn_batch[batch_count++] = conn;
+                    count++;
+                }
             }
 
             ovs_mutex_unlock(&conn->lock);
+
+            if (batch_count == ARRAY_SIZE(conn_batch)) {
+                conn_batch_clean(ct, conn_batch, &batch_count);
+            }
 
             if (hw_updated) {
                 continue;
@@ -1887,13 +1918,11 @@ ct_sweep(struct conntrack *ct, long long now, size_t limit)
             if (next_list) {
                 break;
             }
-
-            conn_clean(ct, conn);
-            count++;
         }
     }
 
 out:
+    conn_batch_clean(ct, conn_batch, &batch_count);
     VLOG_DBG("conntrack cleanup %"PRIuSIZE" entries in %lld msec", count,
              time_msec() - now);
     ovs_mutex_unlock(&ct->ct_lock);
