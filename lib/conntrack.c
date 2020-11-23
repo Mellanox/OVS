@@ -102,6 +102,7 @@ static enum ct_update_res conn_update(struct conntrack *ct, struct conn *conn,
                                       struct dp_packet *pkt,
                                       struct conn_lookup_ctx *ctx,
                                       long long now);
+static long long int conn_expiration(const struct conn *);
 static bool conn_expired(struct conn *, long long now);
 static void set_mark(struct dp_packet *, struct conn *,
                      uint32_t val, uint32_t mask);
@@ -1931,7 +1932,7 @@ rcu_quiesce:
             conn->prev_query = now;
 
             if (!hw_updated) {
-                if (now < conn->expiration || count >= limit) {
+                if (!conn_expired(conn, now) || count >= limit) {
                     min_expiration = MIN(min_expiration, conn->expiration);
                     next_list = true;
                 } else {
@@ -2804,14 +2805,20 @@ conn_update(struct conntrack *ct, struct conn *conn, struct dp_packet *pkt,
     return update_res;
 }
 
+static long long int
+conn_expiration(const struct conn *conn)
+{
+    long long int expiration;
+
+    atomic_read_relaxed(&conn->expiration, &expiration);
+    return expiration;
+}
+
 static bool
 conn_expired(struct conn *conn, long long now)
 {
     if (conn->conn_type == CT_CONN_TYPE_DEFAULT) {
-        ovs_mutex_lock(&conn->lock);
-        bool expired = now >= conn->expiration ? true : false;
-        ovs_mutex_unlock(&conn->lock);
-        return expired;
+        return now >= conn_expiration(conn);
     }
     return false;
 }
@@ -2955,7 +2962,7 @@ conn_to_ct_dpif_entry(const struct conn *conn, struct ct_dpif_entry *entry,
     entry->mark = conn->mark;
     memcpy(&entry->labels, &conn->label, sizeof entry->labels);
 
-    long long expiration = conn->expiration - now;
+    long long expiration = conn_expiration(conn) - now;
 
     struct ct_l4_proto *class = l4_protos[conn->key.nw_proto];
     if (class->conn_get_protoinfo) {
