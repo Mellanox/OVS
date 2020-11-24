@@ -2002,20 +2002,12 @@ conntrack_clean(struct conntrack *ct, long long now)
  * there is an actual connection that expires, or because a new connection
  * might be created with the minimum timeout).
  *
- * The logic below has two goals:
- *
- * - We want to reduce the number of wakeups and batch connection cleanup
- *   when the load is not very high.  CT_CLEAN_INTERVAL ensures that if we
- *   are coping with the current cleanup tasks, then we wait at least
- *   5 seconds to do further cleanup.
- *
- * - We don't want to keep the map locked too long, as we might prevent
- *   traffic from flowing.  CT_CLEAN_MIN_INTERVAL ensures that if cleanup is
- *   behind, there is at least some 200ms blocks of time when the map will be
- *   left alone, so the datapath can operate unhindered.
+ * We want to reduce the number of wakeups and batch connection cleanup
+ * when the load is not very high.  CT_CLEAN_INTERVAL ensures that if we
+ * are coping with the current cleanup tasks, then we wait at least
+ * 5 seconds to do further cleanup.
  */
 #define CT_CLEAN_INTERVAL 5000 /* 5 seconds */
-#define CT_CLEAN_MIN_INTERVAL 200  /* 0.2 seconds */
 
 static void *
 clean_thread_main(void *f_)
@@ -2027,12 +2019,10 @@ clean_thread_main(void *f_)
         long long now = time_msec();
         next_wake = conntrack_clean(ct, now);
 
-        if (next_wake < now) {
-            poll_immediate_wake();
-        } else if (next_wake < now + CT_CLEAN_MIN_INTERVAL) {
-            poll_timer_wait_until(now + CT_CLEAN_MIN_INTERVAL);
-        } else {
+        if (next_wake > now) {
             poll_timer_wait_until(MAX(next_wake, now + CT_CLEAN_INTERVAL));
+        } else {
+            poll_immediate_wake();
         }
         latch_wait(&ct->clean_thread_exit);
         poll_block();
