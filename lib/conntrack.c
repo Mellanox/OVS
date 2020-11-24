@@ -1966,8 +1966,10 @@ rcu_quiesce:
 
 out:
     conn_batch_clean(ct, conn_batch, &batch_count);
-    VLOG_DBG("conntrack cleanup %"PRIuSIZE" entries in %lld msec", count,
-             time_msec() - start);
+    if (count > 0) {
+        VLOG_DBG("conntrack cleanup %"PRIuSIZE" entries in %lld msec", count,
+                 time_msec() - start);
+    }
     return min_expiration;
 }
 
