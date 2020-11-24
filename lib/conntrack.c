@@ -2020,6 +2020,8 @@ clean_thread_main(void *f_)
         next_wake = conntrack_clean(ct, now);
 
         if (next_wake < now) {
+            poll_immediate_wake();
+        } else if (next_wake < now + CT_CLEAN_MIN_INTERVAL) {
             poll_timer_wait_until(now + CT_CLEAN_MIN_INTERVAL);
         } else {
             poll_timer_wait_until(MAX(next_wake, now + CT_CLEAN_INTERVAL));
