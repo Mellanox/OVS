@@ -554,11 +554,24 @@ context_release(struct context_release_item *item)
 
     ihash = hash_add(0, item->id);
 
-    CMAP_FOR_EACH_WITH_HASH_PROTECTED (data_cur, i2d_node, ihash,
-                                       &item->md->i2d_map) {
-        if (data_cur->id != item->id) {
-            continue;
+    if (item->associated) {
+        CMAP_FOR_EACH_WITH_HASH_PROTECTED (data_cur, associated_i2d_node,
+                                           ihash,
+                                           &item->md->associated_i2d_map) {
+            if (data_cur->id == item->id) {
+                break;
+            }
         }
+    } else {
+        CMAP_FOR_EACH_WITH_HASH_PROTECTED (data_cur, i2d_node, ihash,
+                                           &item->md->i2d_map) {
+            if (data_cur->id == item->id) {
+                break;
+            }
+        }
+    }
+
+    if (data_cur && data_cur->id == item->id) {
         if (!item->associated) {
             cmap_remove(&md->i2d_map, &data->i2d_node, data->i2d_hash);
             cmap_remove(&md->d2i_map, &data->d2i_node, data->d2i_hash);
