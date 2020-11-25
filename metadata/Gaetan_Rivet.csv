@@ -58,3 +58,5 @@ Change-Id=If862b76a8f9f6b060eea318670c69c5eed7ca9bd; subject=Update metadata; fe
 Change-Id=I3ce8842dcdd10742cde6facfc38ce3264b532cbf; subject=netdev-dpdk: Fix VDPA dev mutex release on config error; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I2dbdf6ac2343cf88b61052554f5db1384e906d8d; subject=netdev-offload-dpdk: Rewrite offload-data locks for Safety-Analysis; feature=mt-flow; upstream_status=NA; general=;
 Change-Id=If15b13c5fc6ac80c3422d7765feb3f47a5787e7e; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ic57c141a178aa2eb8f1027f240220939a948b866; subject=Revert "dpif-netdev: Revert using locked queue for offloads"; feature=mt-flow; upstream_status=NA; general=;
+Change-Id=Id433c02479ff317a1a5114e8059b4ee53c66a5b9; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
