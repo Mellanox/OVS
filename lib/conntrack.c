@@ -656,22 +656,26 @@ conn_key_lookup(struct conntrack *ct, const struct conn_key *key,
 {
     struct conn *conn;
     bool found = false;
+    bool is_reply = false;
 
     CMAP_FOR_EACH_WITH_HASH (conn, cm_node, hash, &ct->conns) {
-        if (!conn_key_cmp(&conn->key, key) && !conn_expired(conn, now)) {
-            found = true;
-            if (reply) {
-                *reply = false;
+        if (conn_key_cmp(&conn->key, key)) {
+            if (conn_key_cmp(&conn->rev_key, key)) {
+                continue;
+            } else {
+                is_reply = true;
             }
+        }
+
+        if (conn_expired(conn, now)) {
             break;
         }
-        if (!conn_key_cmp(&conn->rev_key, key) && !conn_expired(conn, now)) {
-            found = true;
-            if (reply) {
-                *reply = true;
-            }
-            break;
+
+        found = true;
+        if (reply) {
+            *reply = is_reply;
         }
+        break;
     }
 
     if (found && conn_out) {
