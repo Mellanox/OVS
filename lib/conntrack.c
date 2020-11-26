@@ -660,6 +660,17 @@ conn_key_lookup(struct conntrack *ct, const struct conn_key *key,
         }
 
         if (conn_expired(conn, now)) {
+            /* If the ct_sweep was not yet able to cleanup the connection,
+             * but it is expired, cleaning it immediately will avoid
+             * having a second insertion with the same key / flow from
+             * the datapath.
+             *
+             * This can happen when a connection was created at T0, then
+             * a new packet in the same flow is received at T1, and delta
+             * T1 - T0 as well as current ct_sweep expiration backlog is
+             * over the connection timeout.
+             */
+            conn_clean(ct, conn);
             break;
         }
 
