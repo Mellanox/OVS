@@ -321,8 +321,9 @@ conntrack_offload_del_conn(struct conntrack *ct,
         return;
     }
 
-    if (!conn->offloads.refcnt ||
-        ovs_refcount_unref(conn->offloads.refcnt) > 1) {
+    if (!ct_e2e_cache_enabled &&
+        (!conn->offloads.refcnt ||
+         ovs_refcount_unref(conn->offloads.refcnt) > 1)) {
         return;
     }
 
