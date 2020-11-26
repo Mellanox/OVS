@@ -3,3 +3,6 @@ Change-Id=I9ee6a0d6002dc982465a44845952816796705e30; subject=netdev-dpdk-vdpa: a
 Change-Id=I0593fbbb9c70ee9bc5a79f6752e43816b606f49c; subject=netdev-dpdk-vdpa: fix queues are not utilized fully; feature=bp_2_14; upstream_status=in_progress; general=;
 Change-Id=Ib624f90397f0ceb0c807b76249c3b7763c1c0cf7; subject=netdev-offload-dpdk: Support vxlan encap offload with load actions; feature=bp_2_14; upstream_status=in_progress; general=;
 Change-Id=I378f866eb976c6ee68680f02b0909c5149561182; subject=netdev-dpdk-vdpa: Fix vdpa interface creation failure; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=I25187b35a6ca4e6a26f046c61291af6bbe1462c0; subject=tun-metadata: Add ethernet and L3 protocol fields in tunnel metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I0da1370b65b8b6522144a4bbf454e43b4c69f156; subject=dpif-netdev: e2e: Add functions for merging a list of flows; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I416700b880ff872bf64f2593839d128875c78ccf; subject=dpif-netdev: update MT flow statistics with merged flow's counter; feature=dpdk; upstream_status=NA; general=;

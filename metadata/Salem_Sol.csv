@@ -1,3 +1,17 @@
 sep=;
 Change-Id=Ie819959bfbe5e0cd585a9d78eab37810e77d3932; subject=netdev-offload-dpdk: Introduce CT zone mapping; feature=bp_2_14; upstream_status=in_progress; general=;
 Change-Id=I8e8cd63cee56547c27ef557cdfa77397a6cd7597; subject=netdev-offload-dpdk: introduce ct_label mapping; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=I97b1f71182154a9001c9ff47d81386b61f7aed34; subject=dpif-netdev: Fix DB insertions; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I81fffb5587862781527e934603c34b14febde6a1; subject=dpif-netdev: e2e: Use merged flow pointer when removing from DB; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Id5133ed74113a32c21ba9dc204e82c68653c95f8; subject=dpif-netdev: e2e: Prevent double free of merged flow; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I15601997f472e24720685ab1d9ed952ec9c59f8e; subject=dpif: e2e: introduce a new API to dump the cache statistics; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Icc0fe86fce3ff5ab013e619a114d081246221706; subject=dpctl: e2e: introduce a new command to dump the cache statistics; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Ief33402c1756775fac96ca6a254b97daa70de165; subject=dpif-netdev: e2e: implement e2e cache dump statistics; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I2f139f166fd8187c90246413c48049270d143e51; subject=dpif: e2e: introduce a new API to dump the cache flows; feature=dpdk; upstream_status=NA; general=;
+Change-Id=If583f7f08bae58f72004c5f5e177d83876f9323e; subject=dpctl: e2e: Add new command to dump e2e cache flows; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I41652caf013d25520e43c3a81b005199c131eadf; subject=dpif-netdev: e2e: Implement e2e cache dump flows; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I36bd5133c26fe65e3896068b20707a05f7e145a4; subject=dpif-netdev: e2e: Change e2e statistics to atomic_count type; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I586774cb4f29ead7c0d9f64b824b8942852944f0; subject=dpif-netdev: e2e: Fix e2e statistic that are wrongly counted; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I4d5f733eb66074dca502f2867f773fda686ef731; subject=dpif-netdev: e2e: Modify e2e cache statistics; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Ibc7fe32317a16d82f48c0b1eb80f0425b0028e14; subject=dpif-netdev: e2e: Remove unused e2e cache statistic counters.; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I90ab5f24ed13e5e322e3c5dd52ce95018c7fdf5d; subject=dpif-netdev: e2e: Fix e2e cache merged flows dump; feature=dpdk; upstream_status=NA; general=;
