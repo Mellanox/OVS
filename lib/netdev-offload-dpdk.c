@@ -2072,6 +2072,35 @@ dump_vxlan_encap(struct ds *s, const struct rte_flow_item *items)
     }
 }
 
+enum ct_mode {
+    CT_MODE_NONE,
+    CT_MODE_CT,
+    CT_MODE_CT_NAT,
+    CT_MODE_CT_CONN,
+};
+
+enum tnl_type {
+    TNL_TYPE_NONE,
+    TNL_TYPE_VXLAN,
+    TNL_TYPE_GENEVE,
+};
+
+struct act_vars {
+    enum ct_mode ct_mode;
+    bool pre_ct_tuple_rewrite;
+    odp_port_t vport;
+    uint32_t recirc_id;
+    struct flow_tnl *tnl_key;
+    struct flow_tnl tnl_mask;
+    struct rte_flow_action_jump *jump;
+    bool is_e2e_cache_flow;
+    struct rte_flow_action *shared;
+    uintptr_t ct_counter_key;
+    struct flows_counter_key flows_counter_key;
+    enum tnl_type tnl_type;
+    bool is_outer_ipv4;
+};
+
 static void
 dump_flow_action(struct ds *s, struct ds *s_extra,
                  const struct rte_flow_action *actions)
@@ -2269,35 +2298,6 @@ dump_flow(struct ds *s, struct ds *s_extra,
     ds_put_cstr(s, "end");
     return s;
 }
-
-enum ct_mode {
-    CT_MODE_NONE,
-    CT_MODE_CT,
-    CT_MODE_CT_NAT,
-    CT_MODE_CT_CONN,
-};
-
-enum tnl_type {
-    TNL_TYPE_NONE,
-    TNL_TYPE_VXLAN,
-    TNL_TYPE_GENEVE,
-};
-
-struct act_vars {
-    enum ct_mode ct_mode;
-    bool pre_ct_tuple_rewrite;
-    odp_port_t vport;
-    uint32_t recirc_id;
-    struct flow_tnl *tnl_key;
-    struct flow_tnl tnl_mask;
-    struct rte_flow_action_jump *jump;
-    bool is_e2e_cache_flow;
-    struct rte_flow_action *shared;
-    uintptr_t ct_counter_key;
-    struct flows_counter_key flows_counter_key;
-    enum tnl_type tnl_type;
-    bool is_outer_ipv4;
-};
 
 static int
 create_rte_flow(struct netdev *netdev,
