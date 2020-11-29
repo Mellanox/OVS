@@ -2043,6 +2043,47 @@ dump_flow_pattern(struct ds *s, const struct rte_flow_item *item)
                                ntohl(*(ovs_be32 *)gnv_mask->vni) >> 8, 0);
          }
          ds_put_cstr(s, "/ ");
+    } else if (item->type == RTE_FLOW_ITEM_TYPE_GENEVE_OPT) {
+         const struct rte_flow_item_geneve_opt *opt_spec = item->spec;
+         const struct rte_flow_item_geneve_opt *opt_mask = item->mask;
+         uint8_t len, len_mask;
+         int i;
+
+         ds_put_cstr(s, "geneve-opt ");
+         if (opt_spec) {
+             if (!opt_mask) {
+                 opt_mask = &rte_flow_item_geneve_opt_mask;
+             }
+             DUMP_PATTERN_ITEM(opt_mask->option_class, NULL, "class",
+                               "0x%"PRIx16, opt_spec->option_class,
+                               opt_mask->option_class, 0);
+             DUMP_PATTERN_ITEM(opt_mask->option_type, NULL, "type",
+                               "0x%"PRIx8,opt_spec->option_type,
+                               opt_mask->option_type, 0);
+             len = opt_spec->option_len;
+             len_mask = opt_mask->option_len;
+             DUMP_PATTERN_ITEM(len_mask, NULL, "length", "0x%"PRIx8,
+                               len, len_mask, 0);
+             if (is_all_ones(opt_mask->data,
+                             sizeof (uint32_t) * opt_spec->option_len)) {
+                 ds_put_cstr(s, "data is 0x");
+                 for (i = 0; i < opt_spec->option_len; i++) {
+                     ds_put_format(s,"%"PRIx32"", htonl(opt_spec->data[i]));
+                 }
+             } else if (!is_all_zeros(opt_mask->data,
+                         sizeof (uint32_t) * opt_spec->option_len)) {
+                 ds_put_cstr(s, "data spec 0x");
+                 for (i = 0; i < opt_spec->option_len; i++) {
+                     ds_put_format(s,"%"PRIx32"", htonl(opt_spec->data[i]));
+                 }
+                 ds_put_cstr(s, "data mask 0x");
+                 for (i = 0; i < opt_spec->option_len; i++) {
+                     ds_put_format(s,"%"PRIx32"", htonl(opt_mask->data[i]));
+                 }
+             }
+         }
+         ds_put_cstr(s, "/ ");
+
     } else {
         ds_put_format(s, "unknown rte flow pattern (%d)\n", item->type);
     }
@@ -2132,6 +2173,7 @@ struct act_vars {
     enum tnl_type tnl_type;
     bool is_outer_ipv4;
     struct ds s_extra;
+    uint8_t gnv_opts_cnt;
 };
 
 static void
@@ -2820,9 +2862,92 @@ parse_vxlan_match(struct flow_patterns *patterns,
     return 0;
 }
 
+static void
+parse_geneve_opt_match(struct flow *consumed_masks,
+                       struct flow_patterns *patterns,
+                       struct match *match,
+                       struct act_vars *act_vars)
+{
+    int len, opt_idx;
+    uint8_t idx;
+    struct geneve_opt curr_opt_spec, curr_opt_mask;
+    struct gnv_opts {
+        struct rte_flow_item_geneve_opt opts[TUN_METADATA_NUM_OPTS];
+        uint32_t options_data[TUN_METADATA_NUM_OPTS];
+    } *gnv_opts;
+    BUILD_ASSERT_DECL(offsetof(struct gnv_opts, opts) == 0);
+    struct gnv_opts_mask {
+        struct rte_flow_item_geneve_opt opts_mask[TUN_METADATA_NUM_OPTS];
+        uint32_t options_data_mask[TUN_METADATA_NUM_OPTS];
+    } *gnv_opts_mask;
+    BUILD_ASSERT_DECL(offsetof(struct gnv_opts_mask, opts_mask) == 0);
+
+    len = match->flow.tunnel.metadata.present.len;
+    idx = 0;
+    opt_idx = 0;
+    curr_opt_spec = match->flow.tunnel.metadata.opts.gnv[opt_idx];
+    curr_opt_mask = match->wc.masks.tunnel.metadata.opts.gnv[opt_idx];
+
+    if (!is_all_zeros(match->wc.masks.tunnel.metadata.opts.gnv,
+                      sizeof *match->wc.masks.tunnel.metadata.opts.gnv) &&
+        match->flow.tunnel.metadata.present.len) {
+        while (len) {
+            gnv_opts = xzalloc(sizeof *gnv_opts);
+            gnv_opts_mask = xzalloc(sizeof *gnv_opts_mask);
+            memcpy(&gnv_opts->opts[idx].option_class,
+                   &curr_opt_spec.opt_class, sizeof curr_opt_spec.opt_class);
+            memcpy(&gnv_opts_mask->opts_mask[idx].option_class,
+                   &curr_opt_mask.opt_class,
+                   sizeof curr_opt_mask.opt_class);
+
+            gnv_opts->opts[idx].option_type = curr_opt_spec.type;
+            gnv_opts_mask->opts_mask[idx].option_type = curr_opt_mask.type;
+
+            gnv_opts->opts[idx].option_len = curr_opt_spec.length;
+            gnv_opts_mask->opts_mask[idx].option_len = curr_opt_mask.length;
+
+            /* According to the Geneve protocol
+            * https://tools.ietf.org/html/draft-gross-geneve-00#section-3.1
+            * Length (5 bits):  Length of the option, expressed in four byte
+            * multiples excluding the option header
+            * (tunnel.metadata.opts.gnv.length).
+            * Opt Len (6 bits):  The length of the options fields, expressed
+            * in four byte multiples, not including the eight byte
+            * fixed tunnel header (tunnel.metadata.present.len).
+            */
+            opt_idx++;
+            memcpy(&gnv_opts->options_data[opt_idx - 1],
+                   &match->flow.tunnel.metadata.opts.gnv[opt_idx],
+                   sizeof gnv_opts->options_data[opt_idx - 1] *
+                   curr_opt_spec.length * 4);
+            memcpy(&gnv_opts_mask->options_data_mask[opt_idx - 1],
+                   &match->wc.masks.tunnel.metadata.opts.gnv[opt_idx],
+                   sizeof gnv_opts_mask->options_data_mask[opt_idx - 1] *
+                   curr_opt_spec.length * 4);
+
+            gnv_opts->opts[opt_idx - 1].data = gnv_opts->options_data;
+            gnv_opts_mask->opts_mask[opt_idx - 1].data =
+            gnv_opts_mask->options_data_mask;
+
+            add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_GENEVE_OPT,
+                             &gnv_opts->opts[idx],
+                             &gnv_opts_mask->opts_mask[idx], NULL);
+
+            len -= sizeof(struct geneve_opt) + curr_opt_spec.length * 4;
+            opt_idx += sizeof(struct geneve_opt) / 4 +
+                curr_opt_spec.length - 1;
+            idx++;
+        }
+        memset(&consumed_masks->tunnel.metadata.opts.gnv, 0,
+               sizeof consumed_masks->tunnel.metadata.opts.gnv);
+    }
+    act_vars->gnv_opts_cnt = idx;
+}
+
 static int
 parse_geneve_match(struct flow_patterns *patterns,
-                   struct match *match)
+                   struct match *match,
+                   struct act_vars *act_vars)
 {
     struct rte_flow_item_geneve *gnv_spec, *gnv_mask;
     struct flow *consumed_masks;
@@ -2850,6 +2975,7 @@ parse_geneve_match(struct flow_patterns *patterns,
 
     add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_GENEVE, gnv_spec, gnv_mask,
                      NULL);
+    parse_geneve_opt_match(consumed_masks, patterns, match, act_vars);
 
     /* tunnel.metadata.present.len value indicates the number of
      * options, it's mask does not indicate any match on the packet,
@@ -2877,7 +3003,7 @@ parse_tnl_match(struct flow_patterns *patterns,
     }
     if (!strcmp(netdev_get_type(netdev), "geneve")) {
         act_vars->tnl_type = TNL_TYPE_GENEVE;
-        return parse_geneve_match(patterns, match);
+        return parse_geneve_match(patterns, match, act_vars);
     }
 
     return -1;
@@ -3679,9 +3805,9 @@ parse_set_actions(struct flow_actions *actions,
 }
 
 /* Maximum number of items in vxlan/geneve encap/decap.
- * ETH / IPv4(6) / UDP / VXLAN(GENEVE) / END
+ * ETH / IPv4(6) / UDP / VXLAN(GENEVE) / GENEVE-OPTS / END
  */
-#define TUNNEL_ITEMS_NUM 5
+#define TUNNEL_ITEMS_NUM 5 + TUN_METADATA_NUM_OPTS
 
 static int
 add_vxlan_encap_action(struct flow_actions *actions,
@@ -3949,6 +4075,8 @@ add_recirc_action(struct flow_actions *actions,
 static void
 dump_raw_decap(struct act_vars *act_vars)
 {
+    int i;
+
     ds_init(&act_vars->s_extra);
     ds_put_format(&act_vars->s_extra, "set raw_decap eth / udp / ");
     if (act_vars->is_outer_ipv4) {
@@ -3956,7 +4084,11 @@ dump_raw_decap(struct act_vars *act_vars)
     } else {
         ds_put_format(&act_vars->s_extra, "ipv6 / ");
     }
-    ds_put_format(&act_vars->s_extra, "geneve / end_set");
+    ds_put_format(&act_vars->s_extra, "geneve / ");
+    for (i = 0; i < act_vars->gnv_opts_cnt; i++) {
+        ds_put_format(&act_vars->s_extra, "geneve-opt / ");
+    }
+    ds_put_format(&act_vars->s_extra, "end_set");
 }
 
 static int
@@ -3973,12 +4105,19 @@ add_geneve_decap_action(struct flow_actions *actions,
     struct rte_flow_action_raw_decap *conf;
 
     conf = xmalloc(sizeof (struct rte_flow_action_raw_decap));
+    /* MLX5 PMD supports only one option of size 32 bits
+     * which is the minimum size of options (if exists)
+     * in case a flow exists with an option decapsulate 32 bits
+     * from the header for the geneve options.
+     */
     conf->size = sizeof (struct eth_header) +
                  sizeof (struct udp_header) +
                  sizeof (struct geneve_opt) +
                  (act_vars->is_outer_ipv4 ?
                   sizeof (struct ip_header) :
-                  sizeof (struct ovs_16aligned_ip6_hdr));
+                  sizeof (struct ovs_16aligned_ip6_hdr)) +
+                 (act_vars->gnv_opts_cnt ?
+                   sizeof (uint32_t) : 0);
 
     conf->data = NULL;
 
