@@ -129,9 +129,13 @@ struct e2e_cache_trace_info {
     ovs_u128 ufids[E2E_CACHE_MAX_TRACE];
 });
 
+/* The address of the field 'node' will be used for list insertion,
+ * and an explicit alignment is necessary for the compiler to understand
+ * this address use is fine.
+ */
 OVS_PACKED(
 struct e2e_cache_trace_message {
-    struct ovs_list node;
+    OVS_ALIGNED_VAR(sizeof(void *)) struct ovs_list node;
     void *dp;
     uint32_t num_elements;
     struct e2e_cache_trace_info data[0];
