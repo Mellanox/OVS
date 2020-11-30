@@ -68,3 +68,6 @@ Change-Id=I873215f5e484326d34da34742ea3a30f6a9675b6; subject=configure: Only tak
 Change-Id=I02a0f9ffe8e03eb8855d7c7c795a69d6612cc865; subject=configure: Use provided PKG_CONFIG_PATH if set; feature=dpdk; upstream_status=NA; general=;
 Change-Id=Id196c4cd19da25fef5f61955ef748ec6a618c721; subject=configure: Add explicit DPDK link option; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I7213cc15ea133cced37cb407a334e81123be7182; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I3b316452f6163178a7da606cb71a5ada87d255a7; subject=dp-packet: Fix address-of-packed-member warning; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I2b2026b16b7691bdd7b4870e4bfcc62ec0b1b66e; subject=Revert "seq-pool: Provide lockless implementation for single-threaded cases"; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I2cdb0e808ba2555c79e2779fdc5c28e2d1ea3242; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
