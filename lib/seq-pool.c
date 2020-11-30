@@ -41,44 +41,9 @@ struct seq_pool {
     uint32_t n_ids; /* Total number of ids in the pool. */
 };
 
-#define __SEQPOOL_LOCKLESS(n) ((n) == 1u)
-#define SEQPOOL_LOCKLESS(p)  __SEQPOOL_LOCKLESS(p->nb_user)
-
-#define SEQPOOL_MUTEX_INIT(l)  \
-    do {                       \
-        if (!is_lockless) {    \
-            ovs_mutex_init(l); \
-        }                      \
-    } while (0)
-
-#define SEQPOOL_MUTEX_DESTROY(l)  \
-    do {                          \
-        if (!is_lockless) {       \
-            ovs_mutex_destroy(l); \
-        }                         \
-    } while (0)
-
-#define SEQPOOL_MUTEX_LOCK(l)  \
-    do {                       \
-        if (!is_lockless) {    \
-            ovs_mutex_lock(l); \
-        }                      \
-    } while (0)
-
-#define SEQPOOL_MUTEX_TRYLOCK(l) \
-    ((is_lockless) ? 0 : ovs_mutex_trylock(l))
-
-#define SEQPOOL_MUTEX_UNLOCK(l)  \
-    do {                         \
-        if (!is_lockless) {      \
-            ovs_mutex_unlock(l); \
-        }                        \
-    } while (0)
-
 struct seq_pool *
 seq_pool_create(unsigned int nb_user, uint32_t base, uint32_t n_ids)
 {
-    const int is_lockless = __SEQPOOL_LOCKLESS(nb_user);
     struct seq_pool *pool;
     size_t i;
 
@@ -97,7 +62,7 @@ seq_pool_create(unsigned int nb_user, uint32_t base, uint32_t n_ids)
     pool->base = base;
     pool->n_ids = n_ids;
 
-    SEQPOOL_MUTEX_INIT(&pool->lock);
+    ovs_mutex_init(&pool->lock);
     ovs_list_init(&pool->free_ids);
 
     return pool;
@@ -108,22 +73,19 @@ seq_pool_destroy(struct seq_pool *pool)
 {
     struct seq_node *node;
     struct seq_node *next;
-    int is_lockless;
     size_t i;
 
     if (!pool) {
         return;
     }
 
-    is_lockless = SEQPOOL_LOCKLESS(pool);
-
-    SEQPOOL_MUTEX_LOCK(&pool->lock);
+    ovs_mutex_lock(&pool->lock);
     LIST_FOR_EACH_SAFE (node, next, list_node, &pool->free_ids) {
         free(node);
     }
     ovs_list_poison(&pool->free_ids);
-    SEQPOOL_MUTEX_UNLOCK(&pool->lock);
-    SEQPOOL_MUTEX_DESTROY(&pool->lock);
+    ovs_mutex_unlock(&pool->lock);
+    ovs_mutex_destroy(&pool->lock);
 
     for (i = 0; i < pool->nb_user; i++) {
         llring_destroy(pool->cache[i]);
@@ -136,19 +98,18 @@ seq_pool_destroy(struct seq_pool *pool)
 bool
 seq_pool_new_id(struct seq_pool *pool, unsigned int uid, uint32_t *id)
 {
-    const int is_lockless = SEQPOOL_LOCKLESS(pool);
     struct llring *cache;
     struct ovs_list *front;
     struct seq_node *node;
 
-    uid = is_lockless ? 0 : uid % pool->nb_user;
+    uid %= pool->nb_user;
     cache = pool->cache[uid];
 
     if (llring_dequeue(cache, id)) {
         return true;
     }
 
-    SEQPOOL_MUTEX_LOCK(&pool->lock);
+    ovs_mutex_lock(&pool->lock);
 
     while (!ovs_list_is_empty(&pool->free_ids)) {
         front = ovs_list_front(&pool->free_ids);
@@ -169,7 +130,7 @@ seq_pool_new_id(struct seq_pool *pool, unsigned int uid, uint32_t *id)
         }
     }
 
-    SEQPOOL_MUTEX_UNLOCK(&pool->lock);
+    ovs_mutex_unlock(&pool->lock);
 
     if (llring_dequeue(cache, id)) {
         return true;
@@ -198,7 +159,6 @@ seq_pool_new_id(struct seq_pool *pool, unsigned int uid, uint32_t *id)
 void
 seq_pool_free_id(struct seq_pool *pool, unsigned int uid, uint32_t id)
 {
-    const int is_lockless = SEQPOOL_LOCKLESS(pool);
     struct seq_node *nodes[SEQPOOL_CACHE_SIZE + 1];
     struct llring *cache;
     uint32_t node_id;
@@ -208,7 +168,7 @@ seq_pool_free_id(struct seq_pool *pool, unsigned int uid, uint32_t id)
         return;
     }
 
-    uid = is_lockless ? 0 : uid % pool->nb_user;
+    uid %= pool->nb_user;
     cache = pool->cache[uid];
 
     if (llring_enqueue(cache, id)) {
@@ -230,9 +190,9 @@ seq_pool_free_id(struct seq_pool *pool, unsigned int uid, uint32_t id)
         nodes[i] = NULL;
     }
 
-    SEQPOOL_MUTEX_LOCK(&pool->lock);
+    ovs_mutex_lock(&pool->lock);
     for (i = 0; i < ARRAY_SIZE(nodes) && nodes[i] != NULL; i++) {
         ovs_list_push_back(&pool->free_ids, &nodes[i]->list_node);
     }
-    SEQPOOL_MUTEX_UNLOCK(&pool->lock);
+    ovs_mutex_unlock(&pool->lock);
 }
