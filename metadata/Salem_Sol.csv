@@ -24,3 +24,5 @@ Change-Id=I13dd14f3c22fbb1cb7f8e5d9b40e88ffa4318d45; subject=netdev-offload-dpdk
 Change-Id=Ib9064fbccfefc7b711bb3e41741c5bed950cf8c4; subject=netdev-dpdk: Add flow_api support for netdev geneve vports; feature=dpdk; upstream_status=in_progress; general=;
 Change-Id=I01bad54ae05df6de8a63c57d50c2468697df5bd8; subject=netdev-offload-dpdk: Add support for geneve tlv offload; feature=dpdk; upstream_status=in_progress; general=;
 Change-Id=Ic102935dab51acd493f39ef86631dc59fda934b5; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I8310ca539d3a649e70a37aac1f5ce8519e7272ca; subject=netdev-offload: Fix flow mark allocation if e2e-cache enabled; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I77a607bb0fc5f7c6dc185567d9b7470676bb5735; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
