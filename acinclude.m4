@@ -353,7 +353,8 @@ AC_DEFUN([OVS_CHECK_DPDK], [
     else
        DPDK_INSTALL=/usr/local
     fi
-    DPDK_PKGCONFIG="$(find ${DPDK_INSTALL} -type f -name libdpdk.pc -exec dirname {} \;)"
+    DPDK_PKGCONFIG="$(find ${DPDK_INSTALL} -type f -name libdpdk.pc -exec dirname {} \; | head -1)"
+    echo "Using DPDK pkg-config path: $DPDK_PKGCONFIG"
     export PKG_CONFIG_PATH=${DPDK_PKGCONFIG}:${PKG_CONFIG_PATH}
     case "$with_dpdk" in
       "shared")
