@@ -3038,13 +3038,12 @@ dp_netdev_flow_offload_put(struct dp_offload_thread_item *offload_item)
                 } else {
                     mark_to_flow_associate(mark, flow);
                 }
-                return 0;
-            }
-
-            mark = netdev_offload_flow_mark_alloc();
-            if (mark == INVALID_FLOW_MARK) {
-                VLOG_ERR("Failed to allocate flow mark!\n");
-                return -1;
+            } else {
+                mark = netdev_offload_flow_mark_alloc();
+                if (mark == INVALID_FLOW_MARK) {
+                    VLOG_ERR("Failed to allocate flow mark!\n");
+                    return -1;
+                }
             }
         }
     }
