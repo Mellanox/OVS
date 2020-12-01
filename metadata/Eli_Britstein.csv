@@ -138,3 +138,5 @@ Change-Id=I40d0940add98c411346529257b4837e1f379a876; subject=netdev-offload-dpdk
 Change-Id=I58f469e61145fdebb868fc0a60b48880429a4bdd; subject=netdev-offload-dpdk: Fix context release for associated items; feature=dpdk; upstream_status=NA; general=;
 Change-Id=Ie959a6a5ed6cf2a46143cb804d35ef6c9cc74024; subject=conntrack: e2e: Fix CT deletion for e2e; feature=dpdk; upstream_status=NA; general=;
 Change-Id=If6733d7d66bbcd760afe64baacceb1b29fad07cf; subject=Update metadata - e2e; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I468b64d05a372f0215f06db27de7b4aaeaba9e34; subject=dpif-netdev: Fix offloads of modified flows; feature=dpdk; upstream_status=in_progress; general=;
+Change-Id=I43c2fdd443f97ef6a63f63ad0ed2f11cdbc9156c; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
