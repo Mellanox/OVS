@@ -382,6 +382,13 @@ netdev_offload_flow_mark_alloc(void)
         unsigned int nb_thread = netdev_offload_thread_nb();
         size_t i;
 
+        if (netdev_is_e2e_cache_enabled()) {
+            /* In case e2e-cache is enabled we have one more thread
+             * sharing mark_release_lists, initialize an additional list
+             * for e2e-cache thread.
+             */
+            nb_thread++;
+        }
         /* Haven't initiated yet, do it here */
         mark_pool = seq_pool_create(nb_thread, 1, MAX_FLOW_MARK);
         mark_release_lists = xcalloc(nb_thread, sizeof *mark_release_lists);
