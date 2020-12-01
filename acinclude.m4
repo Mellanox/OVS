@@ -354,8 +354,15 @@ AC_DEFUN([OVS_CHECK_DPDK], [
        DPDK_INSTALL=/usr/local
     fi
     DPDK_PKGCONFIG="$(find ${DPDK_INSTALL} -type f -name libdpdk.pc -exec dirname {} \; | head -1)"
-    echo "Using DPDK pkg-config path: $DPDK_PKGCONFIG"
-    export PKG_CONFIG_PATH=${DPDK_PKGCONFIG}:${PKG_CONFIG_PATH}
+    if test -n "$PKG_CONFIG_PATH"; then
+        echo "Using provided PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
+    else
+        if test -z "$DPDK_PKGCONFIG"; then
+            AC_MSG_ERROR([No DPDK pkg-config file found.])
+        fi
+        echo "Using DPDK pkg-config path: $DPDK_PKGCONFIG"
+        export PKG_CONFIG_PATH="${DPDK_PKGCONFIG}"
+    fi
     case "$with_dpdk" in
        *)
          PKG_CHECK_MODULES_STATIC([DPDK], [libdpdk], [],
