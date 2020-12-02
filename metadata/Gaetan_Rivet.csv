@@ -87,3 +87,5 @@ Change-Id=Ib47d2994c28253a7d44f95816a454768bfbe9457; subject=Update metadata; fe
 Change-Id=I2b4a4767209970f7c3cfd74cae8e519e2cc04b24; subject=conntrack: Stop conn lookup when expired; feature=dpdk; upstream_status=NA; general=;
 Change-Id=Ic25c9d9257ec38c88eebc6ff19243431d0d7f665; subject=conntrack: Clean conn as soon as they are seen expired; feature=dpdk; upstream_status=NA; general=;
 Change-Id=Iba944c5ee50246819ec622ea65abaec15aeddea6; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I7cf3d21149588b29eeb022700dd5a027e4b567bc; subject=configure: Use custom path if no DPDK is found in PKG_CONFIG_PATH; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Iab76140d3a6f96f65f95c6bea811c8ee486d92f0; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
