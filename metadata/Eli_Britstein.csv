@@ -142,3 +142,5 @@ Change-Id=I468b64d05a372f0215f06db27de7b4aaeaba9e34; subject=dpif-netdev: Fix of
 Change-Id=I43c2fdd443f97ef6a63f63ad0ed2f11cdbc9156c; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I05248f373a820e4240b0419782b3a3f24577993a; subject=Revert "dpif-netdev: Fix offloads of modified flows"; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I161902a197718fbeccb5c4199e9245eb2d788f67; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ifd15e0221537c72e1d2206e6bc6560b4ef5bd3bb; subject=dpif-netdev: Fix offloads of modified flows; feature=dpdk; upstream_status=in_progress; general=;
+Change-Id=I4656827a9f0fe8bdd5195c9bd4fadd1ed4011931; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
