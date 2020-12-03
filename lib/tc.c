@@ -319,6 +319,10 @@ static const struct nl_policy tca_policy[] = {
     [TCA_STATS2] = { .type = NL_A_NESTED, .optional = true, },
 };
 
+static const struct nl_policy tca_chain_policy[] = {
+    [TCA_CHAIN] = { .type = NL_A_U32, .optional = false, },
+};
+
 static const struct nl_policy tca_flower_policy[] = {
     [TCA_FLOWER_CLASSID] = { .type = NL_A_U32, .optional = true, },
     [TCA_FLOWER_INDEV] = { .type = NL_A_STRING, .max_len = IFNAMSIZ,
@@ -1920,6 +1924,25 @@ parse_netlink_to_tc_flower(struct ofpbuf *reply, struct tcf_id *id,
 }
 
 int
+parse_netlink_to_tc_chain(struct ofpbuf *reply, uint32_t *chain)
+{
+    struct nlattr *ta[ARRAY_SIZE(tca_chain_policy)];
+    struct tcmsg *tc;
+
+    tc = ofpbuf_at_assert(reply, NLMSG_HDRLEN, sizeof *tc);
+
+    if (!nl_policy_parse(reply, NLMSG_HDRLEN + sizeof *tc,
+                         tca_chain_policy, ta, ARRAY_SIZE(ta))) {
+        VLOG_ERR_RL(&error_rl, "failed to parse tca chain policy");
+        return EINVAL;
+    }
+
+   *chain = nl_attr_get_u32(ta[TCA_CHAIN]);
+
+    return 0;
+}
+
+int
 tc_dump_flower_start(struct tcf_id *id, struct nl_dump *dump, bool terse)
 {
     struct ofpbuf request;
@@ -1932,6 +1955,18 @@ tc_dump_flower_start(struct tcf_id *id, struct nl_dump *dump, bool terse)
         nl_msg_put_unspec(&request, TCA_DUMP_FLAGS, &dump_flags,
                           sizeof dump_flags);
     }
+    nl_dump_start(dump, NETLINK_ROUTE, &request);
+    ofpbuf_uninit(&request);
+
+    return 0;
+}
+
+int
+tc_dump_tc_chain_start(struct tcf_id *id, struct nl_dump *dump)
+{
+    struct ofpbuf request;
+
+    request_from_tcf_id(id, 0, RTM_GETCHAIN, NLM_F_DUMP, &request);
     nl_dump_start(dump, NETLINK_ROUTE, &request);
     ofpbuf_uninit(&request);
 
