@@ -26,3 +26,5 @@ Change-Id=I01bad54ae05df6de8a63c57d50c2468697df5bd8; subject=netdev-offload-dpdk
 Change-Id=Ic102935dab51acd493f39ef86631dc59fda934b5; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I8310ca539d3a649e70a37aac1f5ce8519e7272ca; subject=netdev-offload: Fix flow mark allocation if e2e-cache enabled; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I77a607bb0fc5f7c6dc185567d9b7470676bb5735; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I4a0139694c97db301c7196dfb2ccf8f7f2097835; subject=Revert "netdev-offload-tc: Flush rules on all chains before attach ingress block"; feature=dpdk; upstream_status=ignore; general=;
+Change-Id=I6165fd13c494d896fa6b3dd72984bc6cfab33d57; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
