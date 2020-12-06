@@ -366,12 +366,10 @@ int tc_replace_flower(struct tcf_id *id, struct tc_flower *flower);
 int tc_del_filter(struct tcf_id *id);
 int tc_get_flower(struct tcf_id *id, struct tc_flower *flower);
 int tc_dump_flower_start(struct tcf_id *id, struct nl_dump *dump, bool terse);
-int tc_dump_tc_chain_start(struct tcf_id *id, struct nl_dump *dump);
 int parse_netlink_to_tc_flower(struct ofpbuf *reply,
                                struct tcf_id *id,
                                struct tc_flower *flower,
                                bool terse);
-int parse_netlink_to_tc_chain(struct ofpbuf *reply, uint32_t *chain);
 void tc_set_policy(const char *policy);
 void tc_set_e2e_cache(bool enable);
 

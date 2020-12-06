@@ -57,11 +57,6 @@ struct netlink_field {
     int size;
 };
 
-struct chain_node {
-    struct hmap_node node;
-    uint32_t chain;
-};
-
 /* This maps a psample group ID to struct dpif_sflow_attr for sFlow */
 struct gid_node {
     struct ovs_list exp_node OVS_GUARDED;
@@ -598,49 +593,6 @@ get_block_id_from_netdev(struct netdev *netdev)
     if (block_support) {
         return netdev_get_block_id(netdev);
     }
-
-    return 0;
-}
-
-static int
-get_chains_from_netdev(struct netdev *netdev, struct hmap *map)
-{
-    enum tc_qdisc_hook hook = get_tc_qdisc_hook(netdev);
-    struct netdev_flow_dump *dump;
-    struct chain_node *chain_node;
-    struct ofpbuf rbuffer, reply;
-    uint32_t chain, block_id = 0;
-    struct tcf_id id;
-    int ifindex;
-    size_t hash;
-
-    ifindex = netdev_get_ifindex(netdev);
-    block_id = get_block_id_from_netdev(netdev);
-    id = tc_make_tcf_id(ifindex, block_id, 0, hook);
-
-    dump = xzalloc(sizeof *dump);
-    dump->nl_dump = xzalloc(sizeof *dump->nl_dump);
-    dump->netdev = netdev_ref(netdev);
-
-    ofpbuf_init(&rbuffer, NL_DUMP_BUFSIZE);
-    tc_dump_tc_chain_start(&id, dump->nl_dump);
-
-    while (nl_dump_next(dump->nl_dump, &reply, &rbuffer)) {
-        if (parse_netlink_to_tc_chain(&reply, &chain)) {
-            continue;
-        }
-
-        chain_node = xzalloc(sizeof *chain_node);
-        chain_node->chain = chain;
-        hash = hash_int(chain, 0);
-        hmap_insert(map, &chain_node->node, hash);
-    }
-
-    nl_dump_done(dump->nl_dump);
-    ofpbuf_uninit(&rbuffer);
-    netdev_close(dump->netdev);
-    free(dump->nl_dump);
-    free(dump);
 
     return 0;
 }
@@ -2427,10 +2379,8 @@ netdev_tc_init_flow_api(struct netdev *netdev)
 {
     static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
     enum tc_qdisc_hook hook = get_tc_qdisc_hook(netdev);
-    struct chain_node *chain_node;
     uint32_t block_id = 0;
     struct tcf_id id;
-    struct hmap map;
     int ifindex;
     int error;
 
@@ -2450,18 +2400,11 @@ netdev_tc_init_flow_api(struct netdev *netdev)
 
     block_id = get_block_id_from_netdev(netdev);
 
-    hmap_init(&map);
-    get_chains_from_netdev(netdev, &map);
     /* Flush rules explicitly needed when we work with ingress_block,
      * so we will not fail with reattaching block to bond iface, for ex.
      */
     id = tc_make_tcf_id(ifindex, block_id, 0, hook);
-    HMAP_FOR_EACH_POP (chain_node, node, &map) {
-        id.chain = chain_node->chain;
-        tc_del_filter(&id);
-        free(chain_node);
-    }
-    hmap_destroy(&map);
+    tc_del_filter(&id);
 
     /* make sure there is no ingress/egress qdisc */
     tc_add_del_qdisc(ifindex, false, 0, hook);
