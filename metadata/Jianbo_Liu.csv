@@ -1,3 +1,4 @@
 sep=;
 Change-Id=Ic3f2ec1b35d4d820b49d75463edcabf27d8bd95d; subject=netdev-offload-tc: Flush rules on all chains before attach ingress block; feature=bug_fixes; upstream_status=in_progress; general=;
 Change-Id=I8c5680116936591c32a52a72471457df80a1a897; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I3544e170a3b02e76fb3d37fdb903ae59a5b90249; subject=netdev-offload-tc: Flush rules on all chains before attach ingress block; feature=bug_fixes; upstream_status=in_progress; general=;
