@@ -2821,9 +2821,16 @@ mark_to_flow_disassociate(struct dp_offload_thread_item *offload_item)
     int ret = 0;
 
     if (!is_e2e_cache_flow) {
-        struct cmap_node *mark_node = CONST_CAST(struct cmap_node *,
-                                                 &flow->mark_node);
+        struct cmap_node *mark_node;
 
+        /* INVALID_FLOW_MARK may mean that the flow has been disassociated
+         * or never associated.
+         */
+        if (OVS_UNLIKELY(mark == INVALID_FLOW_MARK)) {
+            return EINVAL;
+        }
+
+        mark_node = CONST_CAST(struct cmap_node *, &flow->mark_node);
         cmap_remove(&dp_offload_threads[tid].mark_to_flow, mark_node,
                     hash_int(mark, 0));
     }
@@ -2851,12 +2858,6 @@ mark_to_flow_disassociate(struct dp_offload_thread_item *offload_item)
         }
 
         if (!is_e2e_cache_flow) {
-            /* INVALID_FLOW_MARK may mean that the flow has been disassociated
-             * or never associated. */
-            if (OVS_UNLIKELY(mark == INVALID_FLOW_MARK)) {
-                return EINVAL;
-            }
-
             netdev_offload_flow_mark_free(mark);
             VLOG_DBG("Freed flow mark %u\n", mark);
 
