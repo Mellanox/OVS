@@ -28,3 +28,5 @@ Change-Id=I8310ca539d3a649e70a37aac1f5ce8519e7272ca; subject=netdev-offload: Fix
 Change-Id=I77a607bb0fc5f7c6dc185567d9b7470676bb5735; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I4a0139694c97db301c7196dfb2ccf8f7f2097835; subject=Revert "netdev-offload-tc: Flush rules on all chains before attach ingress block"; feature=dpdk; upstream_status=ignore; general=;
 Change-Id=I6165fd13c494d896fa6b3dd72984bc6cfab33d57; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I6957cb6c6586308319b723b6ec2c7d907f199ce3; subject=dpif-netdev: Add check mark to avoid ovs-vswitchd crash.; feature=dpdk; upstream_status=in_progress; general=;
+Change-Id=Ic90e21d95169c2cfe9ab8c14e8ff13a1272c0f80; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
