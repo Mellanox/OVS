@@ -1442,7 +1442,6 @@ shared_age_id_alloc(void *arg)
     static struct ovsthread_once shared_age_id_init = OVSTHREAD_ONCE_INITIALIZER;
     struct shared_age_ctx_data shared_age_ctx_data;
     unsigned int tid = netdev_offload_thread_id();
-    uint16_t domain_id = *(uint16_t *) arg;
     struct rte_flow_action_age age_conf = {
         .timeout = 0xFFFFFF,
     };
@@ -1454,7 +1453,13 @@ shared_age_id_alloc(void *arg)
     struct rte_flow_error error;
     uint32_t shared_age_id;
     struct netdev *netdev;
+    uint16_t domain_id;
 
+    if (!arg) {
+        return 0;
+    }
+
+    domain_id = *(uint16_t *) arg;
     if (ovsthread_once_start(&shared_age_id_init)) {
         shared_age_id_pool = seq_pool_create(netdev_offload_thread_nb(),
                                              MIN_SHARED_AGE_ID,
