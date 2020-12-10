@@ -1468,13 +1468,12 @@ shared_age_id_alloc(void *arg)
     struct rte_flow_error error;
     uint32_t shared_age_id;
     struct netdev *netdev;
-    uint16_t domain_id;
 
-    if (!arg) {
+    netdev = (struct netdev *) arg;
+    if (!netdev || netdev_dpdk_is_uplink_port(netdev)) {
         return 0;
     }
 
-    domain_id = *(uint16_t *) arg;
     if (ovsthread_once_start(&shared_age_id_init)) {
         shared_age_id_pool = seq_pool_create(netdev_offload_thread_nb(),
                                              MIN_SHARED_AGE_ID,
@@ -1484,29 +1483,23 @@ shared_age_id_alloc(void *arg)
     if (!seq_pool_new_id(shared_age_id_pool, tid, &shared_age_id)) {
         return 0;
     }
-    shared_age_ctx_data.domain_id = domain_id;
-    netdev = netdev_dpdk_get_netdev_by_domain_id(domain_id);
-    if (!netdev) {
-        goto deallocate_id;
-    }
+
     shared_age_ctx_data.shared_action =
         netdev_dpdk_rte_flow_shared_action_create(netdev, &action, &error);
     if (!shared_age_ctx_data.shared_action) {
-        goto shared_action_create_err;
+        goto deallocate_id;
     }
+    shared_age_ctx_data.domain_id = netdev_dpdk_get_domain_id_by_netdev(netdev);
     shared_age_ctx.data = &shared_age_ctx_data;
     shared_age_ctx.id = shared_age_id;
     if (associate_id_data(&shared_age_ctx_md, &shared_age_ctx)) {
         goto associate_err;
     }
-    netdev_close(netdev);
     return shared_age_id;
 
 associate_err:
     netdev_dpdk_rte_flow_shared_action_destroy
         (netdev, shared_age_ctx_data.shared_action, &error);
-shared_action_create_err:
-    netdev_close(netdev);
 deallocate_id:
     seq_pool_free_id(shared_age_id_pool, tid, shared_age_id);
     return 0;
@@ -1554,7 +1547,6 @@ get_shared_age_id(struct netdev *netdev,
                   uint32_t *shared_age_id,
                   struct rte_flow_shared_action **shared_action)
 {
-    uint16_t domain_id = netdev_dpdk_get_domain_id_by_netdev(netdev);
     struct shared_age_ctx_data shared_age_ctx_data;
     struct context_data shared_age_id_ctx = {
         .data = &app_counter_key,
@@ -1562,7 +1554,7 @@ get_shared_age_id(struct netdev *netdev,
     int ret;
 
     if (get_context_data_id_by_data(&shared_age_id_md, &shared_age_id_ctx,
-                                    &domain_id, shared_age_id)) {
+                                    netdev, shared_age_id)) {
         return -1;
     }
 
