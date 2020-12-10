@@ -1551,6 +1551,7 @@ get_shared_age_id(struct netdev *netdev,
     struct context_data shared_age_id_ctx = {
         .data = &app_counter_key,
     };
+    uint16_t netdev_domain_id;
     int ret;
 
     if (get_context_data_id_by_data(&shared_age_id_md, &shared_age_id_ctx,
@@ -1564,12 +1565,18 @@ get_shared_age_id(struct netdev *netdev,
         goto out;
     }
 
+    netdev_domain_id = netdev_dpdk_get_domain_id_by_netdev(netdev);
+    if (shared_age_ctx_data.domain_id != netdev_domain_id) {
+        ret = -1;
+        goto out;
+    }
+
     *shared_action = shared_age_ctx_data.shared_action;
 out:
     if (ret) {
         put_context_data_by_id(&shared_age_id_md, NULL, *shared_age_id);
     }
-    return 0;
+    return ret;
 }
 
 static void
