@@ -144,3 +144,5 @@ Change-Id=I05248f373a820e4240b0419782b3a3f24577993a; subject=Revert "dpif-netdev
 Change-Id=I161902a197718fbeccb5c4199e9245eb2d788f67; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=Ifd15e0221537c72e1d2206e6bc6560b4ef5bd3bb; subject=dpif-netdev: Fix offloads of modified flows; feature=dpdk; upstream_status=in_progress; general=;
 Change-Id=I4656827a9f0fe8bdd5195c9bd4fadd1ed4011931; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I4787b4bdcd941580a8449a85cdbffcf823fa7810; subject=dpif-netdev: e2e: Query e2e only if there are merged flows; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Ia9a59ba287d4d70e19b1023b9d852a82c1067cdd; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
