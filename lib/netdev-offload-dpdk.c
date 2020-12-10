@@ -4121,9 +4121,11 @@ add_geneve_decap_action(struct flow_actions *actions,
     conf->size = sizeof (struct eth_header) +
                  sizeof (struct udp_header) +
                  sizeof (struct geneve_opt) +
-                 act_vars->is_outer_ipv4 ? sizeof (struct ip_header) :
-                     sizeof (struct ovs_16aligned_ip6_hdr) +
-                 act_vars->gnv_opts_cnt ? sizeof (uint32_t) : 0;
+                 (act_vars->is_outer_ipv4 ?
+                  sizeof (struct ip_header) :
+                  sizeof (struct ovs_16aligned_ip6_hdr)) +
+                 (act_vars->gnv_opts_cnt ?
+                  sizeof (uint32_t) : 0);
     conf->data = NULL;
 
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_RAW_DECAP, conf);
