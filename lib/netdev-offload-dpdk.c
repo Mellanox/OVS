@@ -1575,7 +1575,7 @@ get_shared_age_id(struct netdev *netdev,
     *shared_action = shared_age_ctx_data.shared_action;
 out:
     if (ret) {
-        put_context_data_by_id(&shared_age_id_md, &domain_id, *shared_age_id);
+        put_context_data_by_id(&shared_age_id_md, NULL, *shared_age_id);
     }
     return 0;
 }
@@ -4801,8 +4801,7 @@ netdev_offload_dpdk_ct_counter_query(struct netdev *netdev OVS_UNUSED,
     }
     netdev_close(shared_age_netdev);
 err:
-    put_context_data_by_id(&shared_age_id_md, &shared_age_ctx_data.domain_id,
-                           shared_age_id);
+    put_context_data_by_id(&shared_age_id_md, NULL, shared_age_id);
     return ret;
 }
 
