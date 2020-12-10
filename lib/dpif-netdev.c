@@ -9239,7 +9239,8 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev,
 
     ovs_mutex_lock(&flows_map_mutex);
     flow = e2e_cache_flow_find(mt_ufid, hash);
-    if (OVS_UNLIKELY(!flow)) {
+    if (OVS_UNLIKELY(!flow) ||
+        ovs_list_is_empty(&flow->associated_merged_flows)) {
         ovs_mutex_unlock(&flows_map_mutex);
         return;
     }
