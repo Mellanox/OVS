@@ -26,9 +26,9 @@
 #include <rte_flow.h>
 #endif
 
+#include "mpsc-queue.h"
 #include "netdev-afxdp.h"
 #include "netdev-dpdk.h"
-#include "openvswitch/list.h"
 #include "packets.h"
 #include "util.h"
 #include "flow.h"
@@ -135,7 +135,7 @@ struct e2e_cache_trace_info {
  */
 OVS_PACKED(
 struct e2e_cache_trace_message {
-    OVS_ALIGNED_VAR(sizeof(void *)) struct ovs_list node;
+    OVS_ALIGNED_VAR(sizeof(void *)) struct mpsc_queue_node node;
     void *dp;
     uint32_t num_elements;
     struct e2e_cache_trace_info data[0];
