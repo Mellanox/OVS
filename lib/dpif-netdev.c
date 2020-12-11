@@ -3503,7 +3503,10 @@ queue_netdev_flow_del(struct dp_netdev_pmd_thread *pmd,
         return;
     }
 
-    e2e_cache_flow_del(&flow->mega_ufid, pmd->dp);
+    if (dp_netdev_e2e_cache_enabled) {
+        e2e_cache_flow_del(&flow->mega_ufid, pmd->dp);
+    }
+
     offload = dp_netdev_alloc_flow_offload(pmd, flow,
                                            DP_NETDEV_FLOW_OFFLOAD_OP_DEL);
     dp_netdev_append_flow_offload(offload);
@@ -3525,7 +3528,11 @@ queue_netdev_flow_put(struct dp_netdev_pmd_thread *pmd,
         return;
     }
 
-    e2e_cache_flow_put(false, &flow->mega_ufid, match, actions, actions_len);
+    if (dp_netdev_e2e_cache_enabled) {
+        e2e_cache_flow_put(false, &flow->mega_ufid, match,
+                           actions, actions_len);
+    }
+
     op = modify ? DP_NETDEV_FLOW_OFFLOAD_OP_MOD : DP_NETDEV_FLOW_OFFLOAD_OP_ADD;
     offload = dp_netdev_alloc_flow_offload(pmd, flow, op);
     offload->match = *match;
