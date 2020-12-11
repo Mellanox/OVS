@@ -7868,7 +7868,7 @@ enum {
 };
 
 struct e2e_cache_ufid_msg {
-    struct ovs_list node;
+    struct mpsc_queue_node node;
     ovs_u128 ufid;
     int op;
     bool is_ct;
@@ -7882,10 +7882,8 @@ struct e2e_cache_ufid_msg {
 };
 
 struct e2e_cache_thread_msg_queues {
-    struct ovs_mutex mutex;
-    struct ovs_list ufid_msg_list;
-    struct ovs_list trace_msg_list;
-    pthread_cond_t cond;
+    struct mpsc_queue ufid_queue;
+    struct mpsc_queue trace_queue;
 };
 
 /* This struct holds the e2e-cache statistic counters
@@ -7918,10 +7916,10 @@ struct e2e_cache_stats {
     atomic_count discarded_msgs;
     atomic_count aborted_msgs;
     atomic_count throttled_msgs;
-    uint32_t trace_msgs_in_queue;
+    atomic_count trace_msgs_in_queue;
     atomic_count trace_msgs_queue_overflow;
-    uint32_t new_flow_msgs;
-    uint32_t del_flow_msgs;
+    atomic_count new_flow_msgs;
+    atomic_count del_flow_msgs;
     uint32_t succ_merged_flows;
     uint32_t merge_rej_flows;
     uint32_t add_merged_flow_hw;
@@ -7936,11 +7934,10 @@ struct e2e_cache_stats {
 };
 
 static struct e2e_cache_thread_msg_queues e2e_cache_thread_msg_queues = {
-    .mutex = OVS_MUTEX_INITIALIZER,
-    .ufid_msg_list =
-        OVS_LIST_INITIALIZER(&e2e_cache_thread_msg_queues.ufid_msg_list),
-    .trace_msg_list =
-        OVS_LIST_INITIALIZER(&e2e_cache_thread_msg_queues.trace_msg_list)
+    .ufid_queue =
+        MPSC_QUEUE_INITIALIZER(&e2e_cache_thread_msg_queues.ufid_queue),
+    .trace_queue =
+        MPSC_QUEUE_INITIALIZER(&e2e_cache_thread_msg_queues.trace_queue)
 };
 
 static struct ovsthread_once e2e_cache_thread_once
@@ -8001,10 +7998,10 @@ static struct e2e_cache_stats e2e_stats = {
     .discarded_msgs = ATOMIC_COUNT_INIT(0),
     .aborted_msgs = ATOMIC_COUNT_INIT(0),
     .throttled_msgs = ATOMIC_COUNT_INIT(0),
-    .trace_msgs_in_queue = 0,
+    .trace_msgs_in_queue = ATOMIC_COUNT_INIT(0),
     .trace_msgs_queue_overflow = ATOMIC_COUNT_INIT(0),
-    .new_flow_msgs = 0,
-    .del_flow_msgs = 0,
+    .new_flow_msgs = ATOMIC_COUNT_INIT(0),
+    .del_flow_msgs = ATOMIC_COUNT_INIT(0),
     .succ_merged_flows = 0,
     .merge_rej_flows = 0,
     .add_merged_flow_hw = 0,
@@ -8044,13 +8041,13 @@ dpif_netdev_dump_e2e_stats(struct ds *s)
     ds_put_format(s, "\n%-45s : %"PRIu32"", "throttled messages",
                   atomic_count_get(&stats->throttled_msgs));
     ds_put_format(s, "\n%-45s : %"PRIu32"", "messages in e2e queue",
-                  stats->trace_msgs_in_queue);
+                  atomic_count_get(&stats->trace_msgs_in_queue));
     ds_put_format(s, "\n%-45s : %"PRIu32,"dropped due to e2e queue overflow",
                   atomic_count_get(&stats->trace_msgs_queue_overflow));
     ds_put_format(s, "\n%-45s : %"PRIu32"", "new flow messages",
-                  stats->new_flow_msgs);
+                  atomic_count_get(&stats->new_flow_msgs));
     ds_put_format(s, "\n%-45s : %"PRIu32"", "delete flow messages",
-                  stats->del_flow_msgs);
+                  atomic_count_get(&stats->del_flow_msgs));
     ds_put_format(s, "\n%-45s : %"PRIu32"", "successfully merged flows",
                   stats->succ_merged_flows);
     ds_put_format(s, "\n%-45s : %"PRIu32"", "flows rejected by the merge engine",
@@ -8129,45 +8126,63 @@ e2e_cache_trace_add_flow(struct dp_packet *p,
 static inline void
 e2e_cache_trace_msg_enqueue(struct e2e_cache_trace_message *msg)
 {
-    ovs_mutex_lock(&e2e_cache_thread_msg_queues.mutex);
-    ovs_list_push_back(&e2e_cache_thread_msg_queues.trace_msg_list,
-                       &msg->node);
-    xpthread_cond_signal(&e2e_cache_thread_msg_queues.cond);
-    e2e_stats.trace_msgs_in_queue++;
-    ovs_mutex_unlock(&e2e_cache_thread_msg_queues.mutex);
+    mpsc_queue_insert(&e2e_cache_thread_msg_queues.trace_queue,
+                      &msg->node);
+    atomic_count_inc(&e2e_stats.trace_msgs_in_queue);
 }
 
-static inline struct e2e_cache_trace_message *
-e2e_cache_trace_msg_dequeue(void)
-{
-    struct e2e_cache_trace_message *msg;
-    struct ovs_list *list;
-
-    if (ovs_list_is_empty(&e2e_cache_thread_msg_queues.trace_msg_list)) {
-        return NULL;
-    }
-
-    ovs_mutex_lock(&e2e_cache_thread_msg_queues.mutex);
-    list = ovs_list_pop_front(&e2e_cache_thread_msg_queues.trace_msg_list);
-    e2e_stats.trace_msgs_in_queue--;
-    ovs_mutex_unlock(&e2e_cache_thread_msg_queues.mutex);
-
-    msg = CONTAINER_OF(list, struct e2e_cache_trace_message, node);
-    return msg;
-}
+#define E2E_CACHE_BACKOFF_MS_MIN 1
+#define E2E_CACHE_BACKOFF_MS_MAX 64
 
 static inline void
-e2e_cache_thread_wait_on_queues(void)
+e2e_cache_poll_queues(struct e2e_cache_ufid_msg **ufid_msg,
+                      struct e2e_cache_trace_message **trace_msg)
 {
-    ovs_mutex_lock(&e2e_cache_thread_msg_queues.mutex);
-    if (ovs_list_is_empty(&e2e_cache_thread_msg_queues.ufid_msg_list) &&
-        ovs_list_is_empty(&e2e_cache_thread_msg_queues.trace_msg_list)) {
-        ovsrcu_quiesce_start();
-        ovs_mutex_cond_wait(&e2e_cache_thread_msg_queues.cond,
-                            &e2e_cache_thread_msg_queues.mutex);
-        ovsrcu_quiesce_end();
+    struct mpsc_queue *trace_list = &e2e_cache_thread_msg_queues.trace_queue;
+    struct mpsc_queue *ufid_list = &e2e_cache_thread_msg_queues.ufid_queue;
+    enum mpsc_queue_poll_result trace_poll_result;
+    enum mpsc_queue_poll_result ufid_poll_result;
+    struct mpsc_queue_node *trace_node;
+    struct mpsc_queue_node *ufid_node;
+    uint64_t backoff;
+
+    *ufid_msg = NULL;
+    *trace_msg = NULL;
+
+    backoff = E2E_CACHE_BACKOFF_MS_MIN;
+    while (1) {
+        ufid_poll_result = mpsc_queue_poll(ufid_list, &ufid_node);
+        trace_poll_result = mpsc_queue_poll(trace_list, &trace_node);
+
+        if (ufid_poll_result != MPSC_QUEUE_EMPTY ||
+            trace_poll_result != MPSC_QUEUE_EMPTY) {
+            break;
+        }
+
+        /* The thread is flagged as quiescent during xnanosleep(). */
+        xnanosleep(backoff * 1E6);
+        if (backoff < E2E_CACHE_BACKOFF_MS_MAX) {
+            backoff <<= 1;
+        }
     }
-    ovs_mutex_unlock(&e2e_cache_thread_msg_queues.mutex);
+
+    while (ufid_poll_result == MPSC_QUEUE_RETRY) {
+        ufid_poll_result = mpsc_queue_poll(ufid_list, &ufid_node);
+    }
+
+    while (trace_poll_result == MPSC_QUEUE_RETRY) {
+        trace_poll_result = mpsc_queue_poll(trace_list, &trace_node);
+    }
+
+    if (ufid_poll_result == MPSC_QUEUE_ITEM) {
+        *ufid_msg = CONTAINER_OF(ufid_node, struct e2e_cache_ufid_msg, node);
+    }
+
+    if (trace_poll_result == MPSC_QUEUE_ITEM) {
+        *trace_msg = CONTAINER_OF(trace_node,
+                                  struct e2e_cache_trace_message, node);
+        atomic_count_dec(&e2e_stats.trace_msgs_in_queue);
+    }
 }
 
 static inline void
@@ -9141,12 +9156,9 @@ e2e_cache_flow_del(const ovs_u128 *ufid, struct dp_netdev *dp)
     /* Insert message into queue, e2e_cache_ufid_msg_dequeue()
      * is used to dequeue it from there.
      */
-    ovs_mutex_lock(&e2e_cache_thread_msg_queues.mutex);
-    ovs_list_push_back(&e2e_cache_thread_msg_queues.ufid_msg_list,
-                       &del_msg->node);
-    xpthread_cond_signal(&e2e_cache_thread_msg_queues.cond);
-    e2e_stats.del_flow_msgs++;
-    ovs_mutex_unlock(&e2e_cache_thread_msg_queues.mutex);
+    mpsc_queue_insert(&e2e_cache_thread_msg_queues.ufid_queue,
+                      &del_msg->node);
+    atomic_count_inc(&e2e_stats.del_flow_msgs);
     return 0;
 }
 
@@ -9175,12 +9187,9 @@ e2e_cache_flow_put(bool is_ct, const ovs_u128 *ufid, const void *match,
     /* Insert message into queue, e2e_cache_ufid_msg_dequeue()
      * is used to dequeue it from there.
      */
-    ovs_mutex_lock(&e2e_cache_thread_msg_queues.mutex);
-    ovs_list_push_back(&e2e_cache_thread_msg_queues.ufid_msg_list,
-                       &put_msg->node);
-    xpthread_cond_signal(&e2e_cache_thread_msg_queues.cond);
-    e2e_stats.new_flow_msgs++;
-    ovs_mutex_unlock(&e2e_cache_thread_msg_queues.mutex);
+    mpsc_queue_insert(&e2e_cache_thread_msg_queues.ufid_queue,
+                      &put_msg->node);
+    atomic_count_inc(&e2e_stats.new_flow_msgs);
     return 0;
 }
 
@@ -9197,17 +9206,19 @@ dp_netdev_ct_e2e_add_cb(struct ct_flow_offload_item *offload,
 static struct e2e_cache_ufid_msg *
 e2e_cache_ufid_msg_dequeue(void)
 {
+    struct mpsc_queue *ufid_list = &e2e_cache_thread_msg_queues.ufid_queue;
+    enum mpsc_queue_poll_result poll_result;
     struct e2e_cache_ufid_msg *ufid_msg;
-    struct ovs_list *list;
+    struct mpsc_queue_node *node;
 
-    if (ovs_list_is_empty(&e2e_cache_thread_msg_queues.ufid_msg_list)) {
-        return NULL;
-    }
-    ovs_mutex_lock(&e2e_cache_thread_msg_queues.mutex);
-    list = ovs_list_pop_front(&e2e_cache_thread_msg_queues.ufid_msg_list);
-    ovs_mutex_unlock(&e2e_cache_thread_msg_queues.mutex);
+    do {
+        poll_result = mpsc_queue_poll(ufid_list, &node);
+        if (poll_result == MPSC_QUEUE_EMPTY) {
+            return NULL;
+        }
+    } while (poll_result == MPSC_QUEUE_RETRY);
 
-    ufid_msg = CONTAINER_OF(list, struct e2e_cache_ufid_msg, node);
+    ufid_msg = CONTAINER_OF(node, struct e2e_cache_ufid_msg, node);
     return ufid_msg;
 }
 
@@ -9222,13 +9233,12 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
     size_t buffer_size;
 
     if (ovsthread_once_start(&e2e_cache_thread_once)) {
-        xpthread_cond_init(&e2e_cache_thread_msg_queues.cond, NULL);
         ovs_thread_create("e2e_cache", dp_netdev_e2e_cache_main, NULL);
         ovsthread_once_done(&e2e_cache_thread_once);
     }
 
     if (dp_netdev_e2e_cache_trace_q_size) {
-        uint32_t cur_q_size = e2e_stats.trace_msgs_in_queue;
+        uint32_t cur_q_size = atomic_count_get(&e2e_stats.trace_msgs_in_queue);
 
         if (OVS_UNLIKELY(cur_q_size >= dp_netdev_e2e_cache_trace_q_size)) {
             atomic_count_inc(&e2e_stats.trace_msgs_queue_overflow);
@@ -9591,21 +9601,31 @@ dp_netdev_e2e_cache_main(void *arg OVS_UNUSED)
     uint32_t i, num_elements;
     long long int next_rcu;
 
+    if (!mpsc_queue_acquire(&e2e_cache_thread_msg_queues.ufid_queue)) {
+        VLOG_ERR("failed to register as consumer of the ufid queue");
+        return NULL;
+    }
+
+    if (!mpsc_queue_acquire(&e2e_cache_thread_msg_queues.trace_queue)) {
+        VLOG_ERR("failed to register as consumer of the trace queue");
+        return NULL;
+    }
+
     next_rcu = time_msec() + E2E_CACHE_QUIESCE_INTERVAL_MS;
     for (;;) {
-        e2e_cache_thread_wait_on_queues();
+        e2e_cache_poll_queues(&ufid_msg, &trace_msg);
 
-        while ((ufid_msg = e2e_cache_ufid_msg_dequeue()) != NULL) {
+        while (ufid_msg != NULL) {
             if (ufid_msg->op == E2E_UFID_MSG_PUT) {
                 e2e_cache_flow_db_put(ufid_msg);
             } else {
                 e2e_cache_flow_db_del(&ufid_msg->ufid, ufid_msg->dp);
             }
             e2e_cache_ufid_msg_free(ufid_msg);
+            ufid_msg = e2e_cache_ufid_msg_dequeue();
         }
 
-        trace_msg = e2e_cache_trace_msg_dequeue();
-        if (OVS_UNLIKELY(!trace_msg)) {
+        if (!trace_msg) {
             continue;
         }
 
@@ -9631,8 +9651,7 @@ dp_netdev_e2e_cache_main(void *arg OVS_UNUSED)
 #define e2e_cache_trace_init(p) do { } while (0)
 #define e2e_cache_trace_add_flow(p, ufid) do { } while (0)
 #define e2e_cache_trace_msg_enqueue(m) do { } while (0)
-#define e2e_cache_trace_msg_dequeue() do { } while (0)
-#define e2e_cache_thread_wait_on_queues() do { } while (0)
+#define e2e_cache_poll_queues() do { } while (0)
 #define e2e_cache_dispatch_trace_message(d, b) do { } while (0)
 #define e2e_cache_trace_tnl_pop(p) do { } while (0)
 OVS_UNUSED
