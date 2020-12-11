@@ -9311,13 +9311,17 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev,
     ovs_mutex_unlock(&flows_map_mutex);
 }
 
+#define E2E_CACHE_QUIESCE_INTERVAL_MS 10
+
 static void *
 dp_netdev_e2e_cache_main(void *arg OVS_UNUSED)
 {
     struct e2e_cache_trace_message *trace_msg;
     struct e2e_cache_ufid_msg *ufid_msg;
     uint32_t i, num_elements;
+    long long int next_rcu;
 
+    next_rcu = time_msec() + E2E_CACHE_QUIESCE_INTERVAL_MS;
     for (;;) {
         e2e_cache_thread_wait_on_queues();
 
@@ -9343,7 +9347,12 @@ dp_netdev_e2e_cache_main(void *arg OVS_UNUSED)
         }
 
         free_cacheline(trace_msg);
-        ovsrcu_quiesce();
+
+        if (time_msec() > next_rcu) {
+            if (!ovsrcu_try_quiesce()) {
+                next_rcu += E2E_CACHE_QUIESCE_INTERVAL_MS;
+            }
+        }
     }
 
     return NULL;
