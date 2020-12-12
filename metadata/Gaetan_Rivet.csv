@@ -102,3 +102,8 @@ Change-Id=I4b9d5e556f66f6c065b98c9b0b3e4472d5269548; subject=dpif-netdev: e2e: R
 Change-Id=I908e308d402d71840e7b6707d5ada0fb65e5c979; subject=dpif-netdev: e2e: Use a state machine to update stats; feature=dpdk; upstream_status=NA; general=;
 Change-Id=If4cbf8183c3cae41731a91b6ed7817f0441a0184; subject=dpif-netdev: e2e: Quiesce at fixed intervals; feature=dpdk; upstream_status=NA; general=;
 Change-Id=Ia8a97374858dfab3d8a9ef58b76b60b1fb4412cf; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I16f2f7d2e98bc8083ac065243dd2208f38db0cca; subject=dpif-netdev: e2e: Use an explicit CT MT state; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I0b9e56a8eface87c5cc9b525bff35ae9d74a33b4; subject=dpif-netdev: e2e: Delegate bidir CT offloads to MT; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I1aaf3defda4a87a9f3f31892f861a649c0bb8c15; subject=dpif-netdev: e2e: Copy actions from e2e to MT; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I3edca3403d465eb76a2f83b8538b86bf2bc3c1df; subject=dpif-netdev: e2e: Use MPSC queue for messages; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Ibf0a9df7e0328717b8ec1e14e4d649b5be8e6c4f; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
