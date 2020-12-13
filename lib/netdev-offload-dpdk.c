@@ -1612,18 +1612,19 @@ dump_counter_id(struct ds *s, void *data)
 #define MIN_COUNTER_ID       1U
 #define NUM_COUNTER_IDS      (UINT32_MAX - 2U)
 
-static struct seq_pool *counter_id_pool = NULL;
+static struct seq_pool *counter_id_pool;
 
 static uint32_t
 counter_id_alloc(void *arg OVS_UNUSED)
 {
+    static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
     unsigned int tid = netdev_offload_thread_id();
     uint32_t counter_id;
 
-    if (OVS_UNLIKELY(!counter_id_pool)) {
-        /* if not yet initialized, do it here */
+    if (ovsthread_once_start(&once)) {
         counter_id_pool = seq_pool_create(netdev_offload_dpdk_thread_nb(),
                                           MIN_COUNTER_ID, NUM_COUNTER_IDS);
+        ovsthread_once_done(&once);
     }
 
     if (OVS_LIKELY(seq_pool_new_id(counter_id_pool, tid, &counter_id))) {
