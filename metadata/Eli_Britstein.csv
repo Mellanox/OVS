@@ -146,3 +146,7 @@ Change-Id=Ifd15e0221537c72e1d2206e6bc6560b4ef5bd3bb; subject=dpif-netdev: Fix of
 Change-Id=I4656827a9f0fe8bdd5195c9bd4fadd1ed4011931; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I4787b4bdcd941580a8449a85cdbffcf823fa7810; subject=dpif-netdev: e2e: Query e2e only if there are merged flows; feature=dpdk; upstream_status=NA; general=;
 Change-Id=Ia9a59ba287d4d70e19b1023b9d852a82c1067cdd; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I60dc0ec23ec52a2adb99f8b24b955ddc16704f52; subject=netdev-offload-dpdk: e2e: Avoid sending domain_id to free shared_id; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I7944aead406702e4ad85327079e650ec1551b11b; subject=netdev-offload-dpdk: e2e: Don't create shared action context only on uplinks; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I7ea91fcff55d795531a16837dfacd0077cc8b677; subject=netdev-offload-dpdk: e2e: Don't use shared action context on different domain; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I0d2e94ea30b853aacab34efd47aab9f4987e0773; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
