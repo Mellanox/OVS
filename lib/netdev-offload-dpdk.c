@@ -3620,8 +3620,7 @@ add_count_action(struct flow_actions *actions,
 
     if (act_vars->is_e2e_cache_flow && act_vars->ct_counter_key) {
         act_vars->shared =
-            add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SHARED,
-                            act_vars->shared);
+            add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SHARED, NULL);
     }
     return 0;
 }
