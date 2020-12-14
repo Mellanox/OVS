@@ -150,3 +150,5 @@ Change-Id=I60dc0ec23ec52a2adb99f8b24b955ddc16704f52; subject=netdev-offload-dpdk
 Change-Id=I7944aead406702e4ad85327079e650ec1551b11b; subject=netdev-offload-dpdk: e2e: Don't create shared action context only on uplinks; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I7ea91fcff55d795531a16837dfacd0077cc8b677; subject=netdev-offload-dpdk: e2e: Don't use shared action context on different domain; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I0d2e94ea30b853aacab34efd47aab9f4987e0773; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I4d5ca10941253a23c6e5bb8f9ff228fbbea18830; subject=netdev-offload-dpdk: Init NULL as shared action conf; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Ib5b4343e5f0970d1aaab413aecc22d6dbd786ea3; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
