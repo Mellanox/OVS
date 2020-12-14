@@ -89,3 +89,7 @@ Change-Id=Ic25c9d9257ec38c88eebc6ff19243431d0d7f665; subject=conntrack: Clean co
 Change-Id=Iba944c5ee50246819ec622ea65abaec15aeddea6; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I7cf3d21149588b29eeb022700dd5a027e4b567bc; subject=configure: Use custom path if no DPDK is found in PKG_CONFIG_PATH; feature=dpdk; upstream_status=NA; general=;
 Change-Id=Iab76140d3a6f96f65f95c6bea811c8ee486d92f0; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ie3c87c4e16a61a60f25115cf3a93dd5fcb8c8734; subject=netdev-offload-dpdk: Fix build warning about operator precedence; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Id1e0e876a07ff9c5c4e58d6a117b4a2d2dc2f4c1; subject=dpif-netdev: e2e: Do not enqueue ufid msg if disabled; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I7eae0524215e8ced8a20e4d035a43530fb040a8a; subject=netdev-offload-dpdk: Fix counter pool allocation; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I81df8ce9ae54649c2d0f946ee390971bec7f36d1; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
