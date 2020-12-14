@@ -3135,7 +3135,7 @@ dp_netdev_create_ct_actions(struct ofpbuf *buf,
 {
     size_t offset;
     char helper[] = "offl,st(0x  ),id_key(0x                )";
-    char s[9];
+    char s[17];
     char *end;
 
     if (offload->nat.mod_flags) {
