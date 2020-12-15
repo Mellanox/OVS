@@ -139,6 +139,11 @@ struct ct_flow_offload_item {
     uint32_t mark_key;
     uint32_t mark_mask;
 
+    /* Pre-created CT actions */
+    bool ct_actions_set;
+    struct nlattr *actions;
+    size_t actions_size;
+
     struct {
         uint8_t mod_flags;
         struct conn_key  key;
