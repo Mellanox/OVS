@@ -152,3 +152,5 @@ Change-Id=I7ea91fcff55d795531a16837dfacd0077cc8b677; subject=netdev-offload-dpdk
 Change-Id=I0d2e94ea30b853aacab34efd47aab9f4987e0773; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I4d5ca10941253a23c6e5bb8f9ff228fbbea18830; subject=netdev-offload-dpdk: Init NULL as shared action conf; feature=dpdk; upstream_status=NA; general=;
 Change-Id=Ib5b4343e5f0970d1aaab413aecc22d6dbd786ea3; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I9e647504fec26fa97be07d778850d18013b05c2b; subject=acinclude: Strip march from CFLAGS; feature=dpdk; upstream_status=sent; general=;
+Change-Id=I5fc9bcbafb6d91371f18b4e6d0f4c3236c69ce5d; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
