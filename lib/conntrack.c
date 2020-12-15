@@ -303,6 +303,9 @@ conntrack_offload_fill_item_common(struct ct_flow_offload_item *item,
     item->dp = conn->offloads.dir_info[dir].dp;
     item->ctid_key = conntrack_offload_get_ctid_key(conn);
     item->status = &conn->offloads.dir_info[dir].status;
+    item->ct_actions_set = false;
+    item->actions = NULL;
+    item->actions_size = 0;
 
     return dir == CT_DIR_REP
            ? !!(conn->offloads.flags & CT_OFFLOAD_REP)
