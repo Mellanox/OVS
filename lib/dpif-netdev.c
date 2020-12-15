@@ -8578,13 +8578,11 @@ e2e_cache_flow_find(const ovs_u128 *ufid, uint32_t hash)
 }
 
 static void
-e2e_cache_update_ct_stats(struct e2e_cache_ovs_flow *mt_flow, int op,
-                          struct dp_netdev *dp)
+e2e_cache_update_ct_stats(struct e2e_cache_ovs_flow *mt_flow, int op)
 {
     struct dp_offload_thread *ofl_thread;
     struct e2e_cache_ovs_flow *ct_peer;
 
-    ovs_assert(dp);
     ofl_thread = &dp_offload_threads[netdev_offload_thread_id()];
 
     ct_peer = mt_flow->ct_peer;
@@ -8743,8 +8741,7 @@ e2e_cache_ct_flow_offload_add_mt(struct dp_netdev *dp,
     if (OVS_LIKELY(ret == 0)) {
         e2e_cache_flow_state_set(ct_flow, E2E_OL_STATE_CT_HW);
         /* Update CT stats affected by offloading those MT CT flows. */
-        e2e_cache_update_ct_stats(ct_flow, DP_NETDEV_FLOW_OFFLOAD_OP_ADD,
-                                  dp);
+        e2e_cache_update_ct_stats(ct_flow, DP_NETDEV_FLOW_OFFLOAD_OP_ADD);
         e2e_stats.add_ct_mt_flow_hw++;
     } else {
         e2e_cache_flow_state_set(ct_flow, E2E_OL_STATE_CT_ERR);
@@ -8779,7 +8776,7 @@ e2e_cache_flow_db_del(const ovs_u128 *ufid, struct dp_netdev *dp)
             }
             if (ovs_list_is_empty(&iter_flow->associated_merged_flows)) {
                 e2e_cache_update_ct_stats(iter_flow,
-                                          DP_NETDEV_FLOW_OFFLOAD_OP_DEL, dp);
+                                          DP_NETDEV_FLOW_OFFLOAD_OP_DEL);
             }
         }
     }
@@ -8788,8 +8785,7 @@ e2e_cache_flow_db_del(const ovs_u128 *ufid, struct dp_netdev *dp)
          * remove it and update CT stats.
          */
         if (ct_flow->offload_state == E2E_OL_STATE_CT_HW) {
-            e2e_cache_update_ct_stats(ct_flow, DP_NETDEV_FLOW_OFFLOAD_OP_DEL,
-                                      dp);
+            e2e_cache_update_ct_stats(ct_flow, DP_NETDEV_FLOW_OFFLOAD_OP_DEL);
             e2e_cache_ct_flow_offload_del_mt(dp, ct_flow);
         }
         if (ct_flow->ct_peer) {
@@ -9199,8 +9195,7 @@ e2e_cache_process_trace_info(struct dp_netdev *dp,
             continue;
         }
         /* Update CT stats affected by offloading the merged flow. */
-        e2e_cache_update_ct_stats(mt_flows[i], DP_NETDEV_FLOW_OFFLOAD_OP_ADD,
-                                  dp);
+        e2e_cache_update_ct_stats(mt_flows[i], DP_NETDEV_FLOW_OFFLOAD_OP_ADD);
     }
     return 0;
 
