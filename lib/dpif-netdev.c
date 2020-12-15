@@ -8695,17 +8695,17 @@ e2e_cache_flow_db_del_protected(const ovs_u128 *ufid, uint32_t hash,
 }
 
 static int
-e2e_cache_ct_flow_offload_del(struct dp_netdev *dp,
-                              struct e2e_cache_ovs_flow *ovs_flow)
+e2e_cache_ct_flow_offload_del_mt(struct dp_netdev *dp,
+                                 struct e2e_cache_ovs_flow *ct_flow)
 {
     struct dp_offload_thread_item *offload_item;
     struct dp_netdev_flow flow;
     int ret;
 
     memset(&flow, 0, sizeof flow);
-    *CONST_CAST(ovs_u128 *, &flow.mega_ufid) = ovs_flow->ufid;
+    *CONST_CAST(ovs_u128 *, &flow.mega_ufid) = ct_flow->ufid;
     CONST_CAST(struct flow *, &flow.flow)->in_port.odp_port =
-        ovs_flow->ct_match[0].odp_port;
+        ct_flow->ct_match[0].odp_port;
 
     offload_item = xmalloc(sizeof *offload_item +
                            sizeof offload_item->data->flow_offload);
@@ -8720,6 +8720,52 @@ e2e_cache_ct_flow_offload_del(struct dp_netdev *dp,
         e2e_stats.del_ct_mt_flow_err++;
     }
     return ret;
+}
+
+static struct nlattr *
+e2e_cache_ct_flow_offload_add_mt(struct dp_netdev *dp,
+                                 struct e2e_cache_ovs_flow *ct_flow,
+                                 struct nlattr *actions,
+                                 uint16_t *actions_size)
+{
+    struct ct_flow_offload_item offload;
+    uint16_t max_actions_len = *actions_size;
+    int ret;
+
+    memset(&offload, 0, sizeof offload);
+
+    /* Only non-offloaded CTs. Either to MT or cache. */
+    if (ct_flow->offload_state != E2E_OL_STATE_CT_SW ||
+        !ovs_list_is_empty(&ct_flow->associated_merged_flows)) {
+        return actions;
+    }
+
+    offload.ufid = ct_flow->ufid;
+    if (!actions || max_actions_len < ct_flow->actions_size) {
+        if (actions) {
+            free(actions);
+        }
+        max_actions_len = ct_flow->actions_size;
+        actions = xmalloc(max_actions_len);
+    }
+    memcpy(actions, ct_flow->actions, ct_flow->actions_size);
+    ret = dp_netdev_ct_offload_add_cb(&offload, dp,
+                                      &ct_flow->ct_match[0],
+                                      actions,
+                                      ct_flow->actions_size);
+    if (OVS_LIKELY(ret == 0)) {
+        ct_flow->offload_state = E2E_OL_STATE_CT_HW;
+        e2e_stats.add_ct_mt_flow_hw++;
+    } else {
+        ct_flow->offload_state = E2E_OL_STATE_CT_ERR;
+        e2e_stats.add_ct_mt_flow_err++;
+    }
+    /* Update CT stats affected by offloading those MT CT flows. */
+    e2e_cache_update_ct_stats(ct_flow, DP_NETDEV_FLOW_OFFLOAD_OP_ADD,
+                              dp);
+
+    *actions_size = max_actions_len;
+    return actions;
 }
 
 static void
@@ -8757,7 +8803,7 @@ e2e_cache_flow_db_del(const ovs_u128 *ufid, struct dp_netdev *dp)
         if (ct_flow->offload_state == E2E_OL_STATE_CT_HW) {
             e2e_cache_update_ct_stats(ct_flow, DP_NETDEV_FLOW_OFFLOAD_OP_DEL,
                                       dp);
-            e2e_cache_ct_flow_offload_del(dp, ct_flow);
+            e2e_cache_ct_flow_offload_del_mt(dp, ct_flow);
         }
         if (ct_flow->ct_peer) {
             ct_flow->ct_peer->ct_peer = NULL;
@@ -9055,42 +9101,13 @@ e2e_cache_offload_ct_mt_flows(struct dp_netdev *dp,
                               struct e2e_cache_ovs_flow *mt_flows[],
                               uint16_t num_flows)
 {
-    struct ct_flow_offload_item offload;
     struct nlattr *actions = NULL;
     uint16_t max_actions_len = 0;
     uint16_t i;
-    int ret;
 
-    memset(&offload, 0, sizeof offload);
     for (i = 0; i < num_flows; i++) {
-        /* Only non-offloaded CTs. Either to MT or cache. */
-        if (mt_flows[i]->offload_state != E2E_OL_STATE_CT_SW ||
-            !ovs_list_is_empty(&mt_flows[i]->associated_merged_flows)) {
-            continue;
-        }
-        offload.ufid = mt_flows[i]->ufid;
-        if (!actions || max_actions_len < mt_flows[i]->actions_size) {
-            if (actions) {
-                free(actions);
-            }
-            max_actions_len = mt_flows[i]->actions_size;
-            actions = xmalloc(max_actions_len);
-        }
-        memcpy(actions, mt_flows[i]->actions, mt_flows[i]->actions_size);
-        ret = dp_netdev_ct_offload_add_cb(&offload, dp,
-                                          &mt_flows[i]->ct_match[0],
-                                          actions,
-                                          mt_flows[i]->actions_size);
-        if (OVS_LIKELY(ret == 0)) {
-            mt_flows[i]->offload_state = E2E_OL_STATE_CT_HW;
-            e2e_stats.add_ct_mt_flow_hw++;
-        } else {
-            mt_flows[i]->offload_state = E2E_OL_STATE_CT_ERR;
-            e2e_stats.add_ct_mt_flow_err++;
-        }
-        /* Update CT stats affected by offloading those MT CT flows. */
-        e2e_cache_update_ct_stats(mt_flows[i], DP_NETDEV_FLOW_OFFLOAD_OP_ADD,
-                                  dp);
+        actions = e2e_cache_ct_flow_offload_add_mt(dp, mt_flows[i],
+                                                   actions, &max_actions_len);
     }
     if (actions) {
         free(actions);
@@ -9116,7 +9133,7 @@ e2e_cache_purge_ct_flows_from_hw(struct dp_netdev *dp,
 
     for (i = 0; i < num_flows; i++) {
         if (mt_flows[i]->offload_state == E2E_OL_STATE_CT_HW) {
-            e2e_cache_ct_flow_offload_del(dp, mt_flows[i]);
+            e2e_cache_ct_flow_offload_del_mt(dp, mt_flows[i]);
             mt_flows[i]->offload_state = E2E_OL_STATE_CT_SW;
         }
     }
