@@ -448,6 +448,10 @@ AC_DEFUN([OVS_CHECK_DPDK], [
 
     CFLAGS="$ovs_save_CFLAGS"
     LDFLAGS="$ovs_save_LDFLAGS"
+    # Stripping out possible instruction set specific configuration that DPDK
+    # forces in pkg-config since this could override user-specified options.
+    # It's enough to have -mssse3 to build with DPDK headers.
+    DPDK_CFLAGS=$(echo "$DPDK_CFLAGS" | sed 's/-march=[[a-z0-9]]*//g')
     OVS_CFLAGS="$OVS_CFLAGS $DPDK_CFLAGS"
     OVS_ENABLE_OPTION([-mssse3])
 
