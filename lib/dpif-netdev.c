@@ -429,6 +429,7 @@ enum rxq_cycles_counter_type {
 };
 
 enum {
+    DP_NETDEV_FLOW_OFFLOAD_OP_NONE,
     DP_NETDEV_FLOW_OFFLOAD_OP_ADD,
     DP_NETDEV_FLOW_OFFLOAD_OP_MOD,
     DP_NETDEV_FLOW_OFFLOAD_OP_DEL,
@@ -850,6 +851,7 @@ enum e2e_offload_state {
     E2E_OL_STATE_CT_SW,
     E2E_OL_STATE_CT_HW,
     E2E_OL_STATE_CT_ERR,
+    E2E_OL_STATE_NUM,
 };
 
 static const char * const e2e_offload_state_names[] = {
@@ -857,6 +859,7 @@ static const char * const e2e_offload_state_names[] = {
     [E2E_OL_STATE_CT_SW] = "E2E_OL_STATE_CT_SW",
     [E2E_OL_STATE_CT_HW] = "E2E_OL_STATE_CT_HW",
     [E2E_OL_STATE_CT_ERR] = "E2E_OL_STATE_CT_ERR",
+    [E2E_OL_STATE_NUM] = "Unknown",
 };
 
 /*
@@ -8698,11 +8701,42 @@ e2e_cache_flow_state_set_at(struct e2e_cache_ovs_flow *flow,
                             const char *where)
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(100, 100);
+    static const int op[E2E_OL_STATE_NUM][E2E_OL_STATE_NUM] = {
+        [E2E_OL_STATE_CT_SW] = {
+            [E2E_OL_STATE_CT_HW] = DP_NETDEV_FLOW_OFFLOAD_OP_ADD,
+        },
+        [E2E_OL_STATE_CT_HW] = {
+            [E2E_OL_STATE_CT_SW] = DP_NETDEV_FLOW_OFFLOAD_OP_DEL,
+            [E2E_OL_STATE_CT_ERR] = DP_NETDEV_FLOW_OFFLOAD_OP_DEL,
+        },
+        [E2E_OL_STATE_CT_ERR] = {
+            [E2E_OL_STATE_CT_HW] = DP_NETDEV_FLOW_OFFLOAD_OP_ADD,
+        },
+    };
+    enum e2e_offload_state prev_state = flow->offload_state;
+    int flow_op;
+
+    if (prev_state < E2E_OL_STATE_FLOW || prev_state >= E2E_OL_STATE_NUM) {
+        /* If flow state was not yet initialized, assume a start state that
+         * is assured to be a no-op regarding CT stats.
+         */
+        prev_state = E2E_OL_STATE_FLOW;
+    }
+
+    ovs_assert(next_state >= E2E_OL_STATE_FLOW &&
+               next_state < E2E_OL_STATE_NUM);
 
     VLOG_DBG_RL(&rl, "%s: e2e-flow " UUID_FMT " state is %s", where,
                 UUID_ARGS((struct uuid *) &flow->ufid),
                 e2e_offload_state_names[next_state]);
     flow->offload_state = next_state;
+
+    flow_op = op[prev_state][next_state];
+    if (flow_op == DP_NETDEV_FLOW_OFFLOAD_OP_NONE) {
+        return;
+    }
+
+    e2e_cache_update_ct_stats(flow, flow_op);
 }
 #define e2e_cache_flow_state_set(f, s) \
     e2e_cache_flow_state_set_at(f, s, __func__)
@@ -8740,8 +8774,6 @@ e2e_cache_ct_flow_offload_add_mt(struct dp_netdev *dp,
                                       ct_flow->actions_size);
     if (OVS_LIKELY(ret == 0)) {
         e2e_cache_flow_state_set(ct_flow, E2E_OL_STATE_CT_HW);
-        /* Update CT stats affected by offloading those MT CT flows. */
-        e2e_cache_update_ct_stats(ct_flow, DP_NETDEV_FLOW_OFFLOAD_OP_ADD);
         e2e_stats.add_ct_mt_flow_hw++;
     } else {
         e2e_cache_flow_state_set(ct_flow, E2E_OL_STATE_CT_ERR);
@@ -8775,8 +8807,7 @@ e2e_cache_flow_db_del(const ovs_u128 *ufid, struct dp_netdev *dp)
                 continue;
             }
             if (ovs_list_is_empty(&iter_flow->associated_merged_flows)) {
-                e2e_cache_update_ct_stats(iter_flow,
-                                          DP_NETDEV_FLOW_OFFLOAD_OP_DEL);
+                e2e_cache_flow_state_set(iter_flow, E2E_OL_STATE_CT_SW);
             }
         }
     }
@@ -8785,8 +8816,8 @@ e2e_cache_flow_db_del(const ovs_u128 *ufid, struct dp_netdev *dp)
          * remove it and update CT stats.
          */
         if (ct_flow->offload_state == E2E_OL_STATE_CT_HW) {
-            e2e_cache_update_ct_stats(ct_flow, DP_NETDEV_FLOW_OFFLOAD_OP_DEL);
             e2e_cache_ct_flow_offload_del_mt(dp, ct_flow);
+            e2e_cache_flow_state_set(ct_flow, E2E_OL_STATE_CT_SW);
         }
         if (ct_flow->ct_peer) {
             ct_flow->ct_peer->ct_peer = NULL;
@@ -9195,7 +9226,7 @@ e2e_cache_process_trace_info(struct dp_netdev *dp,
             continue;
         }
         /* Update CT stats affected by offloading the merged flow. */
-        e2e_cache_update_ct_stats(mt_flows[i], DP_NETDEV_FLOW_OFFLOAD_OP_ADD);
+        e2e_cache_flow_state_set(mt_flows[i], E2E_OL_STATE_CT_HW);
     }
     return 0;
 
