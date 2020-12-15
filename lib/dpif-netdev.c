@@ -855,6 +855,13 @@ enum e2e_offload_state {
     E2E_OL_STATE_CT_ERR,
 };
 
+static const char * const e2e_offload_state_names[] = {
+    [E2E_OL_STATE_FLOW] = "E2E_OL_STATE_FLOW",
+    [E2E_OL_STATE_CT_SW] = "E2E_OL_STATE_CT_SW",
+    [E2E_OL_STATE_CT_HW] = "E2E_OL_STATE_CT_HW",
+    [E2E_OL_STATE_CT_ERR] = "E2E_OL_STATE_CT_ERR",
+};
+
 /*
  * A mapping from ufid to flow for e2e cache.
  */
@@ -8722,6 +8729,21 @@ e2e_cache_ct_flow_offload_del_mt(struct dp_netdev *dp,
     return ret;
 }
 
+static void
+e2e_cache_flow_state_set_at(struct e2e_cache_ovs_flow *flow,
+                            enum e2e_offload_state next_state,
+                            const char *where)
+{
+    static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(100, 100);
+
+    VLOG_DBG_RL(&rl, "%s: e2e-flow " UUID_FMT " state is %s", where,
+                UUID_ARGS((struct uuid *) &flow->ufid),
+                e2e_offload_state_names[next_state]);
+    flow->offload_state = next_state;
+}
+#define e2e_cache_flow_state_set(f, s) \
+    e2e_cache_flow_state_set_at(f, s, __func__)
+
 static struct nlattr *
 e2e_cache_ct_flow_offload_add_mt(struct dp_netdev *dp,
                                  struct e2e_cache_ovs_flow *ct_flow,
@@ -8754,13 +8776,13 @@ e2e_cache_ct_flow_offload_add_mt(struct dp_netdev *dp,
                                       actions,
                                       ct_flow->actions_size);
     if (OVS_LIKELY(ret == 0)) {
-        ct_flow->offload_state = E2E_OL_STATE_CT_HW;
+        e2e_cache_flow_state_set(ct_flow, E2E_OL_STATE_CT_HW);
         /* Update CT stats affected by offloading those MT CT flows. */
         e2e_cache_update_ct_stats(ct_flow, DP_NETDEV_FLOW_OFFLOAD_OP_ADD,
                                   dp);
         e2e_stats.add_ct_mt_flow_hw++;
     } else {
-        ct_flow->offload_state = E2E_OL_STATE_CT_ERR;
+        e2e_cache_flow_state_set(ct_flow, E2E_OL_STATE_CT_ERR);
         e2e_stats.add_ct_mt_flow_err++;
     }
 
@@ -8830,10 +8852,10 @@ e2e_cache_flow_db_put(struct e2e_cache_ufid_msg *ufid_msg)
     flow->ufid = ufid_msg->ufid;
     if (ufid_msg->is_ct) {
         flow->ct_match[0] = ufid_msg->ct_match[0];
-        flow->offload_state = E2E_OL_STATE_CT_SW;
+        e2e_cache_flow_state_set(flow, E2E_OL_STATE_CT_SW);
     } else {
         flow->match[0] = ufid_msg->match[0];
-        flow->offload_state = E2E_OL_STATE_FLOW;
+        e2e_cache_flow_state_set(flow, E2E_OL_STATE_FLOW);
     }
     flow->actions = ufid_msg->actions;
     ufid_msg->actions = NULL;
@@ -9134,7 +9156,7 @@ e2e_cache_purge_ct_flows_from_hw(struct dp_netdev *dp,
     for (i = 0; i < num_flows; i++) {
         if (mt_flows[i]->offload_state == E2E_OL_STATE_CT_HW) {
             e2e_cache_ct_flow_offload_del_mt(dp, mt_flows[i]);
-            mt_flows[i]->offload_state = E2E_OL_STATE_CT_SW;
+            e2e_cache_flow_state_set(mt_flows[i], E2E_OL_STATE_CT_SW);
         }
     }
 }
