@@ -154,3 +154,5 @@ Change-Id=I4d5ca10941253a23c6e5bb8f9ff228fbbea18830; subject=netdev-offload-dpdk
 Change-Id=Ib5b4343e5f0970d1aaab413aecc22d6dbd786ea3; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I9e647504fec26fa97be07d778850d18013b05c2b; subject=acinclude: Strip march from CFLAGS; feature=dpdk; upstream_status=sent; general=;
 Change-Id=I5fc9bcbafb6d91371f18b4e6d0f4c3236c69ce5d; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I1d0d4787ed637a6d107a26a2b9616cee5b089b06; subject=netdev-offload-dpdk: Don't postpone id_free; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Ieb84af332f176b090f7f7728f6949fd8f8c77962; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
