@@ -158,3 +158,6 @@ Change-Id=I1d0d4787ed637a6d107a26a2b9616cee5b089b06; subject=netdev-offload-dpdk
 Change-Id=Ieb84af332f176b090f7f7728f6949fd8f8c77962; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=Ic9fac3d6b96580887ab90283b3e46722a17b2e90; subject=acinclude: Fix march stripping; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I0685f4b8d94597dda708b487487e8416f891ea63; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I34eca1f1201c378dba44cef77799a0ceae8d43ac; subject=dpif-netdev: e2e: Fix aging of MT flows/CT; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Id718d71047c05c76f0c856343be1079400f47250; subject=netdev-offload-dpdk: Avoid error log allocating shared age context on PF; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Ib5d28dad2d81ff0eb9d30e5176458235e2e043ad; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
