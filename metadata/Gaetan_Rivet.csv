@@ -95,3 +95,10 @@ Change-Id=I7eae0524215e8ced8a20e4d035a43530fb040a8a; subject=netdev-offload-dpdk
 Change-Id=I81df8ce9ae54649c2d0f946ee390971bec7f36d1; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=Ifcc17e509e8c0923cfb3984413e71dd8622f666e; subject=dpif-netdev: Fix action create conversion buffer size; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I93dce510509c230d94388a8acf3aa346b946bc25; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I3f4db3497c0a99e4bf3343b22fc25b37ade94762; subject=dpif-netdev: e2e: Refactor CT MT management; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Ie5f77c6364c1fea8f24dd6d3bfdfc3e04c451277; subject=dpif-netdev: e2e: Fix MT flow counting; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Ic8d0daac90723e230bbea675e31bccf7db913163; subject=dpif-netdev: e2e: Trace e2e flow state changes; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I4b9d5e556f66f6c065b98c9b0b3e4472d5269548; subject=dpif-netdev: e2e: Remove dp parameter from stats update; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I908e308d402d71840e7b6707d5ada0fb65e5c979; subject=dpif-netdev: e2e: Use a state machine to update stats; feature=dpdk; upstream_status=NA; general=;
+Change-Id=If4cbf8183c3cae41731a91b6ed7817f0441a0184; subject=dpif-netdev: e2e: Quiesce at fixed intervals; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Ia8a97374858dfab3d8a9ef58b76b60b1fb4412cf; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
