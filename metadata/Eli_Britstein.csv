@@ -156,3 +156,5 @@ Change-Id=I9e647504fec26fa97be07d778850d18013b05c2b; subject=acinclude: Strip ma
 Change-Id=I5fc9bcbafb6d91371f18b4e6d0f4c3236c69ce5d; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I1d0d4787ed637a6d107a26a2b9616cee5b089b06; subject=netdev-offload-dpdk: Don't postpone id_free; feature=dpdk; upstream_status=NA; general=;
 Change-Id=Ieb84af332f176b090f7f7728f6949fd8f8c77962; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ic9fac3d6b96580887ab90283b3e46722a17b2e90; subject=acinclude: Fix march stripping; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I0685f4b8d94597dda708b487487e8416f891ea63; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
