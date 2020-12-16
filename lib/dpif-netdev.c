@@ -1080,7 +1080,7 @@ static inline bool
 pmd_perf_metrics_enabled(const struct dp_netdev_pmd_thread *pmd);
 static void queue_netdev_flow_del(struct dp_netdev_pmd_thread *pmd,
                                   struct dp_netdev_flow *flow);
-static void
+static bool
 e2e_cache_get_merged_flows_stats(struct netdev *netdev,
                                  struct match *match,
                                  struct nlattr **actions,
@@ -4057,11 +4057,11 @@ dpif_netdev_get_flow_offload_status(const struct dp_netdev *dp,
                                     long long prev_now)
 {
     uint64_t act_buf[1024 / 8];
+    bool merged_ret = false;
     struct nlattr *actions;
     struct netdev *netdev;
     struct match match;
     struct ofpbuf buf;
-
     int ret = 0;
 
     if (!netdev_is_flow_api_enabled()) {
@@ -4096,9 +4096,10 @@ dpif_netdev_get_flow_offload_status(const struct dp_netdev *dp,
          * get stats for MT CT, we still need to query the e2e.
          */
         if (dp_netdev_e2e_cache_enabled) {
-            e2e_cache_get_merged_flows_stats(netdev, &match, &actions,
-                                             &netdev_flow->mega_ufid, stats,
-                                             &buf, now, prev_now);
+            merged_ret =
+                e2e_cache_get_merged_flows_stats(netdev, &match, &actions,
+                                                 &netdev_flow->mega_ufid,
+                                                 stats, &buf, now, prev_now);
         }
         ovs_rwlock_unlock(&dp->port_rwlock);
     } else {
@@ -4111,7 +4112,7 @@ dpif_netdev_get_flow_offload_status(const struct dp_netdev *dp,
     }
     netdev_close(netdev);
     if (ret) {
-        return false;
+        return merged_ret;
     }
 
     return true;
@@ -9280,7 +9281,7 @@ free_merged_flow:
     return err;
 }
 
-static void
+static bool
 e2e_cache_get_merged_flows_stats(struct netdev *netdev,
                                  struct match *match,
                                  struct nlattr **actions,
@@ -9297,6 +9298,7 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev,
     struct dpif_flow_attrs merged_attr;
     struct ovs_list *merged_flow_node;
     struct e2e_cache_ovs_flow *flow;
+    bool rv = false;
     uint32_t hash;
     int ret;
 
@@ -9307,7 +9309,7 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev,
     if (OVS_UNLIKELY(!flow) ||
         ovs_list_is_empty(&flow->associated_merged_flows)) {
         ovs_mutex_unlock(&flows_map_mutex);
-        return;
+        return false;
     }
     HMAP_FOR_EACH (mt_counter_item, node, &flow->merged_counters) {
         if (flow->offload_state == E2E_OL_STATE_FLOW) {
@@ -9338,12 +9340,21 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev,
             stats->n_bytes += merged_stats.n_bytes;
             stats->n_packets += merged_stats.n_packets;
             stats->used = MAX(stats->used, merged_stats.used);
+            rv = true;
         } else {
-            netdev_ct_counter_query(netdev, mt_counter_item->key.ptr_key,
-                                    now, prev_now, stats);
+            ret = netdev_ct_counter_query(netdev, mt_counter_item->key.ptr_key,
+                                          now, prev_now, stats);
+            if (ret) {
+                VLOG_ERR_RL(&rl, "Failed to query ct counter netdev=%s, "
+                            "ptr_key=%"PRIxPTR, netdev_get_name(netdev),
+                            mt_counter_item->key.ptr_key);
+                continue;
+            }
+            rv |= stats->used == now;
         }
     }
     ovs_mutex_unlock(&flows_map_mutex);
+    return rv;
 }
 
 #define E2E_CACHE_QUIESCE_INTERVAL_MS 10
@@ -9416,7 +9427,7 @@ e2e_cache_flow_del(const ovs_u128 *ufid OVS_UNUSED,
 {
     return 0;
 }
-static void
+static bool
 e2e_cache_get_merged_flows_stats(struct netdev *netdev OVS_UNUSED,
                                  struct match *match OVS_UNUSED,
                                  struct nlattr **actions OVS_UNUSED,
