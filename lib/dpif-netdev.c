@@ -8755,14 +8755,14 @@ e2e_cache_ct_flow_offload_add_mt(struct dp_netdev *dp,
                                       ct_flow->actions_size);
     if (OVS_LIKELY(ret == 0)) {
         ct_flow->offload_state = E2E_OL_STATE_CT_HW;
+        /* Update CT stats affected by offloading those MT CT flows. */
+        e2e_cache_update_ct_stats(ct_flow, DP_NETDEV_FLOW_OFFLOAD_OP_ADD,
+                                  dp);
         e2e_stats.add_ct_mt_flow_hw++;
     } else {
         ct_flow->offload_state = E2E_OL_STATE_CT_ERR;
         e2e_stats.add_ct_mt_flow_err++;
     }
-    /* Update CT stats affected by offloading those MT CT flows. */
-    e2e_cache_update_ct_stats(ct_flow, DP_NETDEV_FLOW_OFFLOAD_OP_ADD,
-                              dp);
 
     *actions_size = max_actions_len;
     return actions;
