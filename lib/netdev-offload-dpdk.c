@@ -527,9 +527,6 @@ static void
 context_item_unref(struct context_release_item *item)
 {
     free(item->data);
-    if (!item->associated) {
-        item->md->id_free(item->arg, item->id);
-    }
     free(item);
 }
 
@@ -575,6 +572,7 @@ context_release(struct context_release_item *item)
         if (!item->associated) {
             cmap_remove(&md->i2d_map, &data->i2d_node, data->i2d_hash);
             cmap_remove(&md->d2i_map, &data->d2i_node, data->d2i_hash);
+            item->md->id_free(item->arg, item->id);
         } else {
             cmap_remove(&md->associated_i2d_map,
                         &data->associated_i2d_node,
