@@ -1445,7 +1445,8 @@ dump_shared_age_id(struct ds *s, void *data)
 }
 
 #define MIN_SHARED_AGE_ID     1
-#define MAX_SHARED_AGE_ID     (UINT32_MAX - 1)
+#define MAX_SHARED_AGE_ID     (UINT32_MAX - 2)
+#define ERR_SHARED_AGE_ID     (UINT32_MAX - 1)
 
 static struct seq_pool *shared_age_id_pool = NULL;
 
@@ -1468,8 +1469,12 @@ shared_age_id_alloc(void *arg)
     struct netdev *netdev;
 
     netdev = (struct netdev *) arg;
-    if (!netdev || netdev_dpdk_is_uplink_port(netdev)) {
+    if (!netdev) {
         return 0;
+    }
+
+    if (netdev_dpdk_is_uplink_port(netdev)) {
+        return ERR_SHARED_AGE_ID;
     }
 
     if (ovsthread_once_start(&shared_age_id_init)) {
@@ -1510,6 +1515,10 @@ shared_age_id_free(const void *arg OVS_UNUSED, uint32_t shared_age_id)
     unsigned int tid = netdev_offload_thread_id();
     struct rte_flow_error error;
     struct netdev *netdev;
+
+    if (shared_age_id == ERR_SHARED_AGE_ID) {
+        return;
+    }
 
     seq_pool_free_id(shared_age_id_pool, tid, shared_age_id);
     if (get_context_data_by_id(&shared_age_ctx_md, shared_age_id,
@@ -1555,6 +1564,11 @@ get_shared_age_id(struct netdev *netdev,
     if (get_context_data_id_by_data(&shared_age_id_md, &shared_age_id_ctx,
                                     netdev, shared_age_id)) {
         return -1;
+    }
+
+    if (*shared_age_id == ERR_SHARED_AGE_ID) {
+        ret = -1;
+        goto out;
     }
 
     ret = get_context_data_by_id(&shared_age_ctx_md, *shared_age_id,
