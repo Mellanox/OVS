@@ -1204,35 +1204,37 @@ dp_netdev_ct_offload_e2e_add(struct ct_flow_offload_item *offload)
     dp_netdev_ct_add(offload, NULL, dp_netdev_ct_e2e_add_cb);
 }
 
-static bool
+static int
 dpif_netdev_get_flow_offload_status(const struct dp_netdev *dp,
                                     struct dp_netdev_flow *netdev_flow,
                                     struct dpif_flow_stats *stats,
                                     struct dpif_flow_attrs *attrs,
                                     long long now,
                                     long long prev_now);
-static bool
+static int
 dp_netdev_ct_offload_active(struct ct_flow_offload_item *offload,
                             long long now, long long prev_now)
 {
     struct dp_netdev_flow netdev_flow;
     struct dpif_flow_stats stats;
     struct dpif_flow_attrs attrs;
+    int ret;
 
     /* if a direction is not offloaded do not attempt to query it from HW */
     if (!offload->dp) {
-        return false;
+        return EINVAL;
     }
     memset(&netdev_flow, 0, sizeof netdev_flow);
     *CONST_CAST(odp_port_t *, &netdev_flow.flow.in_port.odp_port) =
         offload->ct_match.odp_port;
     *CONST_CAST(ovs_u128 *, &netdev_flow.mega_ufid) = offload->ufid;
-    if (!dpif_netdev_get_flow_offload_status(offload->dp, &netdev_flow,
-                                             &stats, &attrs, now, prev_now)) {
-        return false;
+    ret = dpif_netdev_get_flow_offload_status(offload->dp, &netdev_flow,
+                                              &stats, &attrs, now, prev_now);
+    if (ret) {
+        return ret;
     }
 
-    return stats.used >= now;
+    return stats.used >= now ? 0 : EINVAL;
 }
 
 static int
@@ -4064,7 +4066,7 @@ dp_netdev_flow_get_last_stats_attrs(struct dp_netdev_flow *netdev_flow,
     atomic_read_relaxed(&last_attrs->dp_layer,     &attrs->dp_layer);
 }
 
-static bool
+static int
 dpif_netdev_get_flow_offload_status(const struct dp_netdev *dp,
                                     struct dp_netdev_flow *netdev_flow,
                                     struct dpif_flow_stats *stats,
@@ -4081,13 +4083,13 @@ dpif_netdev_get_flow_offload_status(const struct dp_netdev *dp,
     int ret = 0;
 
     if (!netdev_is_flow_api_enabled()) {
-        return false;
+        return EINVAL;
     }
 
     netdev = netdev_ports_get(netdev_flow->flow.in_port.odp_port,
                               dpif_normalize_type(dp->class->type));
     if (!netdev) {
-        return false;
+        return EINVAL;
     }
     ofpbuf_use_stack(&buf, &act_buf, sizeof act_buf);
     /* Taking a global 'port_mutex' to fulfill thread safety
@@ -4128,10 +4130,10 @@ dpif_netdev_get_flow_offload_status(const struct dp_netdev *dp,
     }
     netdev_close(netdev);
     if (ret) {
-        return merged_ret;
+        return merged_ret ? 0 : ret;
     }
 
-    return true;
+    return 0;
 }
 
 static void
@@ -4158,9 +4160,9 @@ get_dpif_flow_status(const struct dp_netdev *dp,
     atomic_read_relaxed(&netdev_flow->stats.tcp_flags, &flags);
     stats->tcp_flags = flags;
 
-    if (dpif_netdev_get_flow_offload_status(dp, netdev_flow,
-                                            &offload_stats, &offload_attrs, 0,
-                                            0)) {
+    if (!dpif_netdev_get_flow_offload_status(dp, netdev_flow,
+                                             &offload_stats, &offload_attrs, 0,
+                                             0)) {
         stats->n_packets += offload_stats.n_packets;
         stats->n_bytes += offload_stats.n_bytes;
         stats->used = MAX(stats->used, offload_stats.used);

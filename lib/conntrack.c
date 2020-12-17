@@ -1877,6 +1877,7 @@ conn_batch_clean(struct conntrack *ct,
 
 #define CT_SWEEP_BATCH_SIZE 32
 #define CT_SWEEP_QUIESCE_INTERVAL_MS 10
+#define CT_SWEEP_TIMEOUT_MS 1000
 
 /* Delete the expired connections from 'ctb', up to 'limit'. Returns the
  * earliest expiration time among the remaining connections in 'ctb'.  Returns
@@ -1896,6 +1897,7 @@ ct_sweep(struct conntrack *ct, long long now, size_t limit)
     enum ct_timeout tm = 0;
     size_t count = 0;
     bool hw_updated;
+    int rv_active;
     int dir;
 
     next_rcu_quiesce = now + CT_SWEEP_QUIESCE_INTERVAL_MS;
@@ -1905,6 +1907,8 @@ ct_sweep(struct conntrack *ct, long long now, size_t limit)
          * no reference should be held. */
         if (now >= next_rcu_quiesce) {
 rcu_quiesce:
+            /* Do not delay further releasing batched conns if any. */
+            conn_batch_clean(ct, conn_batch, &batch_count);
             ovsrcu_quiesce();
             now = time_msec();
             next_rcu_quiesce = now + CT_SWEEP_QUIESCE_INTERVAL_MS;
@@ -1916,27 +1920,50 @@ rcu_quiesce:
             conn = conn_it->up;
             ovs_mutex_lock(&conn->lock);
             hw_updated = false;
+            rv_active = 0;
             for (dir = 0; ct->offload_class &&
                           ct->offload_class->conn_active && dir < CT_DIR_NUM;
                  dir++) {
                 if (!hw_updated && !conn_get_tm(conn, &tm) &&
-                    conntrack_offload_fill_item_common(&item, conn, dir) &&
-                    ct->offload_class->conn_active(&item, now,
-                                                   conn->prev_query)) {
-                    conn_update_expiration(ct, conn, tm, now);
-                    hw_updated = true;
+                    conntrack_offload_fill_item_common(&item, conn, dir)) {
+                    rv_active =
+                        ct->offload_class->conn_active(&item, now,
+                                                       conn->prev_query);
+                    if (!rv_active) {
+                        conn_update_expiration(ct, conn, tm, now);
+                        hw_updated = true;
+                        break;
+                    }
                 }
                 if (!hw_updated && conn->nat_conn &&
                     !conn_get_tm(conn->nat_conn, &tm) &&
                     conntrack_offload_fill_item_common(&item, conn->nat_conn,
-                                                       dir) &&
-                    ct->offload_class->conn_active(&item, now,
-                                                   conn->prev_query)) {
-                    conn_update_expiration(ct, conn, tm, now);
-                    hw_updated = true;
+                                                       dir)) {
+                    rv_active =
+                        ct->offload_class->conn_active(&item, now,
+                                                       conn->prev_query);
+                    if (!rv_active) {
+                        conn_update_expiration(ct, conn, tm, now);
+                        hw_updated = true;
+                        break;
+                    }
                 }
             }
             conn->prev_query = now;
+
+            if (rv_active == EAGAIN) {
+                /* Impossible to query offload status, try later. */
+                ovs_mutex_unlock(&conn->lock);
+                if (now - start > CT_SWEEP_TIMEOUT_MS) {
+                    /* The hardware might be unavailable for status
+                     * update. Do not repeat RCU quiescing endlessly,
+                     * return to poll block if the sweep timeout is triggered.
+                     */
+                    goto out;
+                } else {
+                    goto rcu_quiesce;
+                }
+            }
 
             if (!hw_updated) {
                 if (!conn_expired(conn, now) || count >= limit) {
@@ -1956,8 +1983,6 @@ rcu_quiesce:
 
             /* Attempt quiescing at fixed interval. */
             if (time_msec() >= next_rcu_quiesce) {
-                /* Do not delay further releasing batched conns if any. */
-                conn_batch_clean(ct, conn_batch, &batch_count);
                 /* Restarting rculist iteration after quiescing should be fine,
                  * we are always reading the list front.
                  */
