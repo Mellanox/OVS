@@ -161,3 +161,6 @@ Change-Id=I0685f4b8d94597dda708b487487e8416f891ea63; subject=Update metadata; fe
 Change-Id=I34eca1f1201c378dba44cef77799a0ceae8d43ac; subject=dpif-netdev: e2e: Fix aging of MT flows/CT; feature=dpdk; upstream_status=NA; general=;
 Change-Id=Id718d71047c05c76f0c856343be1079400f47250; subject=netdev-offload-dpdk: Avoid error log allocating shared age context on PF; feature=dpdk; upstream_status=NA; general=;
 Change-Id=Ib5d28dad2d81ff0eb9d30e5176458235e2e043ad; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I76a5db94a957959f0a28f5e47ee8dfed11358d63; subject=netdev-offload-dpdk: Fix wrong next table id jump for tunnel multi-PFs; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Icfc0ad5ac42c2ead4c36139da8b619281d5f3897; subject=netdev-offload-dpdk: Fix multiple flow_id association; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Iae41f8eab1a914bc7e48dfe12932adef24388a9f; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
