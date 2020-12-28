@@ -4425,10 +4425,12 @@ create_pre_post_ct(struct netdev *netdev,
     } else {
         memset(&pre_ct_miss_ctx.tnl, 0, sizeof pre_ct_miss_ctx.tnl);
     }
-    if (associate_flow_id(act_resources->flow_id, &pre_ct_miss_ctx)) {
-        goto pre_ct_err;
+    if (!act_resources->associated_flow_id) {
+        if (associate_flow_id(act_resources->flow_id, &pre_ct_miss_ctx)) {
+            goto pre_ct_err;
+        }
+        act_resources->associated_flow_id = true;
     }
-    act_resources->associated_flow_id = true;
     pre_ct_mark.id = act_resources->flow_id;
     add_flow_action(&pre_ct_actions, RTE_FLOW_ACTION_TYPE_MARK, &pre_ct_mark);
     pre_ct_jump.group = act_resources->ct_table_id;
