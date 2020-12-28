@@ -2175,6 +2175,7 @@ struct act_vars {
     bool is_outer_ipv4;
     struct ds s_extra;
     uint8_t gnv_opts_cnt;
+    bool is_pre_ct;
 };
 
 static void
@@ -2536,8 +2537,7 @@ create_offload_flow(struct netdev *netdev,
             }
         }
     }
-    if (!act_resources->associated_flow_id &&
-        act_resources->flow_miss_ctx_id) {
+    if (!act_vars->is_pre_ct && act_resources->flow_miss_ctx_id) {
         struct flow_miss_ctx flow_miss_ctx;
 
         if (find_flow_miss_ctx(act_resources->flow_miss_ctx_id,
@@ -4419,8 +4419,10 @@ create_pre_post_ct(struct netdev *netdev,
     pre_ct_jump.group = act_resources->ct_table_id;
     add_flow_action(&pre_ct_actions, RTE_FLOW_ACTION_TYPE_JUMP, &pre_ct_jump);
     add_flow_action(&pre_ct_actions, RTE_FLOW_ACTION_TYPE_END, NULL);
+    act_vars->is_pre_ct = true;
     ret = create_offload_flow(netdev, 0, items, pre_ct_actions.actions, error,
                               act_resources, act_vars, fi, 0);
+    act_vars->is_pre_ct = false;
     if (ret) {
         goto pre_ct_err;
     }
