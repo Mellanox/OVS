@@ -32,3 +32,5 @@ Change-Id=I6957cb6c6586308319b723b6ec2c7d907f199ce3; subject=dpif-netdev: Add ch
 Change-Id=Ic90e21d95169c2cfe9ab8c14e8ff13a1272c0f80; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I3cf8f74a33f00838ccfba01b7ce344abe17986af; subject=netdev-offload-dpdk: Add sanity check in shared_age_id_alloc; feature=dpdk; upstream_status=in_progress; general=;
 Change-Id=I88d6b814e7a208480f4e62412cfa995c3bccf1df; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I13a950d838210201048eefbd05e9462515c2e52e; subject=netdev-offload-dpdk: Remove shared action pointer from act_vars; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I5dfce15a5be47f659175e46e6027e4d3f465c700; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
