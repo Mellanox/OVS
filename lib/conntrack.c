@@ -1875,6 +1875,49 @@ conn_batch_clean(struct conntrack *ct,
     *batch_count = 0;
 }
 
+static bool
+conn_hw_update(struct conntrack *ct,
+               struct conn *conn,
+               long long now,
+               int *rv_active)
+{
+    struct ct_flow_offload_item item;
+    enum ct_timeout tm = 0;
+    bool updated = false;
+    int dir;
+
+    for (dir = 0; ct->offload_class &&
+                  ct->offload_class->conn_active && dir < CT_DIR_NUM;
+         dir++) {
+        if (!updated && !conn_get_tm(conn, &tm) &&
+            conntrack_offload_fill_item_common(&item, conn, dir)) {
+            *rv_active =
+                ct->offload_class->conn_active(&item, now,
+                                               conn->prev_query);
+            if (!*rv_active) {
+                conn_update_expiration(ct, conn, tm, now);
+                updated = true;
+                break;
+            }
+        }
+        if (!updated && conn->nat_conn &&
+            !conn_get_tm(conn->nat_conn, &tm) &&
+            conntrack_offload_fill_item_common(&item, conn->nat_conn,
+                                               dir)) {
+            *rv_active =
+                ct->offload_class->conn_active(&item, now,
+                                               conn->prev_query);
+            if (!*rv_active) {
+                conn_update_expiration(ct, conn, tm, now);
+                updated = true;
+                break;
+            }
+        }
+    }
+    conn->prev_query = now;
+    return updated;
+}
+
 #define CT_SWEEP_BATCH_SIZE 32
 #define CT_SWEEP_QUIESCE_INTERVAL_MS 10
 #define CT_SWEEP_TIMEOUT_MS 1000
@@ -1891,14 +1934,11 @@ ct_sweep(struct conntrack *ct, long long now, size_t limit)
     struct conn *conn_batch[CT_SWEEP_BATCH_SIZE];
     size_t batch_count = 0;
     long long min_expiration = LLONG_MAX;
-    struct ct_flow_offload_item item;
     long long int next_rcu_quiesce;
     long long int start = now;
-    enum ct_timeout tm = 0;
     size_t count = 0;
     bool hw_updated;
     int rv_active;
-    int dir;
 
     next_rcu_quiesce = now + CT_SWEEP_QUIESCE_INTERVAL_MS;
     for (unsigned i = 0; i < N_CT_TM; i++) {
@@ -1919,37 +1959,8 @@ rcu_quiesce:
 
             conn = conn_it->up;
             ovs_mutex_lock(&conn->lock);
-            hw_updated = false;
             rv_active = 0;
-            for (dir = 0; ct->offload_class &&
-                          ct->offload_class->conn_active && dir < CT_DIR_NUM;
-                 dir++) {
-                if (!hw_updated && !conn_get_tm(conn, &tm) &&
-                    conntrack_offload_fill_item_common(&item, conn, dir)) {
-                    rv_active =
-                        ct->offload_class->conn_active(&item, now,
-                                                       conn->prev_query);
-                    if (!rv_active) {
-                        conn_update_expiration(ct, conn, tm, now);
-                        hw_updated = true;
-                        break;
-                    }
-                }
-                if (!hw_updated && conn->nat_conn &&
-                    !conn_get_tm(conn->nat_conn, &tm) &&
-                    conntrack_offload_fill_item_common(&item, conn->nat_conn,
-                                                       dir)) {
-                    rv_active =
-                        ct->offload_class->conn_active(&item, now,
-                                                       conn->prev_query);
-                    if (!rv_active) {
-                        conn_update_expiration(ct, conn, tm, now);
-                        hw_updated = true;
-                        break;
-                    }
-                }
-            }
-            conn->prev_query = now;
+            hw_updated = conn_hw_update(ct, conn, now, &rv_active);
 
             if (rv_active == EAGAIN) {
                 /* Impossible to query offload status, try later. */
