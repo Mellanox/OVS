@@ -36,3 +36,6 @@ Change-Id=I13a950d838210201048eefbd05e9462515c2e52e; subject=netdev-offload-dpdk
 Change-Id=I5dfce15a5be47f659175e46e6027e4d3f465c700; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=Iede9bac24db13f6ec2b79a0fee78e78944e67797; subject=netdev-offload-dpdk: e2e: Prevent rss actions on e2e-cache flows; feature=dpdk; upstream_status=NA; general=;
 Change-Id=Ifa942c96d22f8a6386ec6554bf85157025548208; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I094882876656841cf544cab4bc492d586b03e19e; subject=conntrack: Introduce conn_hw_update; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I9720a43d04b09ae645a365044738c0c3cdb93b46; subject=conntrack: Fix CT-NAT timeout retrieval; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Idc350b82258b956e0ef2b7232442c2c5a00fd18d; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
