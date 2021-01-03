@@ -1018,6 +1018,7 @@ struct e2e_cache_merged_flow {
     uintptr_t ct_counter_key;
     struct flows_counter_key flows_counter_key;
     struct match match;
+    uint32_t flow_mark;
     struct flow2flow_item associated_flows[0];
 };
 
@@ -3219,33 +3220,33 @@ dp_netdev_flow_offload_put(struct dp_offload_thread_item *offload_item)
         return -1;
     }
 
-    if (is_e2e_cache_flow) {
-        mark = INVALID_FLOW_MARK;
+    if (is_e2e_cache_flow || modification) {
+        /* For e2e case, mark is invalid. However, CT2CT is also marked as
+         * is_e2e_cache_flow, and for that case we need to pass the mark of
+         * last merged megaflow.
+         */
+        mark = flow->mark;
     } else {
-        if (modification) {
-            mark = flow->mark;
-        } else {
-            /*
-             * If a mega flow has already been offloaded (from other PMD
-             * instances), do not offload it again.
-             */
-            mark = megaflow_to_mark_find(&flow->mega_ufid);
-            if (mark != INVALID_FLOW_MARK) {
-                VLOG_DBG("Flow has already been offloaded with mark %u\n",
-                         mark);
-                if (flow->mark != INVALID_FLOW_MARK) {
-                    ovs_assert(flow->mark == mark);
-                } else {
-                    mark_to_flow_associate(mark, flow);
-                }
-                return 0;
+        /*
+         * If a mega flow has already been offloaded (from other PMD
+         * instances), do not offload it again.
+         */
+        mark = megaflow_to_mark_find(&flow->mega_ufid);
+        if (mark != INVALID_FLOW_MARK) {
+            VLOG_DBG("Flow has already been offloaded with mark %u\n",
+                     mark);
+            if (flow->mark != INVALID_FLOW_MARK) {
+                ovs_assert(flow->mark == mark);
+            } else {
+                mark_to_flow_associate(mark, flow);
             }
+            return 0;
+        }
 
-            mark = netdev_offload_flow_mark_alloc();
-            if (mark == INVALID_FLOW_MARK) {
-                VLOG_ERR("Failed to allocate flow mark!\n");
-                return -1;
-            }
+        mark = netdev_offload_flow_mark_alloc();
+        if (mark == INVALID_FLOW_MARK) {
+            VLOG_ERR("Failed to allocate flow mark!\n");
+            return -1;
         }
     }
 
@@ -8780,7 +8781,7 @@ e2e_cache_merged_flow_offload_put(struct dp_netdev *dp,
     in_port = merged_flow->match.flow.in_port;
 
     memset(&flow, 0, sizeof flow);
-    flow.mark = INVALID_FLOW_MARK;
+    flow.mark = merged_flow->flow_mark;
     flow.dead = false;
     *CONST_CAST(ovs_u128 *, &flow.mega_ufid) = merged_flow->ufid;
     CONST_CAST(struct flow *, &flow.flow)->in_port = in_port;
@@ -12470,6 +12471,7 @@ e2e_cache_merge_flows(struct e2e_cache_ovs_flow **flows,
         e2e_stats->merge_rej_flows++;
         return -1;
     }
+    merged_flow->flow_mark = INVALID_FLOW_MARK;
     e2e_stats->succ_merged_flows++;
     return 0;
 }
