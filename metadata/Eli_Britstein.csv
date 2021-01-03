@@ -166,3 +166,5 @@ Change-Id=Icfc0ad5ac42c2ead4c36139da8b619281d5f3897; subject=netdev-offload-dpdk
 Change-Id=Iae41f8eab1a914bc7e48dfe12932adef24388a9f; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=Id8743d7481865b04dac2cc57a5bd1bfdbdb690c8; subject=conntrack: Avoid querying during high lock contention; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I5261178351187c617b1d2837b7ec67d955e34f84; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ia73e7528e3fa8e05f8c45e6ae17ee8b056d4dba5; subject=dpif-netdev: e2e: Fix CT MT purge deletion; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I20c750c7241ca2169fec41909eb02a16e06a7215; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
