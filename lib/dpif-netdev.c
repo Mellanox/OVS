@@ -12280,7 +12280,8 @@ e2e_cache_attach_merged_set_action(struct ofpbuf *buf, size_t tnl_offset,
 
 static void
 e2e_cache_merge_actions(struct e2e_cache_ovs_flow **netdev_flows,
-                        uint16_t num, struct ofpbuf *buf)
+                        uint16_t num, struct ofpbuf *buf,
+                        const struct nlattr **last_ct)
 {
     uint16_t i = 0;
     unsigned int left;
@@ -12299,6 +12300,9 @@ e2e_cache_merge_actions(struct e2e_cache_ovs_flow **netdev_flows,
                           netdev_flows[i]->actions_size) {
             enum ovs_action_attr type = nl_attr_type(a);
 
+            if (type == OVS_ACTION_ATTR_CT && last_ct) {
+                *last_ct = a;
+            }
             if (type == OVS_ACTION_ATTR_CT ||
                 type == OVS_ACTION_ATTR_RECIRC) {
                 continue;
@@ -12408,7 +12412,7 @@ e2e_cache_merge_flows(struct e2e_cache_ovs_flow **flows,
     merged_flow->match.wc.masks.ct_zone = 0;
     dp_netdev_get_mega_ufid(&merged_flow->match, &merged_flow->ufid);
     uuid_set_bits_v4((struct uuid *) &merged_flow->ufid, UUID_ATTR_3);
-    e2e_cache_merge_actions(flows, num_flows, merged_actions);
+    e2e_cache_merge_actions(flows, num_flows, merged_actions, NULL);
     if (OVS_UNLIKELY(merged_actions->size < sizeof(struct nlattr))) {
         e2e_stats->merge_rej_flows++;
         return -1;
