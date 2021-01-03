@@ -9191,10 +9191,16 @@ e2e_cache_purge_ct_flows_from_hw(struct dp_netdev *dp,
     uint16_t i;
 
     for (i = 0; i < num_flows; i++) {
-        if (mt_flows[i]->offload_state == E2E_OL_STATE_CT_HW) {
-            e2e_cache_ct_flow_offload_del_mt(dp, mt_flows[i]);
-            e2e_cache_flow_state_set(mt_flows[i], E2E_OL_STATE_CT_SW);
+        /* When an e2e flow is created, it should remove its MT HW rule if
+         * exists, but not its peer MT HW rule. Skip if not in HW or peer
+         * CT flows.
+         */
+        if (mt_flows[i]->offload_state != E2E_OL_STATE_CT_HW ||
+            (i > 0 && mt_flows[i - 1]->offload_state != E2E_OL_STATE_FLOW)) {
+            continue;
         }
+        e2e_cache_ct_flow_offload_del_mt(dp, mt_flows[i]);
+        e2e_cache_flow_state_set(mt_flows[i], E2E_OL_STATE_CT_SW);
     }
 }
 
