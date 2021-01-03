@@ -3600,6 +3600,10 @@ netdev_offload_dpdk_mark_rss(struct flow_patterns *patterns,
     };
     struct rte_flow_error error;
 
+    if (act_vars->is_e2e_cache_flow) {
+        return NULL;
+    }
+
     add_flow_mark_rss_actions(&actions, flow_mark, netdev);
 
     create_rte_flow(netdev, &flow_attr, patterns->items, actions.actions,
