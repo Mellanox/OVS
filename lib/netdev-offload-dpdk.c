@@ -4620,11 +4620,14 @@ parse_ct_actions(struct flow_actions *actions,
     act_vars->ct_mode = CT_MODE_CT;
     NL_ATTR_FOR_EACH_UNSAFE (cta, ctleft, ct_actions, ct_actions_len) {
         if (nl_attr_type(cta) == OVS_CT_ATTR_ZONE) {
-            if (get_zone_id(nl_attr_get_u16(cta),
-                            &act_resources->ct_action_zone_id) ||
-                add_action_set_reg_field(actions, REG_FIELD_CT_ZONE,
-                                         act_resources->ct_action_zone_id,
-                                         reg_fields[REG_FIELD_CT_ZONE].mask)) {
+            const uint32_t ct_zone_mask = reg_fields[REG_FIELD_CT_ZONE].mask;
+
+            if (act_resources->flow_id != INVALID_FLOW_MARK &&
+                (get_zone_id(nl_attr_get_u16(cta),
+                             &act_resources->ct_action_zone_id) ||
+                 add_action_set_reg_field(actions, REG_FIELD_CT_ZONE,
+                                          act_resources->ct_action_zone_id,
+                                          ct_zone_mask))) {
                 VLOG_DBG_RL(&rl, "Could not create zone id");
                 return -1;
             }
