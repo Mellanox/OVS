@@ -67,7 +67,7 @@ static uint32_t e2e_cache_size = 0;
 #define DEFAULT_OFFLOAD_THREAD_NB 1
 #define MAX_OFFLOAD_THREAD_NB 10
 
-static unsigned int offload_thread_nb;
+static unsigned int offload_thread_nb = DEFAULT_OFFLOAD_THREAD_NB;
 DEFINE_EXTERN_PER_THREAD_DATA(netdev_offload_thread_id, OVSTHREAD_ID_UNSET);
 
 /* Protects 'netdev_flow_apis'.  */
