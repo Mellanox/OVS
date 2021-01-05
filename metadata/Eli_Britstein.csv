@@ -168,3 +168,5 @@ Change-Id=Id8743d7481865b04dac2cc57a5bd1bfdbdb690c8; subject=conntrack: Avoid qu
 Change-Id=I5261178351187c617b1d2837b7ec67d955e34f84; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=Ia73e7528e3fa8e05f8c45e6ae17ee8b056d4dba5; subject=dpif-netdev: e2e: Fix CT MT purge deletion; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I20c750c7241ca2169fec41909eb02a16e06a7215; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I1a46b0bf2ee0968ed3f10544bd8e0e22ed70bb6f; subject=netdev-offload: Set a default value for offload_thread_nb; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Iae16f317d4f272bb90cf79b52ccf9875ccedf717; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
