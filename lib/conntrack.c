@@ -1894,10 +1894,16 @@ conn_hw_update(struct conntrack *ct,
     bool updated = false;
     int dir;
 
+    if (!ct->offload_class ||
+        !ct->offload_class->conn_active ||
+        conn_get_tm(conn, &tm)) {
+        return false;
+    }
+
     for (dir = 0; ct->offload_class &&
                   ct->offload_class->conn_active && dir < CT_DIR_NUM;
          dir++) {
-        if (!updated && !conn_get_tm(conn, &tm) &&
+        if (!updated &&
             conntrack_offload_fill_item_common(&item, conn, dir)) {
             *rv_active =
                 ct->offload_class->conn_active(&item, now,
@@ -1909,7 +1915,6 @@ conn_hw_update(struct conntrack *ct,
             }
         }
         if (!updated && conn->nat_conn &&
-            !conn_get_tm(conn->nat_conn, &tm) &&
             conntrack_offload_fill_item_common(&item, conn->nat_conn,
                                                dir)) {
             *rv_active =
