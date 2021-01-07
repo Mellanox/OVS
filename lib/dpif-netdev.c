@@ -8880,8 +8880,7 @@ e2e_cache_update_ct_stats(struct e2e_cache_ovs_flow *mt_flow, int op)
     if (op == DP_NETDEV_FLOW_OFFLOAD_OP_ADD) {
         if (ct_peer &&
             (ct_peer->offload_state == E2E_OL_STATE_CT_HW ||
-             ct_peer->offload_state == E2E_OL_STATE_CT_MT_LOCAL ||
-             !ovs_list_is_empty(&ct_peer->associated_merged_flows))) {
+             ct_peer->offload_state == E2E_OL_STATE_CT_MT_LOCAL)) {
             atomic_count_inc64(&ofl_thread->ct_bi_dir_connections);
             atomic_count_dec64(&ofl_thread->ct_uni_dir_connections);
         } else {
@@ -8890,8 +8889,7 @@ e2e_cache_update_ct_stats(struct e2e_cache_ovs_flow *mt_flow, int op)
     } else if (op == DP_NETDEV_FLOW_OFFLOAD_OP_DEL) {
         if (ct_peer &&
             (ct_peer->offload_state == E2E_OL_STATE_CT_HW ||
-             ct_peer->offload_state == E2E_OL_STATE_CT_MT_LOCAL ||
-             !ovs_list_is_empty(&ct_peer->associated_merged_flows))) {
+             ct_peer->offload_state == E2E_OL_STATE_CT_MT_LOCAL)) {
             atomic_count_dec64(&ofl_thread->ct_bi_dir_connections);
             atomic_count_inc64(&ofl_thread->ct_uni_dir_connections);
         } else {
