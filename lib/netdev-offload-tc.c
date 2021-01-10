@@ -633,6 +633,7 @@ get_chains_from_netdev(struct netdev *netdev, struct tcf_id *id,
 
     err = nl_dump_done(dump->nl_dump);
     ofpbuf_uninit(&rbuffer);
+    netdev_close(netdev);
     free(dump->nl_dump);
     free(dump);
 
