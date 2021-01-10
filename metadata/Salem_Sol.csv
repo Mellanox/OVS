@@ -39,3 +39,5 @@ Change-Id=Ifa942c96d22f8a6386ec6554bf85157025548208; subject=Update metadata; fe
 Change-Id=I094882876656841cf544cab4bc492d586b03e19e; subject=conntrack: Introduce conn_hw_update; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I9720a43d04b09ae645a365044738c0c3cdb93b46; subject=conntrack: Fix CT-NAT timeout retrieval; feature=dpdk; upstream_status=NA; general=;
 Change-Id=Idc350b82258b956e0ef2b7232442c2c5a00fd18d; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ibf96ceb27142568560e6960e053f6ee9b3199101; subject=netdev-offload-tc: Close netdev in get_chains_from_netdev; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I1e1687a9c428c0fa2f605edcf0385d0e5fad13bb; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
