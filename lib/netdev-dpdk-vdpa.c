@@ -199,12 +199,17 @@ netdev_dpdk_vdpa_generate_rss_flow(struct netdev_dpdk_vdpa_relay *relay)
     pattern[0].mask = NULL;
     pattern[1].type = RTE_FLOW_ITEM_TYPE_END;
 
-    flow = rte_flow_create(relay->port_id_vf, &attr, pattern, action, &error);
-    if (flow == NULL) {
-        VLOG_ERR("Failed to create flow. msg: %s",
-                 error.message ? error.message : "(no stated reason)");
-        err = EINVAL;
-        goto out;
+    if (action_rss.queue_num) {
+        flow = rte_flow_create(relay->port_id_vf, &attr, pattern, action,
+                               &error);
+        if (flow == NULL) {
+            VLOG_ERR("Failed to create flow. msg: %s",
+                     error.message ? error.message : "(no stated reason)");
+            err = EINVAL;
+            goto out;
+        }
+    } else {
+        flow = NULL;
     }
 
     if (relay->flow_params.flow != NULL) {
