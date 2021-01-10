@@ -170,3 +170,5 @@ Change-Id=Ia73e7528e3fa8e05f8c45e6ae17ee8b056d4dba5; subject=dpif-netdev: e2e: F
 Change-Id=I20c750c7241ca2169fec41909eb02a16e06a7215; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I1a46b0bf2ee0968ed3f10544bd8e0e22ed70bb6f; subject=netdev-offload: Set a default value for offload_thread_nb; feature=dpdk; upstream_status=NA; general=;
 Change-Id=Iae16f317d4f272bb90cf79b52ccf9875ccedf717; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I34959b7d7b27cc93875e4b0d6aaae5bf985cf061; subject=netdev-dpdk-vdpa: Fix no queues RSS; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Ib65fda6448c6b09b910f826c2b6c918a2843061c; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
