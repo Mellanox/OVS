@@ -63,6 +63,7 @@ enum offload_uuid_attr {
     UUID_ATTR_1,
     UUID_ATTR_2,
     UUID_ATTR_3,
+    UUID_ATTR_4,
 };
 
 struct netdev_flow_dump {

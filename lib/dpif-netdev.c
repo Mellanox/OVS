@@ -496,6 +496,8 @@ struct dp_offload_thread_item {
  *                      HW offload.
  * add_ct_flow_hw = Amount of successful CT offload operations to MT.
  * add_ct_flow_err = Amount of failed CT offload operations MT.
+ * succ_ct2ct_merges = Amount of successfully ct2ct merges.
+ * rej_ct2ct_merges = Amount of merges rejected by the ct2ct merge engine.
  */
 struct e2e_cache_stats {
     atomic_count generated_trcs;
@@ -516,6 +518,8 @@ struct e2e_cache_stats {
     uint32_t del_ct_mt_flow_hw;
     uint32_t add_ct_mt_flow_err;
     uint32_t del_ct_mt_flow_err;
+    uint32_t succ_ct2ct_merges;
+    uint32_t rej_ct2ct_merges;
 };
 
 struct dp_offload_thread {
@@ -1222,6 +1226,8 @@ dp_netdev_e2e_offload_init(struct e2e_cache_stats *e2e_stats)
     e2e_stats->del_ct_mt_flow_hw = 0;
     e2e_stats->add_ct_mt_flow_err = 0;
     e2e_stats->del_ct_mt_flow_err = 0;
+    e2e_stats->succ_ct2ct_merges = 0;
+    e2e_stats->rej_ct2ct_merges = 0;
 }
 
 static void
@@ -5430,6 +5436,8 @@ dpif_netdev_offload_stats_get(struct dpif *dpif,
         DP_NETDEV_E2E_STATS_CT_MT_DELS,
         DP_NETDEV_E2E_STATS_FAILED_CT_MT_ADDS,
         DP_NETDEV_E2E_STATS_FAILED_CT_MT_DELS,
+        DP_NETDEV_E2E_STATS_SUC_CT2CT_MERGES,
+        DP_NETDEV_E2E_STATS_REJ_CT2CT_MERGES,
         DP_NETDEV_E2E_STATS_LAST,
     };
     struct {
@@ -5485,6 +5493,10 @@ dpif_netdev_offload_stats_get(struct dpif *dpif,
             { "     Failed CT MT Adds", 0 },
         [DP_NETDEV_E2E_STATS_FAILED_CT_MT_DELS] =
             { "     Failed CT MT Dels", 0 },
+        [DP_NETDEV_E2E_STATS_SUC_CT2CT_MERGES] =
+            { " Successful CT2CT mrgs", 0 },
+        [DP_NETDEV_E2E_STATS_REJ_CT2CT_MERGES] =
+            { " Rejected CT2CT merges", 0 },
     }, *cur_stats;
 
     struct dp_netdev *dp = get_dp_netdev(dpif);
@@ -5584,6 +5596,10 @@ dpif_netdev_offload_stats_get(struct dpif *dpif,
                 cur_e2e_stats->add_ct_mt_flow_err;
             e2e_counts[DP_NETDEV_E2E_STATS_FAILED_CT_MT_DELS] =
                 cur_e2e_stats->del_ct_mt_flow_err;
+            e2e_counts[DP_NETDEV_E2E_STATS_SUC_CT2CT_MERGES] =
+                cur_e2e_stats->succ_ct2ct_merges;
+            e2e_counts[DP_NETDEV_E2E_STATS_REJ_CT2CT_MERGES] =
+                cur_e2e_stats->rej_ct2ct_merges;
         }
 
         for (i = 0; i < nb_counts; i++) {
@@ -12419,6 +12435,61 @@ e2e_cache_merge_flows(struct e2e_cache_ovs_flow **flows,
     }
     merged_flow->flow_mark = INVALID_FLOW_MARK;
     e2e_stats->succ_merged_flows++;
+    return 0;
+}
+
+OVS_UNUSED
+static int
+ct2ct_merge_flows(struct e2e_cache_ovs_flow **flows,
+                  uint16_t num_flows,
+                  struct e2e_cache_merged_flow *merged_flow,
+                  struct ofpbuf *merged_actions)
+{
+    unsigned int tid = netdev_offload_thread_id();
+    const struct nlattr *last_ct = NULL;
+    struct e2e_cache_stats *e2e_stats;
+
+    ovs_assert(num_flows > 4);
+
+    e2e_stats = &dp_offload_threads[tid].e2e_stats;
+
+    /* Trace is:
+     * 0              Flow1
+     * 1              CT1
+     * ...
+     * num_flows - 4  Flow(N-1)
+     * num_flows - 3  CTN
+     * num_flows - 2  CTN-peer
+     * num_flows - 1  FlowN
+     *
+     * Matches are merged from CT1 (in [1]) until CTN included (in
+     * [num_flows - 3]).
+     * Actions are merged from Flow1 (in [0]) until CTN included (in
+     * [num_flows - 3]).
+     * The mark should be of Flow(N-1) (in [num_flows - 4]).
+     */
+    e2e_cache_merge_match(&flows[1], num_flows - 3, &merged_flow->match);
+    dp_netdev_get_mega_ufid(&merged_flow->match, &merged_flow->ufid);
+    uuid_set_bits_v4((struct uuid *) &merged_flow->ufid, UUID_ATTR_4);
+    e2e_cache_merge_actions(flows, num_flows - 2, merged_actions, &last_ct);
+    if (!last_ct) {
+        return -1;
+    }
+    ofpbuf_put(merged_actions, last_ct, last_ct->nla_len);
+    if (OVS_UNLIKELY(merged_actions->size < sizeof(struct nlattr))) {
+        ofpbuf_uninit(merged_actions);
+        e2e_stats->rej_ct2ct_merges++;
+        return -1;
+    }
+    /* Set the mark to the last flow in the CT2CT section. */
+    merged_flow->flow_mark =
+        megaflow_to_mark_find(&flows[num_flows - 4]->ufid);
+    if (merged_flow->flow_mark == INVALID_FLOW_MARK) {
+        ofpbuf_uninit(merged_actions);
+        e2e_stats->rej_ct2ct_merges++;
+        return -1;
+    }
+    e2e_stats->succ_ct2ct_merges++;
     return 0;
 }
 #endif /* E2E_CACHE_ENABLED */
