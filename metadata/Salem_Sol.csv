@@ -41,3 +41,5 @@ Change-Id=I9720a43d04b09ae645a365044738c0c3cdb93b46; subject=conntrack: Fix CT-N
 Change-Id=Idc350b82258b956e0ef2b7232442c2c5a00fd18d; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=Ibf96ceb27142568560e6960e053f6ee9b3199101; subject=netdev-offload-tc: Close netdev in get_chains_from_netdev; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I1e1687a9c428c0fa2f605edcf0385d0e5fad13bb; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Idae46e920fe6624f77e1f0fd641f2d7f12d21185; subject=netdev-offload-dpdk: Remove flow_netdev in free_flow_handle; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I8dca5a68aced0aaded6dca971707568fa87fd899; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
