@@ -90,20 +90,13 @@ struct flows_handle {
 
 static void put_table_id(const char *devargs, uint32_t table_id);
 static void
-free_flow_handle(struct netdev *netdev, struct flows_handle *flows)
+free_flow_handle(struct flows_handle *flows)
 {
-    struct netdev *flow_netdev;
     int i;
 
     for (i = 0; i < flows->cnt; i++) {
         struct flow_item *fi = &flows->items[i];
 
-        if (fi->devargs) {
-            flow_netdev = netdev_dpdk_get_netdev_by_devargs(fi->devargs);
-        } else {
-            flow_netdev = netdev;
-            netdev_ref(flow_netdev);
-        }
         put_table_id(fi->devargs, fi->self_table_id);
         put_table_id(fi->devargs, fi->next_table_id);
         put_table_id(fi->devargs, fi->self_e2e_table_id);
@@ -4812,7 +4805,7 @@ netdev_offload_dpdk_remove_flows(struct netdev *netdev,
     }
     ret = ufid_to_rte_flow_disassociate(netdev, ufid);
 out:
-    free_flow_handle(netdev, flows);
+    free_flow_handle(flows);
     return ret;
 }
 
