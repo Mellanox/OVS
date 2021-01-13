@@ -142,6 +142,8 @@ struct ufid_to_rte_flow_data {
     bool actions_offloaded;
     struct dpif_flow_stats stats;
     struct act_resources act_resources;
+    struct ovs_mutex lock;
+    bool dead;
 };
 
 struct netdev_offload_dpdk_data {
@@ -285,6 +287,7 @@ ufid_to_rte_flow_associate(struct netdev *netdev, const ovs_u128 *ufid,
     data->actions_offloaded = actions_offloaded;
     memcpy(&data->flows, flows, sizeof data->flows);
     memcpy(&data->act_resources, act_resources, sizeof data->act_resources);
+    ovs_mutex_init(&data->lock);
 
     cmap_insert(map, CONST_CAST(struct cmap_node *, &data->node), hash);
 
@@ -296,12 +299,14 @@ ufid_to_rte_flow_associate(struct netdev *netdev, const ovs_u128 *ufid,
 static void
 ufid_to_rte_flow_data_unref(struct ufid_to_rte_flow_data *data)
 {
+    ovs_mutex_destroy(&data->lock);
     free(data);
 }
 
 static inline void
 ufid_to_rte_flow_disassociate(struct netdev *netdev,
                               struct ufid_to_rte_flow_data *data)
+    OVS_REQUIRES(data->lock)
 {
     struct cmap *map = offload_data_map(netdev);
     size_t hash;
@@ -4769,6 +4774,9 @@ netdev_offload_dpdk_remove_flows(struct netdev *netdev,
                   UUID_ARGS((struct uuid *) ufid));
         return -1;
     }
+    data->dead = true;
+    ovs_mutex_lock(&data->lock);
+    ufid_to_rte_flow_disassociate(netdev, data);
 
     for (i = 0; i < flows->cnt; i++) {
         struct flow_item *fi = &flows->items[i];
@@ -4801,9 +4809,9 @@ netdev_offload_dpdk_remove_flows(struct netdev *netdev,
         }
         netdev_close(flow_netdev);
     }
-    ufid_to_rte_flow_disassociate(netdev, data);
     ret = 0;
 out:
+    ovs_mutex_unlock(&data->lock);
     if (!ret) {
         put_action_resources(netdev, &data->act_resources);
         ovsrcu_postpone(ufid_to_rte_flow_data_unref, data);
@@ -4924,10 +4932,12 @@ netdev_offload_dpdk_flow_get(struct netdev *netdev,
     int i;
     int j;
 
+    attrs->dp_extra_info = NULL;
+
     rte_flow_data = ufid_to_rte_flow_data_find(netdev, ufid);
-    if (!rte_flow_data || rte_flow_data->flows.cnt == 0) {
-        ret = -1;
-        goto out;
+    if (!rte_flow_data || rte_flow_data->flows.cnt == 0 ||
+        rte_flow_data->dead || ovs_mutex_trylock(&rte_flow_data->lock)) {
+        return -1;
     }
 
     attrs->offloaded = true;
@@ -4978,7 +4988,7 @@ netdev_offload_dpdk_flow_get(struct netdev *netdev,
     }
     memcpy(stats, &rte_flow_data->stats, sizeof *stats);
 out:
-    attrs->dp_extra_info = NULL;
+    ovs_mutex_unlock(&rte_flow_data->lock);
     return ret;
 }
 
