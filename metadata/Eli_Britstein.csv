@@ -172,3 +172,7 @@ Change-Id=I1a46b0bf2ee0968ed3f10544bd8e0e22ed70bb6f; subject=netdev-offload: Set
 Change-Id=Iae16f317d4f272bb90cf79b52ccf9875ccedf717; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I34959b7d7b27cc93875e4b0d6aaae5bf985cf061; subject=netdev-dpdk-vdpa: Fix no queues RSS; feature=dpdk; upstream_status=NA; general=;
 Change-Id=Ib65fda6448c6b09b910f826c2b6c918a2843061c; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I6e33774c819755ca76cb725bfd2200e39a4083a5; subject=netdev-offload-dpdk: Refactor flow destroy and data disassociate; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Ibeb26f8faffa5773061ac01e848875c4847cdd2f; subject=netdev-offload-dpdk: Finalize data object free outside disassociate scope; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Iebf00e8296f893eaba065de5eb14aee0715abc83; subject=netdev-offload-dpdk: Protect concurrency between flow destroy/query; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Id3056ef730be2b64d2b066cb34fd7d4725cfd122; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
