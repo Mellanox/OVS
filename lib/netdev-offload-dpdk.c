@@ -301,14 +301,10 @@ ufid_to_rte_flow_associate(const ovs_u128 *ufid, struct netdev *netdev,
     return data;
 }
 
-static void put_action_resources(struct netdev *netdev,
-                                 struct act_resources *act_resources);
 static void
-ufid_to_rte_flow_data_unref(struct netdev *netdev,
-                            struct ufid_to_rte_flow_data *data)
+ufid_to_rte_flow_data_unref(struct ufid_to_rte_flow_data *data)
 {
-    put_action_resources(netdev, &data->act_resources);
-    ovsrcu_postpone(free, data);
+    free(data);
 }
 
 static inline void
@@ -327,7 +323,6 @@ ufid_to_rte_flow_disassociate(struct netdev *netdev,
      */
     hash = hash_bytes(&data->ufid, sizeof data->ufid, 0);
     cmap_remove(map, CONST_CAST(struct cmap_node *, &data->node), hash);
-    ufid_to_rte_flow_data_unref(netdev, data);
 
     offload_data_unlock(netdev);
 }
@@ -4793,6 +4788,10 @@ netdev_offload_dpdk_remove_flows(struct ufid_to_rte_flow_data *rte_flow_data)
     ufid_to_rte_flow_disassociate(netdev, data);
     ret = 0;
 out:
+    if (!ret) {
+        put_action_resources(netdev, &data->act_resources);
+        ovsrcu_postpone(ufid_to_rte_flow_data_unref, data);
+    }
     free_flow_handle(flows);
     return ret;
 }
