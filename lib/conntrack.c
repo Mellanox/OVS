@@ -1986,6 +1986,8 @@ rcu_quiesce:
                      * update. Do not repeat RCU quiescing endlessly,
                      * return to poll block if the sweep timeout is triggered.
                      */
+                    min_expiration = MIN(now,
+                            MIN(min_expiration, conn_expiration(conn)));
                     goto out;
                 } else {
                     goto rcu_quiesce;
