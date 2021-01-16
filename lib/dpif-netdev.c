@@ -441,6 +441,12 @@ enum {
 enum {
     DP_FLOW_OFFLOAD_ITEM = 1 << 0,
     DP_CT_OFFLOAD_ITEM = 1 << 1,
+    DP_FLUSH_OFFLOAD_ITEM = 1 << 2,
+};
+
+struct dp_offload_flush_item {
+    struct netdev *netdev;
+    struct ovs_barrier *barrier;
 };
 
 struct dp_flow_offload_item {
@@ -457,6 +463,7 @@ struct dp_flow_offload_item {
 union dp_offload_thread_data {
     struct dp_flow_offload_item flow_offload;
     struct ct_flow_offload_item ct_offload[CT_DIR_NUM];
+    struct dp_offload_flush_item flush;
 };
 
 struct dp_offload_thread_item {
@@ -1044,6 +1051,10 @@ static void dp_netdev_add_bond_tx_to_pmd(struct dp_netdev_pmd_thread *pmd,
 static void dp_netdev_del_bond_tx_from_pmd(struct dp_netdev_pmd_thread *pmd,
                                            uint32_t bond_id)
     OVS_EXCLUDED(pmd->bond_mutex);
+
+static void dp_netdev_offload_flush(struct dp_netdev *dp,
+                                    struct dp_netdev_port *port);
+static void dp_netdev_offload_barrier(struct dp_netdev *dp);
 
 static void reconfigure_datapath(struct dp_netdev *dp)
     OVS_REQ_WRLOCK(dp->port_rwlock);
@@ -2253,7 +2264,9 @@ dp_netdev_free(struct dp_netdev *dp)
     ovsthread_key_delete(dp->per_pmd_key);
 
     conntrack_destroy(dp->conntrack);
-
+    /* Wait for all CT offload del to resolve before continuing
+     * to destroy the datapath. */
+    dp_netdev_offload_barrier(dp);
 
     seq_destroy(dp->reconfigure_seq);
 
@@ -2613,8 +2626,15 @@ static void
 do_del_port(struct dp_netdev *dp, struct dp_netdev_port *port)
     OVS_REQ_WRLOCK(dp->port_rwlock)
 {
-    netdev_flow_flush(port->netdev);
+    /* Blocking call, will finish only once all flow offload have
+     * been removed from the port. The port cannot be destroyed before
+     * its hardware has been cleaned.
+     */
+    ovs_rwlock_unlock(&dp->port_rwlock);
+    dp_netdev_offload_flush(dp, port);
+    ovs_rwlock_wrlock(&dp->port_rwlock);
     netdev_uninit_flow_api(port->netdev);
+
     hmap_remove(&dp->ports, &port->node);
     seq_change(dp->port_seq);
 
@@ -2987,6 +3007,9 @@ dp_netdev_offload_item_unref(struct dp_offload_thread_item *offload_item)
         break;
     case DP_CT_OFFLOAD_ITEM:
         ovsrcu_postpone(dp_netdev_ct_offload_free, offload_item);
+        break;
+    case DP_FLUSH_OFFLOAD_ITEM:
+        free(offload_item);
         break;
     default:
         OVS_NOT_REACHED();
@@ -3447,6 +3470,25 @@ dp_netdev_ct_offload_handle(struct dp_offload_thread_item *offload_item)
     }
 }
 
+/* This offload operation is blocking.
+ * Caller thread will wait on each offload thread to finish.
+ */
+static void
+dp_netdev_offload_flush_handle(struct dp_offload_thread_item *item)
+{
+    struct dp_offload_flush_item *flush = &item->data->flush;
+
+    /* per-thread cmaps will be updated by revalidators
+     * deleting flows. */
+    if (flush->netdev != NULL) {
+        ovs_rwlock_rdlock(&item->dp->port_rwlock);
+        netdev_flow_flush(flush->netdev);
+        ovs_rwlock_unlock(&item->dp->port_rwlock);
+    }
+
+    ovs_barrier_block(flush->barrier);
+}
+
 #define DP_NETDEV_OFFLOAD_BACKOFF_MIN 1
 #define DP_NETDEV_OFFLOAD_BACKOFF_MAX 64
 #define DP_NETDEV_OFFLOAD_QUIESCE_INTERVAL_MS 10
@@ -3518,6 +3560,8 @@ dp_netdev_flow_offload_main(void *arg)
                              (struct uuid *)&dp_offload->flow->mega_ufid));
             } else if (offload_item->type == DP_CT_OFFLOAD_ITEM) {
                 dp_netdev_ct_offload_handle(offload_item);
+            } else if (offload_item->type == DP_FLUSH_OFFLOAD_ITEM) {
+                dp_netdev_offload_flush_handle(offload_item);
             } else {
                 OVS_NOT_REACHED();
             }
@@ -3606,6 +3650,98 @@ dp_netdev_pmd_remove_flow(struct dp_netdev_pmd_thread *pmd,
     flow->dead = true;
 
     dp_netdev_flow_unref(flow);
+}
+
+static void
+dp_netdev_offload_flush_enqueue(struct dp_netdev *dp,
+                                struct netdev *netdev,
+                                struct ovs_barrier *barrier)
+{
+    unsigned int tid;
+
+    for (tid = 0; tid < netdev_offload_thread_nb(); tid++) {
+        struct dp_offload_thread_item *item;
+        struct dp_offload_flush_item *flush;
+
+        item = xmalloc(sizeof *item + sizeof *flush);
+        item->type = DP_FLUSH_OFFLOAD_ITEM;
+        item->dp = dp;
+
+        flush = &item->data->flush;
+        flush->netdev = netdev;
+        flush->barrier = barrier;
+
+        mpsc_queue_insert(&dp_offload_threads[tid].queue, &item->node);
+        atomic_count_inc64(&dp_offload_threads[tid].enqueued_item);
+    }
+}
+
+/* Blocking call that will wait on offload threads to finish
+ * their work. As the flush order will only be enqueued after
+ * existing offload requests, those previous offload requests
+ * need to be processed, which requires being able to
+ * rdlock the 'port_rwlock' in the offload threads.
+ *
+ * If we keep the wrlock on it now, it will deadlock waiting
+ * on those other offload threads to resume while blocking on
+ * the flush.
+ */
+static void
+dp_netdev_offload_flush_(struct dp_netdev *dp,
+                         struct dp_netdev_port *port)
+    OVS_EXCLUDED(dp->port_rwlock)
+{
+    static struct ovs_mutex flush_mutex = OVS_MUTEX_INITIALIZER;
+    struct ovs_barrier barrier;
+    struct netdev *netdev;
+
+    if (!netdev_is_flow_api_enabled()) {
+        return;
+    }
+
+    if (dp_netdev_e2e_cache_enabled) {
+        /* Not supported yet. */
+        return;
+    }
+
+    dp_netdev_offload_init();
+
+    /* Do not interleave flush barriers. Only one flush
+     * order can be 'live' at any single time. It must be unique
+     * within each offload thread queue and resolved before
+     * another flush order can be issued.
+     */
+    ovs_mutex_lock(&flush_mutex);
+
+    netdev = port ? netdev_ref(port->netdev) : NULL;
+
+    /* Wait on each offload thread, plus this one. */
+    ovs_barrier_init(&barrier, netdev_offload_thread_nb() + 1);
+
+    dp_netdev_offload_flush_enqueue(dp, netdev, &barrier);
+
+    ovs_barrier_block(&barrier);
+    ovs_barrier_destroy(&barrier);
+
+    netdev_close(netdev);
+
+    ovs_mutex_unlock(&flush_mutex);
+}
+
+static void
+dp_netdev_offload_flush(struct dp_netdev *dp,
+                        struct dp_netdev_port *port)
+{
+    dp_netdev_offload_flush_(dp, port);
+}
+
+static void
+dp_netdev_offload_barrier(struct dp_netdev *dp)
+{
+    /* 'Dummy' flush call, that is only used to sync all offload threads.
+     * The 'port_rwlock' is not necessary as no offloads will change.
+     */
+    dp_netdev_offload_flush_(dp, NULL);
 }
 
 static void
