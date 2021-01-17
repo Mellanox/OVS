@@ -31,6 +31,7 @@ struct ovs_barrier {
     uint32_t size;            /* Number of threads to wait. */
     atomic_count count;       /* Number of threads already hit the barrier. */
     struct seq *seq;
+    struct ovs_refcount *refcnt;
 };
 
 /* Wrappers for pthread_mutexattr_*() that abort the process on any error. */
