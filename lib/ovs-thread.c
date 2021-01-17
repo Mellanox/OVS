@@ -307,13 +307,25 @@ ovs_barrier_init(struct ovs_barrier *barrier, uint32_t size)
     barrier->size = size;
     atomic_count_init(&barrier->count, 0);
     barrier->seq = seq_create();
+    barrier->refcnt = xmalloc(sizeof *barrier->refcnt);
+    ovs_refcount_init(barrier->refcnt);
+}
+
+static void
+ovs_barrier_unref(struct ovs_refcount *refcnt,
+                  struct seq *seq)
+{
+    if (ovs_refcount_unref(refcnt) == 1) {
+        seq_destroy(seq);
+        free(refcnt);
+    }
 }
 
 /* Destroys the 'barrier'. */
 void
 ovs_barrier_destroy(struct ovs_barrier *barrier)
 {
-    seq_destroy(barrier->seq);
+    ovs_barrier_unref(barrier->refcnt, barrier->seq);
 }
 
 /* Makes the calling thread block on the 'barrier' until all
@@ -325,23 +337,27 @@ ovs_barrier_destroy(struct ovs_barrier *barrier)
 void
 ovs_barrier_block(struct ovs_barrier *barrier)
 {
-    uint64_t seq = seq_read(barrier->seq);
+    uint64_t start_value = seq_read(barrier->seq);
+    struct ovs_refcount *refcnt = barrier->refcnt;
+    struct seq *seq = barrier->seq;
     uint32_t orig;
 
+    ovs_refcount_ref(refcnt);
     orig = atomic_count_inc(&barrier->count);
     if (orig + 1 == barrier->size) {
         atomic_count_set(&barrier->count, 0);
         /* seq_change() serves as a release barrier against the other threads,
          * so the zeroed count is visible to them as they continue. */
-        seq_change(barrier->seq);
+        seq_change(seq);
     } else {
         /* To prevent thread from waking up by other event,
          * keeps waiting for the change of 'barrier->seq'. */
-        while (seq == seq_read(barrier->seq)) {
-            seq_wait(barrier->seq, seq);
+        while (start_value == seq_read(seq)) {
+            seq_wait(seq, start_value);
             poll_block();
         }
     }
+    ovs_barrier_unref(refcnt, seq);
 }
 
 DEFINE_EXTERN_PER_THREAD_DATA(ovsthread_id, OVSTHREAD_ID_UNSET);
