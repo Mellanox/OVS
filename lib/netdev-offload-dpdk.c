@@ -4759,21 +4759,16 @@ out:
 
 static int
 netdev_offload_dpdk_remove_flows(struct netdev *netdev,
-                                 const ovs_u128 *ufid,
-                                 struct flows_handle *flows)
+                                 struct ufid_to_rte_flow_data *data)
+    OVS_EXCLUDED(data->lock)
 {
-    struct ufid_to_rte_flow_data *data;
+    struct flows_handle *flows = &data->flows;
+    const ovs_u128 *ufid = &data->ufid;
     struct netdev *flow_netdev;
     int ret;
     int i;
     int j;
 
-    data = ufid_to_rte_flow_data_find(netdev, ufid);
-    if (!data) {
-        VLOG_WARN("ufid "UUID_FMT" is not associated with an rte flow",
-                  UUID_ARGS((struct uuid *) ufid));
-        return -1;
-    }
     data->dead = true;
     ovs_mutex_lock(&data->lock);
     ufid_to_rte_flow_disassociate(netdev, data);
@@ -4842,8 +4837,7 @@ netdev_offload_dpdk_flow_put(struct netdev *netdev, struct match *match,
     if (rte_flow_data) {
         old_stats = rte_flow_data->stats;
         modification = true;
-        ret = netdev_offload_dpdk_remove_flows(netdev, ufid,
-                                               &rte_flow_data->flows);
+        ret = netdev_offload_dpdk_remove_flows(netdev, rte_flow_data);
         if (ret < 0) {
             return ret;
         }
@@ -4871,14 +4865,15 @@ netdev_offload_dpdk_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
 
     rte_flow_data = ufid_to_rte_flow_data_find(netdev, ufid);
     if (!rte_flow_data) {
+        VLOG_WARN("ufid "UUID_FMT" is not associated with an rte flow",
+                  UUID_ARGS((struct uuid *) ufid));
         return -1;
     }
 
     if (stats) {
         memset(stats, 0, sizeof *stats);
     }
-    return netdev_offload_dpdk_remove_flows(netdev, ufid,
-                                            &rte_flow_data->flows);
+    return netdev_offload_dpdk_remove_flows(netdev, rte_flow_data);
 }
 
 static bool
