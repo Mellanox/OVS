@@ -149,7 +149,7 @@ struct ufid_to_rte_flow_data {
     struct dpif_flow_stats stats;
     struct act_resources act_resources;
     struct ovs_mutex lock;
-    bool dead;
+    volatile bool dead;
 };
 
 struct netdev_offload_dpdk_data {
@@ -285,7 +285,7 @@ ufid_to_rte_flow_associate(struct netdev *netdev, const ovs_u128 *ufid,
      * the rte_flow is not destroyed.
      */
     data_prev = ufid_to_rte_flow_data_find_protected(netdev, ufid);
-    if (data_prev) {
+    if (data_prev && !data_prev->dead) {
         ovs_assert(data_prev->flows.cnt == 0);
     }
 
@@ -4775,8 +4775,20 @@ netdev_offload_dpdk_remove_flows(struct netdev *netdev,
     int i;
     int j;
 
-    data->dead = true;
+    if (data->dead) {
+        return 0;
+    }
+
     ovs_mutex_lock(&data->lock);
+
+    if (data->dead) {
+        ovs_mutex_unlock(&data->lock);
+        /* Mutex unlock will do memory fence, ensuring the boolean update
+         * is seen from other threads as well. */
+        return 0;
+    }
+
+    data->dead = true;
     ufid_to_rte_flow_disassociate(netdev, data);
 
     for (i = 0; i < flows->cnt; i++) {
@@ -4812,12 +4824,12 @@ netdev_offload_dpdk_remove_flows(struct netdev *netdev,
     }
     ret = 0;
 out:
+    free_flow_handle(flows);
     ovs_mutex_unlock(&data->lock);
     if (!ret) {
         put_action_resources(netdev, &data->act_resources);
         ovsrcu_postpone(ufid_to_rte_flow_data_unref, data);
     }
-    free_flow_handle(flows);
     return ret;
 }
 
