@@ -4707,6 +4707,12 @@ parse_ct_actions(struct flow_actions *actions,
                                      ct_miss_ctx.state, 0xFF);
             add_action_set_reg_field(actions, REG_FIELD_CT_CTX,
                                      act_resources->ct_miss_ctx_id, 0xFFFFFFFF);
+            if (act_resources->flow_id != INVALID_FLOW_MARK) {
+                struct rte_flow_action_mark *mark = xzalloc(sizeof *mark);
+
+                mark->id = act_resources->flow_id;
+                add_flow_action(actions, RTE_FLOW_ACTION_TYPE_MARK, mark);
+            }
             act_vars->jump = add_jump_action(actions,
                                              act_resources->next_table_id);
         } else {
