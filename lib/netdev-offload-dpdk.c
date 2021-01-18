@@ -88,6 +88,14 @@ struct flows_handle {
     int current_max;
 };
 
+static void
+flows_handle_unref(struct flows_handle *flows)
+{
+    free(flows->items);
+    flows->items = NULL;
+    flows->cnt = 0;
+}
+
 static void put_table_id(const char *devargs, uint32_t table_id);
 static void
 free_flow_handle(struct flows_handle *flows)
@@ -105,9 +113,7 @@ free_flow_handle(struct flows_handle *flows)
             free(CONST_CAST(void *, fi->devargs));
         }
     }
-    free(flows->items);
-    flows->items = NULL;
-    flows->cnt = 0;
+    ovsrcu_postpone(flows_handle_unref, flows);
 }
 
 static void
@@ -5126,10 +5132,31 @@ err:
     return ret;
 }
 
+static int
+netdev_offload_dpdk_flow_flush(struct netdev *netdev)
+{
+    unsigned int tid = netdev_offload_thread_id();
+    struct cmap *map = offload_data_map(netdev);
+    struct ufid_to_rte_flow_data *data;
+
+    CMAP_FOR_EACH (data, node, map) {
+        struct flows_handle *flows = &data->flows;
+
+        /* Destroy flow rules that were inserted by
+         * the current thread. */
+        if (flows->items[0].creation_tid == tid) {
+            netdev_offload_dpdk_remove_flows(netdev, data);
+        }
+    }
+
+    return 0;
+}
+
 const struct netdev_flow_api netdev_offload_dpdk = {
     .type = "dpdk_flow_api",
     .flow_put = netdev_offload_dpdk_flow_put,
     .flow_del = netdev_offload_dpdk_flow_del,
+    .flow_flush = netdev_offload_dpdk_flow_flush,
     .init_flow_api = netdev_offload_dpdk_init_flow_api,
     .deinit_flow_api = netdev_offload_dpdk_deinit_flow_api,
     .flow_get = netdev_offload_dpdk_flow_get,
