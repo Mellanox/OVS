@@ -109,3 +109,5 @@ Change-Id=I3edca3403d465eb76a2f83b8538b86bf2bc3c1df; subject=dpif-netdev: e2e: U
 Change-Id=Ibf0a9df7e0328717b8ec1e14e4d649b5be8e6c4f; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=Ifedfed15168c72a3f4a87c8f93589d02d0b0755a; subject=conntrack: Immediately reschedule sweep if busy; feature=dpdk; upstream_status=NA; general=;
 Change-Id=Ide2039224325d86ca04e9b87abdfed290ba1043c; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I4fc5bbb6ac1b2e73ce63980bc0c961208de71115; subject=ovs-thread: Fix barrier use-after-free; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I66a90440a38cade905423f285b644dbd7c6a3856; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
