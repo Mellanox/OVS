@@ -3944,7 +3944,9 @@ add_count_action(struct flow_actions *actions,
 {
     struct rte_flow_action_count *count = xzalloc(sizeof *count);
 
+    /* e2e flows don't use mark. ct2ct do. we can share only e2e, not ct2ct. */
     if (act_vars->is_e2e_cache_flow &&
+        act_resources->flow_id == INVALID_FLOW_MARK &&
         !netdev_is_flow_counter_key_zero(&act_vars->flows_counter_key)) {
         if (get_flows_counter_id(&act_vars->flows_counter_key, &count->id)) {
             free(count);
@@ -3955,7 +3957,9 @@ add_count_action(struct flow_actions *actions,
     }
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_COUNT, count);
 
-    if (act_vars->is_e2e_cache_flow && act_vars->ct_counter_key) {
+    /* e2e flows don't use mark. ct2ct do. we can share only e2e, not ct2ct. */
+    if (act_vars->is_e2e_cache_flow && act_vars->ct_counter_key &&
+        act_resources->flow_id == INVALID_FLOW_MARK) {
         add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SHARED, NULL);
     }
     return 0;
@@ -4687,8 +4691,11 @@ parse_ct_actions(struct flow_actions *actions,
                 VLOG_ERR("Invalid offload helper: '%s'", helper);
                 return -1;
             }
-
-            if (get_ct_counter_id(ctid_key, &act_resources->ctid)) {
+            /* mt ct flows don't use mark. ct2ct do. we can share only mt, not
+             * ct2ct.
+             */
+            if (act_resources->flow_id == INVALID_FLOW_MARK &&
+                get_ct_counter_id(ctid_key, &act_resources->ctid)) {
                 VLOG_ERR("Could not create CT id");
                 return -1;
             }
@@ -4744,7 +4751,7 @@ split_ct_conn_actions(const struct rte_flow_action *actions,
             add_flow_action(ct_actions, actions->type, actions->conf);
         }
         add_flow_action(nat_actions, actions->type, actions->conf);
-        if (actions->type == RTE_FLOW_ACTION_TYPE_COUNT) {
+        if (ctid && actions->type == RTE_FLOW_ACTION_TYPE_COUNT) {
             struct rte_flow_action_count *count;
 
             count = CONST_CAST(struct rte_flow_action_count *, actions->conf);
