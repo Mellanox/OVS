@@ -4744,12 +4744,12 @@ out:
 
 static int
 netdev_offload_dpdk_remove_flows(struct ufid_to_rte_flow_data *rte_flow_data)
+    OVS_EXCLUDED(data->lock)
 {
-    struct ufid_to_rte_flow_data *data;
     struct netdev *flow_netdev;
     struct flows_handle *flows;
     struct netdev *netdev;
-    ovs_u128 *ufid;
+    const ovs_u128 *ufid;
     int ret;
     int i;
     int j;
@@ -4856,6 +4856,8 @@ netdev_offload_dpdk_flow_del(struct netdev *netdev OVS_UNUSED,
 
     rte_flow_data = ufid_to_rte_flow_data_find(netdev, ufid, true);
     if (!rte_flow_data) {
+        VLOG_WARN("ufid "UUID_FMT" is not associated with an rte flow",
+                  UUID_ARGS((struct uuid *) ufid));
         return -1;
     }
 
