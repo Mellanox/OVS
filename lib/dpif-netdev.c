@@ -2955,8 +2955,9 @@ megaflow_to_mark_find(const ovs_u128 *mega_ufid)
 {
     size_t hash = dp_netdev_flow_hash(mega_ufid);
     struct megaflow_to_mark_data *data;
-    unsigned int tid = netdev_offload_thread_id();
+    unsigned int tid;
 
+    tid = netdev_offload_ufid_to_thread_id(*mega_ufid);
     CMAP_FOR_EACH_WITH_HASH (data, node, hash,
                              &dp_offload_threads[tid].megaflow_to_mark) {
         if (ovs_u128_equals(*mega_ufid, data->mega_ufid)) {
