@@ -111,3 +111,9 @@ Change-Id=Ifedfed15168c72a3f4a87c8f93589d02d0b0755a; subject=conntrack: Immediat
 Change-Id=Ide2039224325d86ca04e9b87abdfed290ba1043c; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I4fc5bbb6ac1b2e73ce63980bc0c961208de71115; subject=ovs-thread: Fix barrier use-after-free; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I66a90440a38cade905423f285b644dbd7c6a3856; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I1f1e4001132ec378a559a369c6a5964137b4298a; subject=dpif-netdev: Add flush offload operation; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I0cc8a63328dc87fe3c0e72725d47df8650d70e06; subject=dpif-netdev: Return success for CT offload del without ports; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I2c8a5bb95b0bbd55324eb6121714e4493cd50bbd; subject=netdev-offload-dpdk: Refactor flow data removal function; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Ie00c1f8f432ffc01714791081b6821a37c3137a0; subject=netdev-offload-dpdk: Implement flow flush.; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Ic52fdbd8d916c24d3b2cac12e88549fc2cddfcbe; subject=netdev-offload-dpdk: Check dead flag before data free; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I96b00db070db54b61f19ad190ff7f405e5468d9f; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
