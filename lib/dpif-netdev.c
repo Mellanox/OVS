@@ -498,6 +498,8 @@ struct dp_offload_thread_item {
  * add_ct_flow_err = Amount of failed CT offload operations MT.
  * succ_ct2ct_merges = Amount of successfully ct2ct merges.
  * rej_ct2ct_merges = Amount of merges rejected by the ct2ct merge engine.
+ * add_ct2ct_flows = Amount of CT2CT offload add operations.
+ * del_ct2ct_flows = Amount of CT2CT offload del operations.
  */
 struct e2e_cache_stats {
     atomic_count generated_trcs;
@@ -520,6 +522,8 @@ struct e2e_cache_stats {
     uint32_t del_ct_mt_flow_err;
     uint32_t succ_ct2ct_merges;
     uint32_t rej_ct2ct_merges;
+    uint32_t add_ct2ct_flows;
+    uint32_t del_ct2ct_flows;
 };
 
 struct dp_offload_thread {
@@ -945,6 +949,7 @@ enum e2e_offload_state {
     E2E_OL_STATE_CT_SW,
     E2E_OL_STATE_CT_HW,
     E2E_OL_STATE_CT_MT,
+    E2E_OL_STATE_CT2CT,
     E2E_OL_STATE_CT_ERR,
     E2E_OL_STATE_NUM,
 };
@@ -954,6 +959,7 @@ static const char * const e2e_offload_state_names[] = {
     [E2E_OL_STATE_CT_SW] = "E2E_OL_STATE_CT_SW",
     [E2E_OL_STATE_CT_HW] = "E2E_OL_STATE_CT_HW",
     [E2E_OL_STATE_CT_MT] = "E2E_OL_STATE_CT_MT",
+    [E2E_OL_STATE_CT2CT] = "E2E_OL_STATE_CT2CT",
     [E2E_OL_STATE_CT_ERR] = "E2E_OL_STATE_CT_ERR",
     [E2E_OL_STATE_NUM] = "Unknown",
 };
@@ -1228,6 +1234,8 @@ dp_netdev_e2e_offload_init(struct e2e_cache_stats *e2e_stats)
     e2e_stats->del_ct_mt_flow_err = 0;
     e2e_stats->succ_ct2ct_merges = 0;
     e2e_stats->rej_ct2ct_merges = 0;
+    e2e_stats->add_ct2ct_flows = 0;
+    e2e_stats->del_ct2ct_flows = 0;
 }
 
 static void
@@ -5439,6 +5447,8 @@ dpif_netdev_offload_stats_get(struct dpif *dpif,
         DP_NETDEV_E2E_STATS_FAILED_CT_MT_DELS,
         DP_NETDEV_E2E_STATS_SUC_CT2CT_MERGES,
         DP_NETDEV_E2E_STATS_REJ_CT2CT_MERGES,
+        DP_NETDEV_E2E_STATS_CT2CT_ADDS,
+        DP_NETDEV_E2E_STATS_CT2CT_DELS,
         DP_NETDEV_E2E_STATS_LAST,
     };
     struct {
@@ -5498,6 +5508,10 @@ dpif_netdev_offload_stats_get(struct dpif *dpif,
             { " Successful CT2CT mrgs", 0 },
         [DP_NETDEV_E2E_STATS_REJ_CT2CT_MERGES] =
             { " Rejected CT2CT merges", 0 },
+        [DP_NETDEV_E2E_STATS_CT2CT_ADDS] =
+            { "            CT2CT Adds", 0 },
+        [DP_NETDEV_E2E_STATS_CT2CT_DELS] =
+            { "            CT2CT Dels", 0 },
     }, *cur_stats;
 
     struct dp_netdev *dp = get_dp_netdev(dpif);
@@ -5601,6 +5615,10 @@ dpif_netdev_offload_stats_get(struct dpif *dpif,
                 cur_e2e_stats->succ_ct2ct_merges;
             e2e_counts[DP_NETDEV_E2E_STATS_REJ_CT2CT_MERGES] =
                 cur_e2e_stats->rej_ct2ct_merges;
+            e2e_counts[DP_NETDEV_E2E_STATS_CT2CT_ADDS] =
+                cur_e2e_stats->add_ct2ct_flows;
+            e2e_counts[DP_NETDEV_E2E_STATS_CT2CT_DELS] =
+                cur_e2e_stats->del_ct2ct_flows;
         }
 
         for (i = 0; i < nb_counts; i++) {
@@ -8628,7 +8646,8 @@ e2e_cache_disassociate_counters(struct e2e_cache_merged_flow *merged_flow)
 static void
 e2e_cache_associate_counters(struct e2e_cache_merged_flow *merged_flow,
                              struct e2e_cache_ovs_flow *mt_flows[],
-                             const struct e2e_cache_trace_info *trc_info)
+                             const struct e2e_cache_trace_info *trc_info,
+                             uint16_t num_elements)
 {
     size_t counter_hash, ct_counter_key_hash, flows_counter_key_hash;
     struct flows_counter_key counter_key_on_stack;
@@ -8646,7 +8665,7 @@ e2e_cache_associate_counters(struct e2e_cache_merged_flow *merged_flow,
                                         0);
     ovs_mutex_lock(&flows_map_mutex);
 
-    for (mt_index = 0; mt_index < trc_info->num_elements; mt_index++) {
+    for (mt_index = 0; mt_index < num_elements; mt_index++) {
         bool is_ct = trc_info->e2e_trace_ct_ufids & (1 << mt_index);
         bool counter_found = false;
 
@@ -8742,7 +8761,8 @@ e2e_cache_merged_flow_offload_del(struct e2e_cache_merged_flow *merged_flow)
 static void
 e2e_cache_calc_counters(struct e2e_cache_merged_flow *merged_flow,
                         struct e2e_cache_ovs_flow *mt_flows[],
-                        const struct e2e_cache_trace_info *trc_info)
+                        const struct e2e_cache_trace_info *trc_info,
+                        uint16_t num_elements)
 {
     uintptr_t ptr, ct_counter_key = UINTPTR_MAX;
     uint16_t mt_index, flows_index = 0;
@@ -8751,7 +8771,7 @@ e2e_cache_calc_counters(struct e2e_cache_merged_flow *merged_flow,
     memset(&merged_flow->flows_counter_key, 0,
            sizeof merged_flow->flows_counter_key);
 
-    for (mt_index = 0; mt_index < trc_info->num_elements; mt_index++) {
+    for (mt_index = 0; mt_index < num_elements; mt_index++) {
         if (trc_info->e2e_trace_ct_ufids & (1 << mt_index)) {
             if (trc_info->e2e_trace_ct_ufids & (1 << (mt_index + 1))) {
                 continue;
@@ -8791,6 +8811,7 @@ e2e_cache_merged_flow_offload_put(struct dp_netdev *dp,
     struct e2e_cache_stats *e2e_stats;
     struct dp_netdev_flow flow;
     union flow_in_port in_port;
+    uint16_t num_elements;
     int err;
 
     e2e_stats = &dp_offload_threads[tid].e2e_stats;
@@ -8808,8 +8829,14 @@ e2e_cache_merged_flow_offload_put(struct dp_netdev *dp,
     e2e_cache_populate_offload_item(offload_item,
                                     DP_NETDEV_FLOW_OFFLOAD_OP_ADD, dp, &flow);
 
-    e2e_cache_calc_counters(merged_flow, mt_flows, trc_info);
-    e2e_cache_associate_counters(merged_flow, mt_flows, trc_info);
+    num_elements = trc_info->num_elements;
+    /* For CT2CT, don't associate the last megaflow. */
+    if (flow.mark != INVALID_FLOW_MARK) {
+        num_elements--;
+    }
+    e2e_cache_calc_counters(merged_flow, mt_flows, trc_info, num_elements);
+    e2e_cache_associate_counters(merged_flow, mt_flows, trc_info,
+                                 num_elements);
 
     flow_offload = &offload_item->data->flow_offload;
     memcpy(&flow_offload->match, &merged_flow->match,
@@ -9070,7 +9097,8 @@ e2e_cache_update_ct_stats(struct e2e_cache_ovs_flow *mt_flow, int op)
     if (op == DP_NETDEV_FLOW_OFFLOAD_OP_ADD) {
         if (ct_peer &&
             (ct_peer->offload_state == E2E_OL_STATE_CT_HW ||
-             ct_peer->offload_state == E2E_OL_STATE_CT_MT)) {
+             ct_peer->offload_state == E2E_OL_STATE_CT_MT ||
+             ct_peer->offload_state == E2E_OL_STATE_CT2CT)) {
             atomic_count_inc64(&ofl_thread->ct_bi_dir_connections);
             atomic_count_dec64(&ofl_thread->ct_uni_dir_connections);
         } else {
@@ -9079,7 +9107,8 @@ e2e_cache_update_ct_stats(struct e2e_cache_ovs_flow *mt_flow, int op)
     } else if (op == DP_NETDEV_FLOW_OFFLOAD_OP_DEL) {
         if (ct_peer &&
             (ct_peer->offload_state == E2E_OL_STATE_CT_HW ||
-             ct_peer->offload_state == E2E_OL_STATE_CT_MT)) {
+             ct_peer->offload_state == E2E_OL_STATE_CT_MT ||
+             ct_peer->offload_state == E2E_OL_STATE_CT2CT)) {
             atomic_count_dec64(&ofl_thread->ct_bi_dir_connections);
             atomic_count_inc64(&ofl_thread->ct_uni_dir_connections);
         } else {
@@ -9195,6 +9224,7 @@ e2e_cache_flow_state_set_at(struct e2e_cache_ovs_flow *flow,
     static const int op[E2E_OL_STATE_NUM][E2E_OL_STATE_NUM] = {
         [E2E_OL_STATE_CT_SW] = {
             [E2E_OL_STATE_CT_HW] = DP_NETDEV_FLOW_OFFLOAD_OP_ADD,
+            [E2E_OL_STATE_CT2CT] = DP_NETDEV_FLOW_OFFLOAD_OP_ADD,
             [E2E_OL_STATE_CT_MT] = DP_NETDEV_FLOW_OFFLOAD_OP_ADD,
         },
         [E2E_OL_STATE_CT_HW] = {
@@ -9203,11 +9233,18 @@ e2e_cache_flow_state_set_at(struct e2e_cache_ovs_flow *flow,
         },
         [E2E_OL_STATE_CT_MT] = {
             [E2E_OL_STATE_CT_SW] = DP_NETDEV_FLOW_OFFLOAD_OP_DEL,
+            [E2E_OL_STATE_CT2CT] = DP_NETDEV_FLOW_OFFLOAD_OP_DEL,
+            [E2E_OL_STATE_CT_ERR] = DP_NETDEV_FLOW_OFFLOAD_OP_DEL,
+        },
+        [E2E_OL_STATE_CT2CT] = {
+            [E2E_OL_STATE_CT_SW] = DP_NETDEV_FLOW_OFFLOAD_OP_DEL,
+            [E2E_OL_STATE_CT_MT] = DP_NETDEV_FLOW_OFFLOAD_OP_DEL,
             [E2E_OL_STATE_CT_ERR] = DP_NETDEV_FLOW_OFFLOAD_OP_DEL,
         },
         [E2E_OL_STATE_CT_ERR] = {
             [E2E_OL_STATE_CT_HW] = DP_NETDEV_FLOW_OFFLOAD_OP_ADD,
             [E2E_OL_STATE_CT_MT] = DP_NETDEV_FLOW_OFFLOAD_OP_ADD,
+            [E2E_OL_STATE_CT2CT] = DP_NETDEV_FLOW_OFFLOAD_OP_ADD,
         },
     };
     enum e2e_offload_state prev_state = flow->offload_state;
@@ -9775,6 +9812,7 @@ e2e_cache_process_trace_info(struct dp_netdev *dp,
     struct e2e_cache_ovs_flow *mt_flows[E2E_CACHE_MAX_TRACE];
     uint64_t merged_actions_buf[1024 / sizeof(uint64_t)];
     uint16_t i, num_flows;
+    bool ct2ct = false;
     int err;
 
     ovs_mutex_lock(&flows_map_mutex);
@@ -9821,7 +9859,8 @@ e2e_cache_process_trace_info(struct dp_netdev *dp,
     memcpy(merged_flow->actions, actions, actions_len);
     merged_flow->actions_size = actions_len;
 
-    e2e_cache_associate_merged_flow(merged_flow, mt_flows, num_flows);
+    e2e_cache_associate_merged_flow(merged_flow, mt_flows,
+                                    ct2ct ? num_flows - 1 : num_flows);
 
     err = e2e_cache_merged_flow_db_put(merged_flow);
     if (OVS_UNLIKELY(err)) {
@@ -9840,7 +9879,8 @@ e2e_cache_process_trace_info(struct dp_netdev *dp,
             continue;
         }
         /* Update CT stats affected by offloading the merged flow. */
-        e2e_cache_flow_state_set(mt_flows[i], E2E_OL_STATE_CT_HW);
+        e2e_cache_flow_state_set(mt_flows[i], ct2ct ? E2E_OL_STATE_CT2CT
+                                                    : E2E_OL_STATE_CT_HW);
     }
     return 0;
 
@@ -9889,6 +9929,31 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev,
         ovs_mutex_unlock(&flows_map_mutex);
         return false;
     }
+    if (flow->offload_state == E2E_OL_STATE_CT2CT) {
+        struct flow2flow_item *associated_flow_item;
+
+        associated_flow_item =
+            CONTAINER_OF(ovs_list_front(&flow->associated_merged_flows),
+                         struct flow2flow_item, list);
+        merged_flow =
+            CONTAINER_OF(associated_flow_item,
+                         struct e2e_cache_merged_flow,
+                         associated_flows[associated_flow_item->index]);
+        /* Query the counter. */
+        ret = netdev_flow_get(netdev, match, actions, &merged_flow->ufid,
+                              &merged_stats, &merged_attr, buf);
+        if (ret) {
+            VLOG_ERR_RL(&rl, "Failed to get merged flow ufid "UUID_FMT,
+                        UUID_ARGS((struct uuid *) &merged_flow->ufid));
+            goto out;
+        }
+        stats->n_bytes += merged_stats.n_bytes;
+        stats->n_packets += merged_stats.n_packets;
+        stats->used = MAX(stats->used, merged_stats.used);
+        rv = true;
+        goto out;
+    }
+
     HMAP_FOR_EACH (mt_counter_item, node, &flow->merged_counters) {
         if (flow->offload_state == E2E_OL_STATE_FLOW) {
             /* Get the counter item from the global map. */
@@ -9931,6 +9996,7 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev,
             rv |= stats->used == now;
         }
     }
+out:
     ovs_mutex_unlock(&flows_map_mutex);
     return rv;
 }
