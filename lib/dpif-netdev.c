@@ -9774,6 +9774,11 @@ e2e_cache_merge_flows(struct e2e_cache_ovs_flow **flows,
                       uint16_t num_flows,
                       struct e2e_cache_merged_flow *merged_flow,
                       struct ofpbuf *merged_actions);
+static int
+ct2ct_merge_flows(struct e2e_cache_ovs_flow **flows,
+                  uint16_t num_flows,
+                  struct e2e_cache_merged_flow *merged_flow,
+                  struct ofpbuf *merged_actions);
 
 /* CT rules should be offloaded either to MT or cache, but not both. For a
  * merged flow created, remove from HW the MT rules for its composing CT
@@ -9811,8 +9816,9 @@ e2e_cache_process_trace_info(struct dp_netdev *dp,
     struct ofpbuf merged_actions;
     struct e2e_cache_ovs_flow *mt_flows[E2E_CACHE_MAX_TRACE];
     uint64_t merged_actions_buf[1024 / sizeof(uint64_t)];
+    uint32_t merged_flows_count;
     uint16_t i, num_flows;
-    bool ct2ct = false;
+    bool ct2ct;
     int err;
 
     ovs_mutex_lock(&flows_map_mutex);
@@ -9823,7 +9829,9 @@ e2e_cache_process_trace_info(struct dp_netdev *dp,
         return -1;
     }
     num_flows = trc_info->num_elements;
-    if (atomic_count_get(&merged_flows_map_count) >= dp_netdev_e2e_cache_size) {
+    merged_flows_count = atomic_count_get(&merged_flows_map_count);
+    ct2ct = num_flows > 4 && merged_flows_count >= dp_netdev_e2e_cache_size;
+    if (!ct2ct && merged_flows_count >= dp_netdev_e2e_cache_size) {
         e2e_cache_offload_ct_mt_flows(dp, mt_flows, num_flows);
         return -1;
     }
@@ -9843,8 +9851,11 @@ e2e_cache_process_trace_info(struct dp_netdev *dp,
     ofpbuf_use_stack(&merged_actions, &merged_actions_buf,
                      sizeof merged_actions_buf);
 
-    err = e2e_cache_merge_flows(mt_flows, num_flows, merged_flow,
-                                &merged_actions);
+    err = ct2ct
+          ? ct2ct_merge_flows(mt_flows, num_flows, merged_flow,
+                              &merged_actions)
+          : e2e_cache_merge_flows(mt_flows, num_flows, merged_flow,
+                                  &merged_actions);
     if (OVS_UNLIKELY(err)) {
         goto free_merged_flow;
     }
@@ -12505,7 +12516,6 @@ e2e_cache_merge_flows(struct e2e_cache_ovs_flow **flows,
     return 0;
 }
 
-OVS_UNUSED
 static int
 ct2ct_merge_flows(struct e2e_cache_ovs_flow **flows,
                   uint16_t num_flows,
