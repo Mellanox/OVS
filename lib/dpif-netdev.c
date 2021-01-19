@@ -595,6 +595,7 @@ struct dp_netdev_flow {
 
     bool dead;
     uint32_t mark;               /* Unique flow mark assigned to a flow */
+    uint8_t skip_actions;
 
     /* Statistics. */
     struct dp_netdev_flow_stats stats;
@@ -4601,6 +4602,7 @@ dp_netdev_flow_add(struct dp_netdev_pmd_thread *pmd,
     flow->dead = false;
     flow->batch = NULL;
     flow->mark = INVALID_FLOW_MARK;
+    flow->skip_actions = 0;
     *CONST_CAST(unsigned *, &flow->pmd_id) = pmd->core_id;
     *CONST_CAST(struct flow *, &flow->flow) = match->flow;
     *CONST_CAST(ovs_u128 *, &flow->ufid) = *ufid;
@@ -7994,15 +7996,25 @@ packet_batch_per_flow_execute(struct packet_batch_per_flow *batch,
 {
     struct dp_netdev_actions *actions;
     struct dp_netdev_flow *flow = batch->flow;
+    struct nlattr *updated_actions;
+    size_t updated_actions_size;
+    int i;
 
     dp_netdev_flow_used(flow, dp_packet_batch_size(&batch->array),
                         batch->byte_count,
                         batch->tcp_flags, pmd->ctx.now / 1000);
 
+    /*skip the actions that were executed by the HW */
     actions = dp_netdev_flow_get_actions(flow);
+    updated_actions = actions->actions;
+    updated_actions_size = actions->size;
+    for (i = 0; i < flow->skip_actions; i++) {
+        updated_actions_size -= updated_actions->nla_len;
+        updated_actions = nl_attr_next(updated_actions);
+    }
 
     dp_netdev_execute_actions(pmd, &batch->array, true, &flow->flow,
-                              actions->actions, actions->size);
+                              updated_actions, updated_actions_size);
 }
 
 static inline void
@@ -10040,6 +10052,7 @@ dfc_processing(struct dp_netdev_pmd_thread *pmd,
     bool smc_enable_db;
     size_t map_cnt = 0;
     bool batch_enable = true;
+    uint8_t skip_actions = 0;
 
     atomic_read_relaxed(&pmd->dp->smc_enable_db, &smc_enable_db);
     pmd_perf_update_counter(&pmd->perf_stats,
@@ -10080,11 +10093,12 @@ dfc_processing(struct dp_netdev_pmd_thread *pmd,
             tcp_flags = parse_tcp_flags(packet);
             p = pmd_send_port_cache_lookup(pmd, port_no);
             if (p) {
-                netdev_hw_miss_packet_recover(p->port->netdev, mark, packet,
-                                              NULL);
+                netdev_hw_miss_packet_recover(p->port->netdev, mark,
+                                              packet, &skip_actions);
             }
             flow = mark_to_flow_find(pmd, mark);
             if (OVS_LIKELY(flow)) {
+                flow->skip_actions = skip_actions;
                 if (OVS_LIKELY(batch_enable)) {
                     dp_netdev_queue_batches(packet, flow, tcp_flags, batches,
                                             n_batches);
