@@ -507,6 +507,7 @@ ofproto_create(const char *datapath_name, const char *datapath_type,
     ofproto->ofproto_class = class;
     ofproto->name = xstrdup(datapath_name);
     ofproto->type = xstrdup(datapath_type);
+    ovs_refcount_init(&ofproto->refcount);
     hmap_insert(&all_ofprotos, &ofproto->hmap_node,
                 hash_string(ofproto->name, 0));
     ofproto->datapath_id = 0;
@@ -1697,6 +1698,14 @@ ofproto_destroy__(struct ofproto *ofproto)
     ofproto->ofproto_class->dealloc(ofproto);
 }
 
+static void
+ofproto_unref(struct ofproto *ofproto)
+{
+    if (ovs_refcount_unref(&ofproto->refcount) == 1) {
+        ofproto_destroy__(ofproto);
+    }
+}
+
 /* Destroying rules is doubly deferred, must have 'ofproto' around for them.
  * - 1st we defer the removal of the rules from the classifier
  * - 2nd we defer the actual destruction of the rules. */
@@ -1704,7 +1713,7 @@ static void
 ofproto_destroy_defer__(struct ofproto *ofproto)
     OVS_EXCLUDED(ofproto_mutex)
 {
-    ovsrcu_postpone(ofproto_destroy__, ofproto);
+    ovsrcu_postpone(ofproto_unref, ofproto);
 }
 
 void
@@ -2925,6 +2934,7 @@ static void
 ofproto_rule_destroy__(struct rule *rule)
     OVS_NO_THREAD_SAFETY_ANALYSIS
 {
+    ofproto_unref(rule->ofproto);
     cls_rule_destroy(CONST_CAST(struct cls_rule *, &rule->cr));
     rule_actions_destroy(rule_get_actions(rule));
     ovs_mutex_destroy(&rule->mutex);
@@ -5256,9 +5266,15 @@ ofproto_rule_create(struct ofproto *ofproto, struct cls_rule *cr,
     struct rule *rule;
     enum ofperr error;
 
+    if (!ovs_refcount_try_ref_rcu(&ofproto->refcount)) {
+        cls_rule_destroy(cr);
+        return OFPERR_OFPFMFC_UNKNOWN;
+    }
+
     /* Allocate new rule. */
     rule = ofproto->ofproto_class->rule_alloc();
     if (!rule) {
+        ofproto_unref(ofproto);
         cls_rule_destroy(cr);
         VLOG_WARN_RL(&rl, "%s: failed to allocate a rule.", ofproto->name);
         return OFPERR_OFPFMFC_UNKNOWN;
