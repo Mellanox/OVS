@@ -80,6 +80,8 @@ struct ofproto {
     char *type;                 /* Datapath type. */
     char *name;                 /* Datapath name. */
 
+    struct ovs_refcount refcount;
+
     /* Settings. */
     uint64_t fallback_dpid;     /* Datapath ID if no better choice found. */
     uint64_t datapath_id;       /* Datapath ID. */
