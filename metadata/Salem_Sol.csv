@@ -45,3 +45,5 @@ Change-Id=Idae46e920fe6624f77e1f0fd641f2d7f12d21185; subject=netdev-offload-dpdk
 Change-Id=I8dca5a68aced0aaded6dca971707568fa87fd899; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I347a23bddaa8cf33628912c62a9db25b54cba58e; subject=netdev-offload: Change default e2e-cache size; feature=dpdk; upstream_status=NA; general=;
 Change-Id=Ib918005eec5dbdd4b20b46029f244c21330d9c57; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ic54620a465c1655a24487c80d59754bd88d33b5c; subject=netdev-offload-dpdk: Map ct label zero; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I622f43711fe24f1f2730ff58add9abe120f94f09; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
