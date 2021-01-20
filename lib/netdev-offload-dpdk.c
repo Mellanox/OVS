@@ -874,7 +874,8 @@ dump_label_id(struct ds *s, void *data)
 }
 
 #define MIN_LABEL_ID     1
-#define MAX_LABEL_ID     (reg_fields[REG_FIELD_CT_LABEL_ID].mask - 1)
+#define MAX_LABEL_ID     (reg_fields[REG_FIELD_CT_LABEL_ID].mask - 2)
+#define ZERO_LABEL_ID     (reg_fields[REG_FIELD_CT_LABEL_ID].mask - 1)
 
 static struct seq_pool *label_id_pool = NULL;
 
@@ -922,6 +923,10 @@ get_label_id(ovs_u128 *ct_label, uint32_t *ct_label_id)
         .data = ct_label,
     };
 
+    if (is_all_zeros(ct_label, sizeof *ct_label)) {
+        *ct_label_id = ZERO_LABEL_ID;
+        return 0;
+    }
     return get_context_data_id_by_data(&label_id_md, &label_id_context,
                                        NULL, ct_label_id);
 }
@@ -929,6 +934,9 @@ get_label_id(ovs_u128 *ct_label, uint32_t *ct_label_id)
 static void
 put_label_id(uint32_t label_id)
 {
+    if (label_id == ZERO_LABEL_ID) {
+        return;
+    }
     put_context_data_by_id(&label_id_md, NULL, label_id);
 }
 
@@ -3532,19 +3540,21 @@ parse_flow_match(struct netdev *netdev,
     /* ct-label */
     if (!is_all_zeros(&match->wc.masks.ct_label,
                       sizeof match->wc.masks.ct_label)) {
+        uint32_t label_match_value, mask;
         ovs_u128 tmp_u128;
 
         tmp_u128.u64.lo = match->flow.ct_label.u64.lo &
                           match->wc.masks.ct_label.u64.lo;
         tmp_u128.u64.hi = match->flow.ct_label.u64.hi &
                           match->wc.masks.ct_label.u64.hi;
-        if ((!match->flow.recirc_id &&
-             !(is_all_zeros(&tmp_u128, sizeof tmp_u128))) ||
-             (!get_label_id(&tmp_u128,
-                            &act_resources->ct_match_label_id) &&
-              !add_pattern_match_reg_field(patterns, REG_FIELD_CT_LABEL_ID,
-                                           act_resources->ct_match_label_id,
-                                           reg_fields[REG_FIELD_CT_LABEL_ID]. mask))) {
+        if (get_label_id(&tmp_u128, &act_resources->ct_match_label_id)) {
+            return -1;
+        }
+        label_match_value = act_resources->ct_match_label_id == ZERO_LABEL_ID
+            ? 0 : act_resources->ct_match_label_id;
+        mask = reg_fields[REG_FIELD_CT_LABEL_ID].mask;
+        if (!add_pattern_match_reg_field(patterns, REG_FIELD_CT_LABEL_ID,
+                                         label_match_value, mask)) {
             memset(&consumed_masks->ct_label,
                    0, sizeof consumed_masks->ct_label);
         }
@@ -4209,6 +4219,7 @@ parse_ct_actions(struct flow_actions *actions,
             const ovs_32aligned_u128 *key = nl_attr_get(cta);
             const ovs_32aligned_u128 *mask = key + 1;
             ovs_u128 tmp_key, tmp_mask;
+            uint32_t set_value, set_mask;
 
             tmp_key.u32[0] = key->u32[0];
             tmp_key.u32[1] = key->u32[1];
@@ -4222,11 +4233,14 @@ parse_ct_actions(struct flow_actions *actions,
 
             tmp_key.u64.lo &= tmp_mask.u64.lo;
             tmp_key.u64.hi &= tmp_mask.u64.hi;
-            if (get_label_id(&tmp_key,
-                             &act_resources->ct_action_label_id) ||
-                add_action_set_reg_field(actions, REG_FIELD_CT_LABEL_ID,
-                                         act_resources->ct_action_label_id,
-                                         reg_fields[REG_FIELD_CT_LABEL_ID].mask)) {
+            if (get_label_id(&tmp_key, &act_resources->ct_action_label_id)) {
+                return -1;
+            }
+            set_value = act_resources->ct_match_label_id == ZERO_LABEL_ID
+                ? 0 : act_resources->ct_match_label_id;
+            set_mask = reg_fields[REG_FIELD_CT_LABEL_ID].mask;
+            if (!add_action_set_reg_field(actions, REG_FIELD_CT_LABEL_ID,
+                                          set_value, set_mask)) {
                 VLOG_DBG_RL(&rl, "Could not create label id");
                 return -1;
             }
