@@ -1010,7 +1010,7 @@ netdev_set_flow_api_enabled(const struct smap *ovs_other_config)
             e2e_cache_enabled = true;
             if (e2e_cache_enabled) {
                 e2e_cache_size = smap_get_int(ovs_other_config, "e2e-size",
-                                              4000);
+                                              32000);
                 VLOG_INFO("E2E cache size is %"PRIu32, e2e_cache_size);
             }
             ovsthread_once_done(&once_e2e);
