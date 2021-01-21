@@ -43,3 +43,5 @@ Change-Id=Ibf96ceb27142568560e6960e053f6ee9b3199101; subject=netdev-offload-tc: 
 Change-Id=I1e1687a9c428c0fa2f605edcf0385d0e5fad13bb; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=Idae46e920fe6624f77e1f0fd641f2d7f12d21185; subject=netdev-offload-dpdk: Remove flow_netdev in free_flow_handle; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I8dca5a68aced0aaded6dca971707568fa87fd899; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I347a23bddaa8cf33628912c62a9db25b54cba58e; subject=netdev-offload: Change default e2e-cache size; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Ib918005eec5dbdd4b20b46029f244c21330d9c57; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
