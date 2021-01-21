@@ -119,3 +119,5 @@ Change-Id=Ic52fdbd8d916c24d3b2cac12e88549fc2cddfcbe; subject=netdev-offload-dpdk
 Change-Id=I96b00db070db54b61f19ad190ff7f405e5468d9f; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I6ec2003f201dc7fba923df182cd0d2ba407e6a78; subject=dpif-netdev: e2e: Support flow flush; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I8633cd9708c1f6a8fa9e5159193fcacaa24352c5; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I3dc6091edd71132c1d02f516480e95fc764d1140; subject=ofproto: Hold refcount on ofproto until all rules are destroyed; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I4022dbcf7d0ea1d7703232671ca8798f67897b71; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
