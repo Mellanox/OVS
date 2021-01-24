@@ -176,3 +176,6 @@ Change-Id=I6e33774c819755ca76cb725bfd2200e39a4083a5; subject=netdev-offload-dpdk
 Change-Id=Ibeb26f8faffa5773061ac01e848875c4847cdd2f; subject=netdev-offload-dpdk: Finalize data object free outside disassociate scope; feature=dpdk; upstream_status=NA; general=;
 Change-Id=Iebf00e8296f893eaba065de5eb14aee0715abc83; subject=netdev-offload-dpdk: Protect concurrency between flow destroy/query; feature=dpdk; upstream_status=NA; general=;
 Change-Id=Id3056ef730be2b64d2b066cb34fd7d4725cfd122; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I3422cc200c2672ab8a9fc41b0fecb19489537b88; subject=dpif-netdev: e2e: Create e2e thread upon init instead upon traffic; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I36525ae153c5ba0a0ee44b86764a25f7ebe8ed94; subject=netdev-dpdk: Lock netdev_mutex before dpdk_mutex; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I3df3f28b8aa5c038b4404706cd36689f87a051da; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
