@@ -76,8 +76,10 @@ struct netdev_saved_flags {
     enum netdev_flags saved_values;
 };
 
-/* Protects 'netdev_shash' and the mutable members of struct netdev. */
-static struct ovs_mutex netdev_mutex = OVS_MUTEX_INITIALIZER;
+/* Protects 'netdev_shash' and the mutable members of struct netdev.
+ * Make it recursive to handle external locks of this mutex.
+ */
+static struct ovs_mutex netdev_mutex = OVS_RECURSIVE_MUTEX_INITIALIZER;
 
 /* All created network devices. */
 static struct shash netdev_shash OVS_GUARDED_BY(netdev_mutex)
@@ -2297,3 +2299,14 @@ netdev_free_custom_stats_counters(struct netdev_custom_stats *custom_stats)
         }
     }
 }
+
+void
+netdev_mutex_external_lock(bool lock)
+{
+    if (lock) {
+        ovs_mutex_lock(&netdev_mutex);
+    } else {
+        ovs_mutex_unlock(&netdev_mutex);
+    }
+}
+

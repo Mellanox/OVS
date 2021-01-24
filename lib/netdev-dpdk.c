@@ -5490,6 +5490,7 @@ netdev_dpdk_get_netdev_by_devargs(const char *devargs)
     struct netdev *netdev = NULL;
     struct netdev_dpdk *dev;
 
+    netdev_mutex_external_lock(true);
     ovs_mutex_lock(&dpdk_mutex);
     dev = netdev_dpdk_lookup_by_devargs(devargs);
     if (!dev) {
@@ -5503,6 +5504,7 @@ netdev_dpdk_get_netdev_by_devargs(const char *devargs)
 
 out:
     ovs_mutex_unlock(&dpdk_mutex);
+    netdev_mutex_external_lock(false);
     return netdev;
 }
 
@@ -5528,6 +5530,7 @@ netdev_dpdk_get_netdev_by_domain_id(uint16_t domain_id)
     struct netdev *netdev = NULL;
     struct netdev_dpdk *dev;
 
+    netdev_mutex_external_lock(true);
     ovs_mutex_lock(&dpdk_mutex);
     dev = netdev_dpdk_lookup_by_domain_id(domain_id);
     if (!dev) {
@@ -5540,6 +5543,7 @@ netdev_dpdk_get_netdev_by_domain_id(uint16_t domain_id)
 
 out:
     ovs_mutex_unlock(&dpdk_mutex);
+    netdev_mutex_external_lock(false);
     return netdev;
 }
 
