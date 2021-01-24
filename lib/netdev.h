@@ -315,6 +315,8 @@ int netdev_reconfigure(struct netdev *netdev);
 void netdev_wait_reconf_required(struct netdev *netdev);
 bool netdev_is_reconf_required(struct netdev *netdev);
 
+void netdev_mutex_external_lock(bool lock);
+
 struct netdev_queue_dump {
     struct netdev *netdev;
     int error;
