@@ -481,7 +481,7 @@ struct dp_offload_thread {
     );
 };
 
-static struct dp_offload_thread *dp_offload_threads;
+static struct dp_offload_thread *dp_offload_threads = NULL;
 static void *dp_netdev_flow_offload_main(void *arg);
 
 #define XPS_TIMEOUT 500000LL    /* In microseconds. */
@@ -1104,6 +1104,25 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev,
                                  long long prev_now);
 
 static void
+dp_netdev_offload_ct_stats_reset(void)
+{
+    unsigned int i;
+
+    if (!dp_offload_threads) {
+       return;
+    }
+    for (i = 0; i < netdev_offload_thread_nb(); i++) {
+        atomic_init(&dp_offload_threads[i].ct_uni_dir_connections, 0);
+        atomic_init(&dp_offload_threads[i].ct_bi_dir_connections, 0);
+    }
+    if (netdev_is_e2e_cache_enabled()) {
+        atomic_init(&dp_offload_threads[i].enqueued_item, 0);
+        atomic_init(&dp_offload_threads[i].ct_uni_dir_connections, 0);
+        atomic_init(&dp_offload_threads[i].ct_bi_dir_connections, 0);
+    }
+}
+
+static void
 dp_netdev_offload_init(void)
 {
     static struct ovsthread_once offload_thread_start =
@@ -1119,17 +1138,11 @@ dp_netdev_offload_init(void)
             cmap_init(&dp_offload_threads[i].megaflow_to_mark);
             cmap_init(&dp_offload_threads[i].mark_to_flow);
             atomic_init(&dp_offload_threads[i].enqueued_item, 0);
-            atomic_init(&dp_offload_threads[i].ct_uni_dir_connections, 0);
-            atomic_init(&dp_offload_threads[i].ct_bi_dir_connections, 0);
             ovs_thread_create("hw_offload",
                               dp_netdev_flow_offload_main,
                               &dp_offload_threads[i]);
         }
-        if (netdev_is_e2e_cache_enabled()) {
-            atomic_init(&dp_offload_threads[i].enqueued_item, 0);
-            atomic_init(&dp_offload_threads[i].ct_uni_dir_connections, 0);
-            atomic_init(&dp_offload_threads[i].ct_bi_dir_connections, 0);
-        }
+        dp_netdev_offload_ct_stats_reset();
         ovsthread_once_done(&offload_thread_start);
     }
 }
@@ -2279,6 +2292,7 @@ dp_netdev_free(struct dp_netdev *dp)
     /* Wait for all CT offload del to resolve before continuing
      * to destroy the datapath. */
     dp_netdev_offload_barrier(dp);
+    dp_netdev_offload_ct_stats_reset();
 
     seq_destroy(dp->reconfigure_seq);
 
