@@ -21,6 +21,7 @@
 #include "openvswitch/netdev.h"
 #include "openvswitch/types.h"
 #include "dp-packet.h"
+#include "ovs-rcu.h"
 #include "ovs-thread.h"
 #include "packets.h"
 #include "flow.h"
@@ -45,7 +46,7 @@ struct netdev_hw_info {
     bool oor;		/* Out of Offload Resources ? */
     int offload_count;  /* Pending (non-offloaded) flow count */
     int pending_count;  /* Offloaded flow count */
-    void *offload_data; /* Offload metadata. */
+    OVSRCU_TYPE(void *) offload_data; /* Offload metadata. */
 };
 
 enum hw_info_type {

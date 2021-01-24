@@ -176,9 +176,17 @@ offload_data_init(struct netdev *netdev)
     data->rte_flow_counters = xcalloc(netdev_offload_dpdk_thread_nb(),
                                       sizeof *data->rte_flow_counters);
 
-    netdev->hw_info.offload_data = data;
+    ovsrcu_set(&netdev->hw_info.offload_data, (void *) data);
 
     return 0;
+}
+
+static void
+offload_data_destroy__(struct netdev_offload_dpdk_data *offload_data)
+{
+    ovs_mutex_destroy(&offload_data->map_lock);
+    free(offload_data->rte_flow_counters);
+    free(offload_data);
 }
 
 static void
@@ -187,7 +195,8 @@ offload_data_destroy(struct netdev *netdev)
     struct netdev_offload_dpdk_data *data;
     struct ufid_to_rte_flow_data *node;
 
-    data = netdev->hw_info.offload_data;
+    data = (struct netdev_offload_dpdk_data *)
+        ovsrcu_get(void *, &netdev->hw_info.offload_data);
     if (data == NULL) {
         return;
     }
@@ -197,29 +206,31 @@ offload_data_destroy(struct netdev *netdev)
     }
 
     cmap_destroy(&data->ufid_to_rte_flow);
-    ovs_mutex_destroy(&data->map_lock);
-    free(data->rte_flow_counters);
-    free(data);
+    ovsrcu_postpone(offload_data_destroy__, data);
 }
 
 static void
 offload_data_lock(struct netdev *netdev)
-    OVS_ACQUIRES(
-        ((struct netdev_offload_dpdk_data *)netdev->hw_info.offload_data)->
-            map_lock)
+    OVS_NO_THREAD_SAFETY_ANALYSIS
 {
-    ovs_mutex_lock(&((struct netdev_offload_dpdk_data *)
-                            netdev->hw_info.offload_data)->map_lock);
+    struct netdev_offload_dpdk_data *offload_data;
+
+    offload_data = (struct netdev_offload_dpdk_data *)
+        ovsrcu_get(void *, &netdev->hw_info.offload_data);
+
+    ovs_mutex_lock(&offload_data->map_lock);
 }
 
 static void
 offload_data_unlock(struct netdev *netdev)
-    OVS_RELEASES(
-        ((struct netdev_offload_dpdk_data *)netdev->hw_info.offload_data)->
-            map_lock)
+    OVS_NO_THREAD_SAFETY_ANALYSIS
 {
-    ovs_mutex_unlock(&((struct netdev_offload_dpdk_data *)
-                            netdev->hw_info.offload_data)->map_lock);
+    struct netdev_offload_dpdk_data *offload_data;
+
+    offload_data = (struct netdev_offload_dpdk_data *)
+        ovsrcu_get(void *, &netdev->hw_info.offload_data);
+
+    ovs_mutex_unlock(&offload_data->map_lock);
 }
 
 static struct cmap *
@@ -227,8 +238,10 @@ offload_data_map(struct netdev *netdev)
 {
     struct netdev_offload_dpdk_data *data;
 
-    data = netdev->hw_info.offload_data;
-    return &data->ufid_to_rte_flow;
+    data = (struct netdev_offload_dpdk_data *)
+        ovsrcu_get(void *, &netdev->hw_info.offload_data);
+
+    return data ? &data->ufid_to_rte_flow : NULL;
 }
 
 /* Find rte_flow_data with @ufid. */
@@ -240,6 +253,10 @@ ufid_to_rte_flow_data_find(struct netdev *netdev,
     size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
     struct ufid_to_rte_flow_data *data;
     struct cmap *map = offload_data_map(netdev);
+
+    if (!map) {
+        return NULL;
+    }
 
     CMAP_FOR_EACH_WITH_HASH (data, node, hash, map) {
         if (ovs_u128_equals(*ufid, data->ufid)) {
@@ -264,6 +281,10 @@ ufid_to_rte_flow_data_find_protected(struct netdev *netdev,
     size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
     struct ufid_to_rte_flow_data *data;
 
+    if (!map) {
+        return NULL;
+    }
+
     CMAP_FOR_EACH_WITH_HASH_PROTECTED (data, node, hash, map) {
         if (ovs_u128_equals(*ufid, data->ufid)) {
             return data;
@@ -279,10 +300,15 @@ ufid_to_rte_flow_associate(const ovs_u128 *ufid, struct netdev *netdev,
                            struct act_resources *act_resources)
 {
     size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
-    struct ufid_to_rte_flow_data *data = xzalloc(sizeof *data);
-    struct ufid_to_rte_flow_data *data_prev;
     struct cmap *map = offload_data_map(netdev);
+    struct ufid_to_rte_flow_data *data_prev;
+    struct ufid_to_rte_flow_data *data;
 
+    if (!map) {
+        return NULL;
+    }
+
+    data = xzalloc(sizeof *data);
     offload_data_lock(netdev);
 
     /*
@@ -324,6 +350,10 @@ ufid_to_rte_flow_disassociate(struct netdev *netdev,
 {
     struct cmap *map = offload_data_map(netdev);
     size_t hash;
+
+    if (!map) {
+        return;
+    }
 
     offload_data_lock(netdev);
 
@@ -2398,8 +2428,11 @@ create_rte_flow(struct netdev *netdev,
         struct netdev_offload_dpdk_data *data;
         unsigned int tid = netdev_offload_thread_id();
 
-        data = netdev->hw_info.offload_data;
-        atomic_count_inc64(&data->rte_flow_counters[tid]);
+        data = (struct netdev_offload_dpdk_data *)
+            ovsrcu_get(void *, &netdev->hw_info.offload_data);
+        if (data) {
+            atomic_count_inc64(&data->rte_flow_counters[tid]);
+        }
         if (!VLOG_DROP_DBG(&rl)) {
             dump_flow(&s, &s_extra, attr, items, actions, act_vars);
             extra_str = ds_cstr(&s_extra);
@@ -2724,8 +2757,11 @@ netdev_offload_dpdk_destroy_flow(struct netdev *netdev,
     if (!ret) {
         struct netdev_offload_dpdk_data *data;
 
-        data = netdev->hw_info.offload_data;
-        atomic_count_dec64(&data->rte_flow_counters[creation_tid]);
+        data = (struct netdev_offload_dpdk_data *)
+            ovsrcu_get(void *, &netdev->hw_info.offload_data);
+        if (data) {
+            atomic_count_dec64(&data->rte_flow_counters[creation_tid]);
+        }
 
         VLOG_DBG("%s: removed rte flow %p associated with ufid "UUID_FMT,
                  netdev_get_name(netdev), rte_flow,
@@ -4915,7 +4951,7 @@ netdev_offload_dpdk_deinit_flow_api(struct netdev *netdev)
 {
     if (offload_dpdk_flow_api_supported(netdev)) {
         offload_data_destroy(netdev);
-        netdev->hw_info.offload_data = NULL;
+        ovsrcu_set(&netdev->hw_info.offload_data, NULL);
     }
 }
 
@@ -5078,7 +5114,12 @@ netdev_offload_dpdk_hw_offload_stats_get(struct netdev *netdev,
     struct netdev_offload_dpdk_data *data;
     unsigned int tid;
 
-    data = netdev->hw_info.offload_data;
+    data = (struct netdev_offload_dpdk_data *)
+        ovsrcu_get(void *, &netdev->hw_info.offload_data);
+    if (!data) {
+        return -1;
+    }
+
     for (tid = 0; tid < netdev_offload_dpdk_thread_nb(); tid++) {
         counters[tid] = atomic_count_get64(&data->rte_flow_counters[tid]);
     }
