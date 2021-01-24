@@ -2132,7 +2132,7 @@ create_dp_netdev(const char *name, const struct dpif_class *class,
     dp->upcall_cb = NULL;
 
     dp->conntrack = conntrack_init(dp);
-    conntrack_init_offload_class(dp->conntrack, &dpif_ct_offload_class);
+    conntrack_set_offload_class(dp->conntrack, &dpif_ct_offload_class);
 
     atomic_init(&dp->emc_insert_min, DEFAULT_EM_FLOW_INSERT_MIN);
     atomic_init(&dp->tx_flush_interval, DEFAULT_TX_FLUSH_INTERVAL);
@@ -2263,6 +2263,7 @@ dp_netdev_free(struct dp_netdev *dp)
     ovs_mutex_destroy(&dp->non_pmd_mutex);
     ovsthread_key_delete(dp->per_pmd_key);
 
+    conntrack_set_offload_class(dp->conntrack, NULL);
     conntrack_destroy(dp->conntrack);
     /* Wait for all CT offload del to resolve before continuing
      * to destroy the datapath. */

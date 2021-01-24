@@ -200,7 +200,7 @@ struct conntrack {
     void *dp; /* DP handler for offloads. */
 
     /* Holding HW offload callbacks */
-    struct conntrack_offload_class *offload_class;
+    OVSRCU_TYPE(struct conntrack_offload_class *) offload_class;
 };
 
 /* Lock acquisition order:
