@@ -179,3 +179,7 @@ Change-Id=Id3056ef730be2b64d2b066cb34fd7d4725cfd122; subject=Update metadata; fe
 Change-Id=I3422cc200c2672ab8a9fc41b0fecb19489537b88; subject=dpif-netdev: e2e: Create e2e thread upon init instead upon traffic; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I36525ae153c5ba0a0ee44b86764a25f7ebe8ed94; subject=netdev-dpdk: Lock netdev_mutex before dpdk_mutex; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I3df3f28b8aa5c038b4404706cd36689f87a051da; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I889d7f446124bf9b93d2e3a6eb832aec543ba35d; subject=conntrack: RCU protected offload-class; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Ief4fee8182fd2747fc41823e5f8b8b80b0f292bd; subject=dpif-netdev: Reset CT offload stats upon dp destroy; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I7d0fef636f703940e999d851f691465a0e0fa04f; subject=dpctl: Align offload stats display to 7 digits numbers; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Ia6c097c252068c4cba8d57d9159205006162a6f8; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
