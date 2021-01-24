@@ -322,12 +322,15 @@ conntrack_offload_del_conn(struct conntrack *ct,
                            struct conn *conn)
     OVS_REQUIRES(conn->lock, ct->ct_lock)
 {
+    struct conntrack_offload_class *offload_class;
     struct ct_flow_offload_item item[CT_DIR_NUM];
     struct conn *conn_dir;
     void *dp;
     int dir;
 
-    if (!ct->offload_class || !ct->offload_class->conn_del) {
+    offload_class = ovsrcu_get(struct conntrack_offload_class *,
+                               &ct->offload_class);
+    if (!offload_class || !offload_class->conn_del) {
         return;
     }
 
@@ -349,12 +352,12 @@ conntrack_offload_del_conn(struct conntrack *ct,
         }
         if (ct_e2e_cache_enabled) {
             dp = conn_dir->offloads.dir_info[dir].dp;
-            ct->offload_class->conn_e2e_del(&item[dir].ufid, dp);
+            offload_class->conn_e2e_del(&item[dir].ufid, dp);
         }
     }
     item[CT_DIR_INIT].refcnt = conn->offloads.refcnt;
     item[CT_DIR_REP].refcnt = NULL;
-    ct->offload_class->conn_del(item);
+    offload_class->conn_del(item);
 }
 
 /* Initializes the connection tracker 'ct'.  The caller is responsible for
@@ -1607,11 +1610,19 @@ e2e_cache_trace_add_ct(struct conntrack *ct,
                        uint32_t mark,
                        ovs_u128 label)
 {
-    struct ct_flow_offload_item item;
+    struct conntrack_offload_class *offload_class;
     uint32_t e2e_trace_size = p->e2e_trace_size;
+    struct ct_flow_offload_item item;
     struct ct_dir_info *dir_info;
     uint8_t e2e_seen_pkts;
     int dir;
+
+    offload_class = ovsrcu_get(struct conntrack_offload_class *,
+                               &ct->offload_class);
+    if (!offload_class || !offload_class->conn_get_ufid ||
+        !offload_class->conn_e2e_add) {
+        return;
+    }
 
     if (OVS_UNLIKELY(e2e_trace_size >= E2E_CACHE_MAX_TRACE)) {
         p->e2e_trace_flags |= E2E_CACHE_TRACE_FLAG_OVERFLOW;
@@ -1640,9 +1651,9 @@ e2e_cache_trace_add_ct(struct conntrack *ct,
     }
     if (!dir_info->e2e_flow) {
         dir_info->e2e_flow = true;
-        ct->offload_class->conn_get_ufid(&item, &dir_info->ufid);
+        offload_class->conn_get_ufid(&item, &dir_info->ufid);
         item.ufid = dir_info->ufid;
-        ct->offload_class->conn_e2e_add(&item);
+        offload_class->conn_e2e_add(&item);
     }
 
     /* Prevent sending E2E trace messages for every packet. Send only
@@ -1679,13 +1690,16 @@ conntrack_offload_add_conn(struct conntrack *ct,
                            ovs_u128 label,
                            bool reply)
 {
+    struct conntrack_offload_class *offload_class;
     struct ct_flow_offload_item item[CT_DIR_NUM];
     uint8_t flags;
     int dir;
 
     /* CT doesn't handle alg */
-    if (conn->alg || conn->alg_related || !ct->offload_class ||
-        !ct->offload_class->conn_add) {
+    offload_class = ovsrcu_get(struct conntrack_offload_class *,
+                               &ct->offload_class);
+    if (conn->alg || conn->alg_related || !offload_class ||
+        !offload_class->conn_add || !offload_class->conn_get_ufid) {
         conn->offloads.flags |= CT_OFFLOAD_SKIP;
         return;
     }
@@ -1722,10 +1736,10 @@ conntrack_offload_add_conn(struct conntrack *ct,
                                             label);
             ufid[dir] = &conn->offloads.dir_info[dir].ufid;
         }
-        ct->offload_class->conn_get_ufid(&item[CT_DIR_INIT],
-                                         &item[CT_DIR_INIT].ufid);
-        ct->offload_class->conn_get_ufid(&item[CT_DIR_REP],
-                                         &item[CT_DIR_REP].ufid);
+        offload_class->conn_get_ufid(&item[CT_DIR_INIT],
+                                     &item[CT_DIR_INIT].ufid);
+        offload_class->conn_get_ufid(&item[CT_DIR_REP],
+                                     &item[CT_DIR_REP].ufid);
         *ufid[CT_DIR_INIT] = item[CT_DIR_INIT].ufid;
         *ufid[CT_DIR_REP] = item[CT_DIR_REP].ufid;
         refcnt = xmalloc(sizeof *refcnt);
@@ -1733,7 +1747,7 @@ conntrack_offload_add_conn(struct conntrack *ct,
         ovs_refcount_ref(refcnt);
         item[CT_DIR_INIT].refcnt = refcnt;
         item[CT_DIR_REP].refcnt = NULL;
-        ct->offload_class->conn_add(item);
+        offload_class->conn_add(item);
         conn->offloads.flags |= CT_OFFLOAD_SKIP;
         if (conn->nat_conn) {
             conn->nat_conn->offloads.flags |= CT_OFFLOAD_SKIP;
@@ -1880,6 +1894,7 @@ conn_batch_clean(struct conntrack *ct,
 
 static bool
 conn_hw_update(struct conntrack *ct,
+               struct conntrack_offload_class *offload_class,
                struct conn *conn,
                long long now,
                int *rv_active)
@@ -1889,20 +1904,16 @@ conn_hw_update(struct conntrack *ct,
     bool updated = false;
     int dir;
 
-    if (!ct->offload_class ||
-        !ct->offload_class->conn_active ||
+    if (!offload_class || !offload_class->conn_active ||
         conn_get_tm(conn, &tm)) {
         return false;
     }
 
-    for (dir = 0; ct->offload_class &&
-                  ct->offload_class->conn_active && dir < CT_DIR_NUM;
-         dir++) {
+    for (dir = 0; dir < CT_DIR_NUM; dir++) {
         if (!updated &&
             conntrack_offload_fill_item_common(&item, conn, dir)) {
-            *rv_active =
-                ct->offload_class->conn_active(&item, now,
-                                               conn->prev_query);
+            *rv_active = offload_class->conn_active(&item, now,
+                                                    conn->prev_query);
             if (!*rv_active) {
                 conn_update_expiration(ct, conn, tm, now);
                 updated = true;
@@ -1912,9 +1923,8 @@ conn_hw_update(struct conntrack *ct,
         if (!updated && conn->nat_conn &&
             conntrack_offload_fill_item_common(&item, conn->nat_conn,
                                                dir)) {
-            *rv_active =
-                ct->offload_class->conn_active(&item, now,
-                                               conn->prev_query);
+            *rv_active = offload_class->conn_active(&item, now,
+                                                    conn->prev_query);
             if (!*rv_active) {
                 conn_update_expiration(ct, conn, tm, now);
                 updated = true;
@@ -1937,6 +1947,7 @@ conn_hw_update(struct conntrack *ct,
 static long long
 ct_sweep(struct conntrack *ct, long long now, size_t limit)
 {
+    struct conntrack_offload_class *offload_class = NULL;
     struct conn *conn;
     struct conn_exp_node *conn_it;
     struct conn *conn_batch[CT_SWEEP_BATCH_SIZE];
@@ -1960,6 +1971,11 @@ rcu_quiesce:
             ovsrcu_quiesce();
             now = time_msec();
             next_rcu_quiesce = now + CT_SWEEP_QUIESCE_INTERVAL_MS;
+            offload_class = NULL;
+        }
+        if (!offload_class) {
+            offload_class = ovsrcu_get(struct conntrack_offload_class *,
+                                       &ct->offload_class);
         }
 
         RCULIST_FOR_EACH (conn_it, node, &ct->exp_lists[i]) {
@@ -1968,7 +1984,8 @@ rcu_quiesce:
             conn = conn_it->up;
             ovs_mutex_lock(&conn->lock);
             rv_active = 0;
-            hw_updated = conn_hw_update(ct, conn, now, &rv_active);
+            hw_updated = conn_hw_update(ct, offload_class, conn, now,
+                                        &rv_active);
 
             if (rv_active == EAGAIN) {
                 /* Impossible to query offload status, try later. */
@@ -3832,10 +3849,9 @@ handle_tftp_ctl(struct conntrack *ct,
 }
 
 void
-conntrack_init_offload_class(struct conntrack *ct,
-                             struct conntrack_offload_class *cls)
+conntrack_set_offload_class(struct conntrack *ct,
+                            struct conntrack_offload_class *cls)
 {
-    ct->offload_class = cls;
+    ovsrcu_set(&ct->offload_class, cls);
     ct_e2e_cache_enabled = netdev_is_e2e_cache_enabled();
-
 }
