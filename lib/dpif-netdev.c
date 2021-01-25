@@ -5273,6 +5273,10 @@ set_pmd_auto_lb(struct dp_netdev *dp)
 
 }
 
+static struct ovsthread_once e2e_cache_thread_once
+    = OVSTHREAD_ONCE_INITIALIZER;
+static void *dp_netdev_e2e_cache_main(void *arg);
+
 /* Applies datapath configuration from the database. Some of the changes are
  * actually applied in dpif_netdev_run(). */
 static int
@@ -5365,6 +5369,10 @@ dpif_netdev_set_config(struct dpif *dpif, const struct smap *other_config)
                 VLOG_INFO("E2E cache trace queue unlimited");
             }
             done = true;
+        }
+        if (ovsthread_once_start(&e2e_cache_thread_once)) {
+            ovs_thread_create("e2e_cache", dp_netdev_e2e_cache_main, NULL);
+            ovsthread_once_done(&e2e_cache_thread_once);
         }
     }
 #endif
@@ -8056,9 +8064,6 @@ static struct e2e_cache_thread_msg_queues e2e_cache_thread_msg_queues = {
         MPSC_QUEUE_INITIALIZER(&e2e_cache_thread_msg_queues.trace_queue)
 };
 
-static struct ovsthread_once e2e_cache_thread_once
-    = OVSTHREAD_ONCE_INITIALIZER;
-
 static struct hmap counter_map = HMAP_INITIALIZER(&counter_map);
 
 static inline int
@@ -8139,8 +8144,6 @@ static struct hmap flows_map OVS_GUARDED_BY(flows_map_mutex) =
 static struct ovs_mutex merged_flows_map_mutex = OVS_MUTEX_INITIALIZER;
 static struct hmap merged_flows_map OVS_GUARDED_BY(merged_flows_map_mutex) =
     HMAP_INITIALIZER(&merged_flows_map);
-
-static void *dp_netdev_e2e_cache_main(void *arg);
 
 static void
 dpif_netdev_dump_e2e_stats(struct ds *s)
@@ -9395,11 +9398,6 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
     struct dp_packet *packet;
     uint32_t num_elements;
     size_t buffer_size;
-
-    if (ovsthread_once_start(&e2e_cache_thread_once)) {
-        ovs_thread_create("e2e_cache", dp_netdev_e2e_cache_main, NULL);
-        ovsthread_once_done(&e2e_cache_thread_once);
-    }
 
     if (dp_netdev_e2e_cache_trace_q_size) {
         uint32_t cur_q_size = atomic_count_get(&e2e_stats.trace_msgs_in_queue);
