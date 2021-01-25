@@ -2302,6 +2302,7 @@ netdev_free_custom_stats_counters(struct netdev_custom_stats *custom_stats)
 
 void
 netdev_mutex_external_lock(bool lock)
+    OVS_NO_THREAD_SAFETY_ANALYSIS
 {
     if (lock) {
         ovs_mutex_lock(&netdev_mutex);
