@@ -123,3 +123,5 @@ Change-Id=I3dc6091edd71132c1d02f516480e95fc764d1140; subject=ofproto: Hold refco
 Change-Id=I4022dbcf7d0ea1d7703232671ca8798f67897b71; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I30a66e4df05f3cde50139f66e6a61354d030d2e7; subject=dpif-netdev: e2e: Remove redundant peer state check for stats; feature=dpdk; upstream_status=NA; general=;
 Change-Id=Idee6194067f84bcb64029fce6fabf37ae16dc5a6; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I5e152abff2ee124f6dc3ffe5c833330437e09d1d; subject=netdev: Disable lock safety analysis for external lock; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I93853cfbbf35587d4f77642fa1af47b8872391d2; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
