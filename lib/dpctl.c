@@ -1631,7 +1631,7 @@ dpctl_offload_stats_show(int argc, const char *argv[],
 
     dpctl_print(dpctl_p, "HW Offload stats:\n");
     for (i = 0; i < stats.size; i++) {
-        dpctl_print(dpctl_p, "   %s: %6" PRIu64 "\n",
+        dpctl_print(dpctl_p, "   %s: %7" PRIu64 "\n",
                     stats.counters[i].name, stats.counters[i].value);
     }
 
