@@ -55,3 +55,10 @@ Change-Id=I4fbf22b3043e15ebc408e4f1af0344c88276d145; subject=netdev-offload-dpdk
 Change-Id=Id080afe35fd8bc8e2396c1a1a8c1ad760de2165e; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I26cda2b66666d5636a1c8f96350b7aaf29692b61; subject=netdev-native-tnl: Set FLOW_TNL_F_UDPIF only if geneve options exists; feature=dpdk; upstream_status=in_progress; general=;
 Change-Id=I79b233b48930dc6ec2287466c26b071d810bdeb7; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ida330066d943a261d5c90aff7d5d50eeb6acf1a8; subject=dpif-netdev: Skip SW execution of actions done by HW; feature=dpdk; upstream_status=ignore; general=;
+Change-Id=Ib773dba3468db053f0639534c0c7840c04f8e65c; subject=netdev-offload-dpdk: Introduce helper function get_netdev_by_port; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Id770f0094235a7521b01241b9fdca6affe81437a; subject=netdev-offload-dpdk: Support local mirroring; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I54ec711089700c71ce3527f4598755d1a586b068; subject=netdev-offload-dpdk: Introduce helper function format_raw_encap; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I68b032742e139e4e204e9b746a395dcecc2c1ef2; subject=netdev-offload-dpdk: Propogate remote mirroring fields; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Ic4774e27ebfb39c67c0468054c3bbe7ebbecc716; subject=netdev-offload-dpdk: Support remote mirroring; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I0f0d6a10917076f3c15f59ea3d4fc42ba2a493ca; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;

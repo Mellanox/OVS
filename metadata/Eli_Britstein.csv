@@ -185,3 +185,5 @@ Change-Id=I7d0fef636f703940e999d851f691465a0e0fa04f; subject=dpctl: Align offloa
 Change-Id=Ia6c097c252068c4cba8d57d9159205006162a6f8; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=Iffacd7fed701d8e93178e003dc75f55cb917fe6f; subject=netdev-offload: Protect offload data with RCU; feature=dpdk; upstream_status=NA; general=;
 Change-Id=Ib8bb93602ca94532b3dffd388e534a6ac25d7d62; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I8ad6efe0d6fe08eb848eb11637f753037e677903; subject=netdev-offload: Get skip actions number from packet recover; feature=dpdk; upstream_status=ignore; general=;
+Change-Id=I89f2ec5a18df327980a11a32993b0053a9673bb8; subject=netdev-offload-dpdk: Set number of skipped actions for flow miss; feature=dpdk; upstream_status=ignore; general=;
