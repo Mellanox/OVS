@@ -4285,10 +4285,10 @@ parse_ct_actions(struct flow_actions *actions,
             if (get_label_id(&tmp_key, &act_resources->ct_action_label_id)) {
                 return -1;
             }
-            set_value = act_resources->ct_match_label_id == ZERO_LABEL_ID
-                ? 0 : act_resources->ct_match_label_id;
+            set_value = act_resources->ct_action_label_id == ZERO_LABEL_ID
+                ? 0 : act_resources->ct_action_label_id;
             set_mask = reg_fields[REG_FIELD_CT_LABEL_ID].mask;
-            if (!add_action_set_reg_field(actions, REG_FIELD_CT_LABEL_ID,
+            if (add_action_set_reg_field(actions, REG_FIELD_CT_LABEL_ID,
                                           set_value, set_mask)) {
                 VLOG_DBG_RL(&rl, "Could not create label id");
                 return -1;
