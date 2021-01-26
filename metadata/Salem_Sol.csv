@@ -51,3 +51,5 @@ Change-Id=Icd05fcee8cc311d6a137aa1846bbd39eaae53e9e; subject=netdev-offload-dpdk
 Change-Id=I9acef302a42d2ff35768ce8ca96b759a24d208dc; subject=netdev-offload-dpdk: Mask arp fields for non nd / arp flows; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I5892922547474c10f7f8bc84b85e1703f344f256; subject=netdev-offload-dpdk: Mask igmp field for non nd / igmp flows; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I24c75f6da5ec4e744f3cf53e7af1556b0d368449; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I4fbf22b3043e15ebc408e4f1af0344c88276d145; subject=netdev-offload-dpdk: Fix ct-label set_reg_action; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Id080afe35fd8bc8e2396c1a1a8c1ad760de2165e; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
