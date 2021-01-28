@@ -476,9 +476,9 @@ struct dp_offload_thread_item {
 
 struct dp_offload_thread {
     PADDED_MEMBERS(CACHE_LINE_SIZE,
-        struct mpsc_queue queue;
-        atomic_uint64_t enqueued_item_add;
-        atomic_uint64_t enqueued_item;
+        struct mpsc_queue offload_queue;
+        atomic_uint64_t enqueued_offload_add;
+        atomic_uint64_t enqueued_offload;
         atomic_uint64_t ct_uni_dir_connections;
         atomic_uint64_t ct_bi_dir_connections;
         struct cmap megaflow_to_mark;
@@ -1124,8 +1124,8 @@ dp_netdev_offload_ct_stats_reset(void)
         atomic_init(&dp_offload_threads[i].ct_bi_dir_connections, 0);
     }
     if (netdev_is_e2e_cache_enabled()) {
-        atomic_init(&dp_offload_threads[i].enqueued_item, 0);
-        atomic_init(&dp_offload_threads[i].enqueued_item_add, 0);
+        atomic_init(&dp_offload_threads[i].enqueued_offload, 0);
+        atomic_init(&dp_offload_threads[i].enqueued_offload_add, 0);
         atomic_init(&dp_offload_threads[i].ct_uni_dir_connections, 0);
         atomic_init(&dp_offload_threads[i].ct_bi_dir_connections, 0);
     }
@@ -1143,11 +1143,11 @@ dp_netdev_offload_init(void)
                                      netdev_is_e2e_cache_enabled(),
                                      sizeof *dp_offload_threads);
         for (i = 0; i < netdev_offload_thread_nb(); i++) {
-            mpsc_queue_init(&dp_offload_threads[i].queue);
+            mpsc_queue_init(&dp_offload_threads[i].offload_queue);
             cmap_init(&dp_offload_threads[i].megaflow_to_mark);
             cmap_init(&dp_offload_threads[i].mark_to_flow);
-            atomic_init(&dp_offload_threads[i].enqueued_item, 0);
-            atomic_init(&dp_offload_threads[i].enqueued_item_add, 0);
+            atomic_init(&dp_offload_threads[i].enqueued_offload, 0);
+            atomic_init(&dp_offload_threads[i].enqueued_offload_add, 0);
             ovs_thread_create("hw_offload",
                               dp_netdev_flow_offload_main,
                               &dp_offload_threads[i]);
@@ -1184,7 +1184,7 @@ dp_netdev_offload_queue_full(void)
 
     for (tid = 0; tid < netdev_offload_thread_nb(); tid++) {
         total_add +=
-            atomic_count_get64(&dp_offload_threads[tid].enqueued_item_add);
+            atomic_count_get64(&dp_offload_threads[tid].enqueued_offload_add);
     }
 
     return total_add > offload_queue_size;
@@ -1214,10 +1214,10 @@ dp_netdev_append_ct_offload(struct ct_flow_offload_item *offload)
     i = netdev_offload_ufid_to_thread_id(
                                     ovs_u128_xor(offload[CT_DIR_INIT].ufid,
                                                  offload[CT_DIR_REP].ufid));
-    mpsc_queue_insert(&dp_offload_threads[i].queue, &offload_item->node);
-    atomic_count_inc64(&dp_offload_threads[i].enqueued_item);
+    mpsc_queue_insert(&dp_offload_threads[i].offload_queue, &offload_item->node);
+    atomic_count_inc64(&dp_offload_threads[i].enqueued_offload);
     if (offload->op == DP_NETDEV_FLOW_OFFLOAD_OP_ADD) {
-        atomic_count_inc64(&dp_offload_threads[i].enqueued_item_add);
+        atomic_count_inc64(&dp_offload_threads[i].enqueued_offload_add);
     }
 }
 
@@ -3082,10 +3082,10 @@ dp_netdev_append_flow_offload(struct dp_flow_offload_item *offload)
 
     dp_netdev_offload_init();
     i = netdev_offload_ufid_to_thread_id(offload->flow->mega_ufid);
-    mpsc_queue_insert(&dp_offload_threads[i].queue, &offload_item->node);
-    atomic_count_inc64(&dp_offload_threads[i].enqueued_item);
+    mpsc_queue_insert(&dp_offload_threads[i].offload_queue, &offload_item->node);
+    atomic_count_inc64(&dp_offload_threads[i].enqueued_offload);
     if (offload->op == DP_NETDEV_FLOW_OFFLOAD_OP_ADD) {
-        atomic_count_inc64(&dp_offload_threads[i].enqueued_item_add);
+        atomic_count_inc64(&dp_offload_threads[i].enqueued_offload_add);
     }
 }
 
@@ -3492,7 +3492,7 @@ dp_netdev_ct_offload_handle(struct dp_offload_thread_item *offload_item)
     ofl_thread = &dp_offload_threads[netdev_offload_thread_id()];
 
     if (ct_offload[CT_DIR_INIT].op == DP_NETDEV_FLOW_OFFLOAD_OP_ADD) {
-        atomic_count_dec64(&ofl_thread->enqueued_item_add);
+        atomic_count_dec64(&ofl_thread->enqueued_offload_add);
     }
 
     if (ct_offload[CT_DIR_INIT].op == DP_NETDEV_FLOW_OFFLOAD_OP_ADD &&
@@ -3566,23 +3566,24 @@ dp_netdev_offload_flush_handle(struct dp_offload_thread_item *item)
 static void *
 dp_netdev_flow_offload_main(void *arg)
 {
+    enum mpsc_queue_poll_result offload_poll_result;
     struct dp_offload_thread_item *offload_item;
     struct dp_offload_thread *ofl_thread = arg;
-    enum mpsc_queue_poll_result poll_result;
+    struct mpsc_queue *offload_queue;
     long long int next_rcu_quiesce;
-    struct mpsc_queue *queue;
     uint64_t backoff;
     const char *op;
     int ret;
 
-    queue = &ofl_thread->queue;
-    mpsc_queue_acquire(queue);
+    offload_queue = &ofl_thread->offload_queue;
+    mpsc_queue_acquire(offload_queue);
 
     backoff = DP_NETDEV_OFFLOAD_BACKOFF_MIN;
     for (;;) {
-        struct mpsc_queue_node *node;
+        struct mpsc_queue_node *offload_node;
 
-        while ((poll_result = mpsc_queue_poll(queue, &node)) ==
+        while ((offload_poll_result = mpsc_queue_poll(offload_queue,
+                                                      &offload_node)) ==
                MPSC_QUEUE_EMPTY) {
             xnanosleep(backoff * 1E6);
             if (backoff < DP_NETDEV_OFFLOAD_BACKOFF_MAX) {
@@ -3593,13 +3594,14 @@ dp_netdev_flow_offload_main(void *arg)
         backoff = DP_NETDEV_OFFLOAD_BACKOFF_MIN;
         next_rcu_quiesce = time_msec() + DP_NETDEV_OFFLOAD_QUIESCE_INTERVAL_MS;
         do {
-            if (poll_result == MPSC_QUEUE_RETRY) {
+            if (offload_poll_result == MPSC_QUEUE_RETRY) {
                 continue;
             }
 
-            offload_item = CONTAINER_OF(node, struct dp_offload_thread_item,
+            offload_item = CONTAINER_OF(offload_node,
+                                        struct dp_offload_thread_item,
                                         node);
-            atomic_count_dec64(&ofl_thread->enqueued_item);
+            atomic_count_dec64(&ofl_thread->enqueued_offload);
 
             if (offload_item->type == DP_FLOW_OFFLOAD_ITEM) {
                 struct dp_flow_offload_item *dp_offload =
@@ -3608,7 +3610,7 @@ dp_netdev_flow_offload_main(void *arg)
                 switch (dp_offload->op) {
                 case DP_NETDEV_FLOW_OFFLOAD_OP_ADD:
                     op = "add";
-                    atomic_count_dec64(&ofl_thread->enqueued_item_add);
+                    atomic_count_dec64(&ofl_thread->enqueued_offload_add);
                     ret = dp_netdev_flow_offload_put(offload_item);
                     break;
                 case DP_NETDEV_FLOW_OFFLOAD_OP_MOD:
@@ -3642,7 +3644,8 @@ dp_netdev_flow_offload_main(void *arg)
                     next_rcu_quiesce += DP_NETDEV_OFFLOAD_QUIESCE_INTERVAL_MS;
                 }
             }
-        } while ((poll_result = mpsc_queue_poll(queue, &node)) !=
+        } while ((offload_poll_result = mpsc_queue_poll(offload_queue,
+                                                        &offload_node)) !=
                  MPSC_QUEUE_EMPTY);
     }
 
@@ -3743,8 +3746,8 @@ dp_netdev_offload_flush_enqueue(struct dp_netdev *dp,
         flush->netdev = netdev;
         flush->barrier = barrier;
 
-        mpsc_queue_insert(&dp_offload_threads[tid].queue, &item->node);
-        atomic_count_inc64(&dp_offload_threads[tid].enqueued_item);
+        mpsc_queue_insert(&dp_offload_threads[tid].offload_queue, &item->node);
+        atomic_count_inc64(&dp_offload_threads[tid].enqueued_offload);
     }
 }
 
@@ -5232,7 +5235,7 @@ dpif_netdev_offload_stats_get(struct dpif *dpif,
                               struct netdev_custom_stats *stats)
 {
     enum {
-        DP_NETDEV_HW_OFFLOADS_STATS_ENQUEUED,
+        DP_NETDEV_HW_OFFLOADS_STATS_ENQUEUED_OFFLOADS,
         DP_NETDEV_HW_OFFLOADS_STATS_INSERTED,
         DP_NETDEV_HW_OFFLOADS_STATS_CT_UNI_DIR_CONNS,
         DP_NETDEV_HW_OFFLOADS_STATS_CT_BI_DIR_CONNS,
@@ -5241,7 +5244,7 @@ dpif_netdev_offload_stats_get(struct dpif *dpif,
         const char *name;
         uint64_t total;
     } hwol_stats[] = {
-        [DP_NETDEV_HW_OFFLOADS_STATS_ENQUEUED] =
+        [DP_NETDEV_HW_OFFLOADS_STATS_ENQUEUED_OFFLOADS] =
             { "     Enqueued offloads", 0 },
         [DP_NETDEV_HW_OFFLOADS_STATS_INSERTED] =
             { "     Inserted offloads", 0 },
@@ -5290,8 +5293,8 @@ dpif_netdev_offload_stats_get(struct dpif *dpif,
         memset(counts, 0, sizeof(counts));
         counts[DP_NETDEV_HW_OFFLOADS_STATS_INSERTED] = nb_offloads[tid];
         if (dp_offload_threads != NULL) {
-            atomic_read_relaxed(&dp_offload_threads[tid].enqueued_item,
-                                &counts[DP_NETDEV_HW_OFFLOADS_STATS_ENQUEUED]);
+            atomic_read_relaxed(&dp_offload_threads[tid].enqueued_offload,
+                                &counts[DP_NETDEV_HW_OFFLOADS_STATS_ENQUEUED_OFFLOADS]);
             atomic_read_relaxed(&dp_offload_threads[tid].ct_uni_dir_connections,
                                 &counts[DP_NETDEV_HW_OFFLOADS_STATS_CT_UNI_DIR_CONNS]);
             atomic_read_relaxed(&dp_offload_threads[tid].ct_bi_dir_connections,
