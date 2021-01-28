@@ -3231,6 +3231,9 @@ parse_flow_match(struct netdev *netdev,
             memset(&match->wc.masks.arp_tha, 0,
                    sizeof match->wc.masks.arp_tha);
         }
+        if (!is_igmp(&match->flow, NULL)) {
+            match->wc.masks.igmp_group_ip4 = 0;
+        }
     }
 
     if (netdev_vport_is_vport_class(netdev->netdev_class)) {
