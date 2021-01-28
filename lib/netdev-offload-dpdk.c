@@ -3222,6 +3222,10 @@ parse_flow_match(struct netdev *netdev,
     if (!flow_tnl_dst_is_set(&match->flow.tunnel)) {
         memset(&consumed_masks->tunnel, 0, sizeof consumed_masks->tunnel);
     }
+    if (!is_nd(&match->flow, NULL)) {
+        memset(&match->wc.masks.nd_target, 0,
+               sizeof match->wc.masks.nd_target);
+    }
 
     if (netdev_vport_is_vport_class(netdev->netdev_class)) {
         act_vars->vport = match->flow.in_port.odp_port;
