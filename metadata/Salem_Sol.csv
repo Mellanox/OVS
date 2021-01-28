@@ -47,3 +47,7 @@ Change-Id=I347a23bddaa8cf33628912c62a9db25b54cba58e; subject=netdev-offload: Cha
 Change-Id=Ib918005eec5dbdd4b20b46029f244c21330d9c57; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=Ic54620a465c1655a24487c80d59754bd88d33b5c; subject=netdev-offload-dpdk: Map ct label zero; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I622f43711fe24f1f2730ff58add9abe120f94f09; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Icd05fcee8cc311d6a137aa1846bbd39eaae53e9e; subject=netdev-offload-dpdk: Mask nd_target field for non nd flows; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I9acef302a42d2ff35768ce8ca96b759a24d208dc; subject=netdev-offload-dpdk: Mask arp fields for non nd / arp flows; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I5892922547474c10f7f8bc84b85e1703f344f256; subject=netdev-offload-dpdk: Mask igmp field for non nd / igmp flows; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I24c75f6da5ec4e744f3cf53e7af1556b0d368449; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
