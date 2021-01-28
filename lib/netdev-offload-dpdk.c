@@ -3225,6 +3225,12 @@ parse_flow_match(struct netdev *netdev,
     if (!is_nd(&match->flow, NULL)) {
         memset(&match->wc.masks.nd_target, 0,
                sizeof match->wc.masks.nd_target);
+        if (!is_arp(&match->flow)) {
+            memset(&match->wc.masks.arp_sha, 0,
+                   sizeof match->wc.masks.arp_sha);
+            memset(&match->wc.masks.arp_tha, 0,
+                   sizeof match->wc.masks.arp_tha);
+        }
     }
 
     if (netdev_vport_is_vport_class(netdev->netdev_class)) {
