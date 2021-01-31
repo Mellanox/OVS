@@ -3713,21 +3713,44 @@ add_count_action(struct flow_actions *actions,
     return 0;
 }
 
-static int
+static void
 add_port_id_action(struct flow_actions *actions,
-                   struct netdev *outdev)
+                   int outdev_id)
 {
     struct rte_flow_action_port_id *port_id;
-    int outdev_id;
 
-    outdev_id = netdev_dpdk_get_port_id(outdev);
-    if (outdev_id < 0) {
-        return -1;
-    }
     port_id = xzalloc(sizeof *port_id);
     port_id->id = outdev_id;
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_PORT_ID, port_id);
+}
+
+static int
+get_netdev_by_port(struct netdev *netdev,
+                   const struct nlattr *nla,
+                   int *outdev_id,
+                   struct netdev **outdev)
+{
+    odp_port_t port;
+
+    port = nl_attr_get_odp_port(nla);
+    *outdev = netdev_ports_get(port, netdev->dpif_type);
+    if (!*outdev) {
+        VLOG_DBG_RL(&rl, "Cannot find netdev for odp port %"PRIu32, port);
+        return -1;
+    }
+    if (!netdev_flow_api_equals(netdev, *outdev)) {
+        goto err;
+    }
+    *outdev_id = netdev_dpdk_get_port_id(*outdev);
+    if (*outdev_id < 0) {
+        goto err;
+    }
     return 0;
+err:
+    VLOG_DBG_RL(&rl, "%s: Output to port \'%s\' cannot be offloaded.",
+                netdev_get_name(netdev), netdev_get_name(*outdev));
+    netdev_close(*outdev);
+    return -1;
 }
 
 static int
@@ -3736,21 +3759,14 @@ add_output_action(struct netdev *netdev,
                   const struct nlattr *nla)
 {
     struct netdev *outdev;
-    odp_port_t port;
+    int outdev_id;
     int ret = 0;
 
-    port = nl_attr_get_odp_port(nla);
-    outdev = netdev_ports_get(port, netdev->dpif_type);
-    if (outdev == NULL) {
-        VLOG_DBG_RL(&rl, "Cannot find netdev for odp port %"PRIu32, port);
+    if (get_netdev_by_port(netdev, nla, &outdev_id, &outdev)) {
         return -1;
     }
-    if (!netdev_flow_api_equals(netdev, outdev) ||
-        add_port_id_action(actions, outdev)) {
-        VLOG_DBG_RL(&rl, "%s: Output to port \'%s\' cannot be offloaded.",
-                    netdev_get_name(netdev), netdev_get_name(outdev));
-        ret = -1;
-    }
+    add_port_id_action(actions, outdev_id);
+
     netdev_close(outdev);
     return ret;
 }
