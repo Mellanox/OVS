@@ -3563,46 +3563,58 @@ dp_netdev_offload_flush_handle(struct dp_offload_thread_item *item)
 #define DP_NETDEV_OFFLOAD_BACKOFF_MAX 64
 #define DP_NETDEV_OFFLOAD_QUIESCE_INTERVAL_MS 10
 
+static void
+dp_netdev_offload_poll_queues(struct dp_offload_thread *ofl_thread,
+                              struct dp_offload_thread_item **offload_item)
+{
+    struct mpsc_queue_node *queue_node;
+    struct mpsc_queue *offload_queue;
+    uint64_t backoff;
+
+    offload_queue = &ofl_thread->offload_queue;
+
+    *offload_item = NULL;
+
+    backoff = DP_NETDEV_OFFLOAD_BACKOFF_MIN;
+
+    while (1) {
+        queue_node = mpsc_queue_pop(offload_queue);
+        if (queue_node != NULL) {
+            *offload_item = CONTAINER_OF(queue_node,
+                                         struct dp_offload_thread_item, node);
+            atomic_count_dec64(&ofl_thread->enqueued_offload);
+            return;
+        }
+
+        /* The thread is flagged as quiescent during xnanosleep(). */
+        xnanosleep(backoff * 1E6);
+        if (backoff < DP_NETDEV_OFFLOAD_BACKOFF_MAX) {
+            backoff <<= 1;
+        }
+    }
+}
+
 static void *
 dp_netdev_flow_offload_main(void *arg)
 {
-    enum mpsc_queue_poll_result offload_poll_result;
     struct dp_offload_thread_item *offload_item;
     struct dp_offload_thread *ofl_thread = arg;
     struct mpsc_queue *offload_queue;
     long long int next_rcu_quiesce;
-    uint64_t backoff;
     const char *op;
     int ret;
 
     offload_queue = &ofl_thread->offload_queue;
     mpsc_queue_acquire(offload_queue);
 
-    backoff = DP_NETDEV_OFFLOAD_BACKOFF_MIN;
+    next_rcu_quiesce = time_msec() + DP_NETDEV_OFFLOAD_QUIESCE_INTERVAL_MS;
+
     for (;;) {
-        struct mpsc_queue_node *offload_node;
+        dp_netdev_offload_poll_queues(ofl_thread, &offload_item);
 
-        while ((offload_poll_result = mpsc_queue_poll(offload_queue,
-                                                      &offload_node)) ==
-               MPSC_QUEUE_EMPTY) {
-            xnanosleep(backoff * 1E6);
-            if (backoff < DP_NETDEV_OFFLOAD_BACKOFF_MAX) {
-                backoff <<= 1;
-            }
-        }
+        ovs_assert(offload_item != NULL);
 
-        backoff = DP_NETDEV_OFFLOAD_BACKOFF_MIN;
-        next_rcu_quiesce = time_msec() + DP_NETDEV_OFFLOAD_QUIESCE_INTERVAL_MS;
-        do {
-            if (offload_poll_result == MPSC_QUEUE_RETRY) {
-                continue;
-            }
-
-            offload_item = CONTAINER_OF(offload_node,
-                                        struct dp_offload_thread_item,
-                                        node);
-            atomic_count_dec64(&ofl_thread->enqueued_offload);
-
+        if (offload_item != NULL) {
             if (offload_item->type == DP_FLOW_OFFLOAD_ITEM) {
                 struct dp_flow_offload_item *dp_offload =
                         &offload_item->data->flow_offload;
@@ -3637,16 +3649,14 @@ dp_netdev_flow_offload_main(void *arg)
             }
 
             dp_netdev_offload_item_unref(offload_item);
+        }
 
-            /* Do RCU synchronization at fixed interval. */
-            if (time_msec() > next_rcu_quiesce) {
-                if (!ovsrcu_try_quiesce()) {
-                    next_rcu_quiesce += DP_NETDEV_OFFLOAD_QUIESCE_INTERVAL_MS;
-                }
+        /* Do RCU synchronization at fixed interval. */
+        if (time_msec() > next_rcu_quiesce) {
+            if (!ovsrcu_try_quiesce()) {
+                next_rcu_quiesce += DP_NETDEV_OFFLOAD_QUIESCE_INTERVAL_MS;
             }
-        } while ((offload_poll_result = mpsc_queue_poll(offload_queue,
-                                                        &offload_node)) !=
-                 MPSC_QUEUE_EMPTY);
+        }
     }
 
     return NULL;
