@@ -474,6 +474,49 @@ struct dp_offload_thread_item {
     union dp_offload_thread_data data[0];
 };
 
+/* This struct holds the e2e-cache statistic counters
+ * generated_trcs = Amount of trace messages generated/dispatched to E2E cache.
+ * processed_trcs = Amount of trace messages processed by E2E cache.
+ * discarded_trcs = Amount of trace messages discarded by E2E cache.
+ * aborted_trcs = Amount of trace messages aborted by E2E cache.
+ * throttled_trcs = Amount of trace messages throttled due to high message
+ *                  rate.
+ * queue_trcs = Amount of trace messages in E2E cache queue.
+ * overflow_trcs = Amount of trace messages dropped due to
+ *                             queue overflow.
+ * flow_add_msgs = Amount of new flow messages received by E2E cache.
+ * flow_del_msgs = Amount of delete flow messages received by E2E cache.
+ * flush_flow_msgs = Amount of flush flow messages received by E2E cache.
+ * succ_merged_flows = Amount of successfully merged flows.
+ * merge_rej_flows = Amount of flows rejected by the merge engine.
+ * add_merged_flow_hw = Amount of add merged flow messages dispatched to
+ *                      HW offload.
+ * del_merged_flow_hw = Amount of delete merged flow messages dispatched to
+ *                      HW offload.
+ * add_ct_flow_hw = Amount of successful CT offload operations to MT.
+ * add_ct_flow_err = Amount of failed CT offload operations MT.
+ */
+struct e2e_cache_stats {
+    atomic_count generated_trcs;
+    uint32_t processed_trcs;
+    atomic_count discarded_trcs;
+    atomic_count aborted_trcs;
+    atomic_count throttled_trcs;
+    atomic_count queue_trcs;
+    atomic_count overflow_trcs;
+    atomic_count flow_add_msgs;
+    atomic_count flow_del_msgs;
+    uint32_t flush_flow_msgs;
+    uint32_t succ_merged_flows;
+    uint32_t merge_rej_flows;
+    uint32_t add_merged_flow_hw;
+    uint32_t del_merged_flow_hw;
+    uint32_t add_ct_mt_flow_hw;
+    uint32_t del_ct_mt_flow_hw;
+    uint32_t add_ct_mt_flow_err;
+    uint32_t del_ct_mt_flow_err;
+};
+
 struct dp_offload_thread {
     PADDED_MEMBERS(CACHE_LINE_SIZE,
         struct mpsc_queue offload_queue;
@@ -483,6 +526,7 @@ struct dp_offload_thread {
         atomic_uint64_t ct_bi_dir_connections;
         struct cmap megaflow_to_mark;
         struct cmap mark_to_flow;
+        struct e2e_cache_stats e2e_stats;
     );
 };
 
@@ -1132,6 +1176,29 @@ dp_netdev_offload_ct_stats_reset(void)
 }
 
 static void
+dp_netdev_e2e_offload_init(struct e2e_cache_stats *e2e_stats)
+{
+    atomic_count_init(&e2e_stats->generated_trcs, 0);
+    e2e_stats->processed_trcs = 0;
+    atomic_count_init(&e2e_stats->discarded_trcs, 0);
+    atomic_count_init(&e2e_stats->aborted_trcs, 0);
+    atomic_count_init(&e2e_stats->throttled_trcs, 0);
+    atomic_count_init(&e2e_stats->queue_trcs, 0);
+    atomic_count_init(&e2e_stats->overflow_trcs, 0);
+    atomic_count_init(&e2e_stats->flow_add_msgs, 0);
+    atomic_count_init(&e2e_stats->flow_del_msgs, 0);
+    e2e_stats->flush_flow_msgs = 0;
+    e2e_stats->succ_merged_flows = 0;
+    e2e_stats->merge_rej_flows = 0;
+    e2e_stats->add_merged_flow_hw = 0;
+    e2e_stats->del_merged_flow_hw = 0;
+    e2e_stats->add_ct_mt_flow_hw = 0;
+    e2e_stats->del_ct_mt_flow_hw = 0;
+    e2e_stats->add_ct_mt_flow_err = 0;
+    e2e_stats->del_ct_mt_flow_err = 0;
+}
+
+static void
 dp_netdev_offload_init(void)
 {
     static struct ovsthread_once offload_thread_start =
@@ -1148,6 +1215,7 @@ dp_netdev_offload_init(void)
             cmap_init(&dp_offload_threads[i].mark_to_flow);
             atomic_init(&dp_offload_threads[i].enqueued_offload, 0);
             atomic_init(&dp_offload_threads[i].enqueued_offload_add, 0);
+            dp_netdev_e2e_offload_init(&dp_offload_threads[i].e2e_stats);
             ovs_thread_create("hw_offload",
                               dp_netdev_flow_offload_main,
                               (void *)(uintptr_t) i);
@@ -5244,16 +5312,50 @@ dpif_netdev_operate(struct dpif *dpif, struct dpif_op **ops, size_t n_ops,
     }
 }
 
+static struct ovs_mutex flows_map_mutex = OVS_MUTEX_INITIALIZER;
+static struct hmap flows_map OVS_GUARDED_BY(flows_map_mutex) =
+    HMAP_INITIALIZER(&flows_map);
+static atomic_count flows_map_count = ATOMIC_COUNT_INIT(0);
+static struct ovs_mutex merged_flows_map_mutex = OVS_MUTEX_INITIALIZER;
+static struct hmap merged_flows_map OVS_GUARDED_BY(merged_flows_map_mutex) =
+    HMAP_INITIALIZER(&merged_flows_map);
+static atomic_count merged_flows_map_count = ATOMIC_COUNT_INIT(0);
+
+
 static int
 dpif_netdev_offload_stats_get(struct dpif *dpif,
                               struct netdev_custom_stats *stats,
-                              bool verbose OVS_UNUSED)
+                              bool verbose)
 {
     enum {
         DP_NETDEV_HW_OFFLOADS_STATS_ENQUEUED_OFFLOADS,
         DP_NETDEV_HW_OFFLOADS_STATS_INSERTED,
         DP_NETDEV_HW_OFFLOADS_STATS_CT_UNI_DIR_CONNS,
         DP_NETDEV_HW_OFFLOADS_STATS_CT_BI_DIR_CONNS,
+        DP_NETDEV_HW_OFFLOADS_STATS_LAST,
+    };
+    enum {
+        DP_NETDEV_E2E_STATS_GENERATED_TRCS,
+        DP_NETDEV_E2E_STATS_PROCESSED_TRCS,
+        DP_NETDEV_E2E_STATS_DISCARRDED_TRCS,
+        DP_NETDEV_E2E_STATS_ABORTED_TRCS,
+        DP_NETDEV_E2E_STATS_THROTTLED_TRCS,
+        DP_NETDEV_E2E_STATS_QUEUE_TRCS,
+        DP_NETDEV_E2E_STATS_OVERFLOW_TRCS,
+        DP_NETDEV_E2E_STATS_FLOW_ADDS,
+        DP_NETDEV_E2E_STATS_FLOW_DELS,
+        DP_NETDEV_E2E_STATS_FLOW_FLUSHS,
+        DP_NETDEV_E2E_STATS_SUC_MERGES,
+        DP_NETDEV_E2E_STATS_REJ_MERGES,
+        DP_NETDEV_E2E_STATS_HW_ADD_E2E_FLOWS,
+        DP_NETDEV_E2E_STATS_HW_DEL_E2E_FLOWS,
+        DP_NETDEV_E2E_STATS_MERGED_FLOWS,
+        DP_NETDEV_E2E_STATS_DB_FLOWS,
+        DP_NETDEV_E2E_STATS_CT_MT_ADDS,
+        DP_NETDEV_E2E_STATS_CT_MT_DELS,
+        DP_NETDEV_E2E_STATS_FAILED_CT_MT_ADDS,
+        DP_NETDEV_E2E_STATS_FAILED_CT_MT_DELS,
+        DP_NETDEV_E2E_STATS_LAST,
     };
     struct {
         const char *name;
@@ -5267,21 +5369,70 @@ dpif_netdev_offload_stats_get(struct dpif *dpif,
             { "CT uni-dir Connections", 0 },
         [DP_NETDEV_HW_OFFLOADS_STATS_CT_BI_DIR_CONNS] =
             { " CT bi-dir Connections", 0 },
-    };
+    }, e2e_stats[] = {
+        [DP_NETDEV_E2E_STATS_GENERATED_TRCS] =
+            { "      Generated traces", 0 },
+        [DP_NETDEV_E2E_STATS_PROCESSED_TRCS] =
+            { "      Processed traces", 0 },
+        [DP_NETDEV_E2E_STATS_DISCARRDED_TRCS] =
+            { "      Discarded traces", 0 },
+        [DP_NETDEV_E2E_STATS_ABORTED_TRCS] =
+            { "        Aborted traces", 0 },
+        [DP_NETDEV_E2E_STATS_THROTTLED_TRCS] =
+            { "      Throttled traces", 0 },
+        [DP_NETDEV_E2E_STATS_QUEUE_TRCS] =
+            { "          Queue traces", 0 },
+        [DP_NETDEV_E2E_STATS_OVERFLOW_TRCS] =
+            { "       Overflow traces", 0 },
+        [DP_NETDEV_E2E_STATS_FLOW_ADDS] =
+            { "     Flow add messages", 0 },
+        [DP_NETDEV_E2E_STATS_FLOW_DELS] =
+            { "     Flow del messages", 0 },
+        [DP_NETDEV_E2E_STATS_FLOW_FLUSHS] =
+            { "   Flow flush messages", 0 },
+        [DP_NETDEV_E2E_STATS_SUC_MERGES] =
+            { "     Successful merges", 0 },
+        [DP_NETDEV_E2E_STATS_REJ_MERGES] =
+            { "       Rejected merges", 0 },
+        [DP_NETDEV_E2E_STATS_HW_ADD_E2E_FLOWS] =
+            { "      HW add e2e flows", 0 },
+        [DP_NETDEV_E2E_STATS_HW_DEL_E2E_FLOWS] =
+            { "      HW del e2e flows", 0 },
+        [DP_NETDEV_E2E_STATS_MERGED_FLOWS] =
+            { "      Merged e2e flows", 0 },
+        [DP_NETDEV_E2E_STATS_DB_FLOWS] =
+            { "          e2e DB flows", 0 },
+        [DP_NETDEV_E2E_STATS_CT_MT_ADDS] =
+            { "            CT MT Adds", 0 },
+        [DP_NETDEV_E2E_STATS_CT_MT_DELS] =
+            { "            CT MT Dels", 0 },
+        [DP_NETDEV_E2E_STATS_FAILED_CT_MT_ADDS] =
+            { "     Failed CT MT Adds", 0 },
+        [DP_NETDEV_E2E_STATS_FAILED_CT_MT_DELS] =
+            { "     Failed CT MT Dels", 0 },
+    }, *cur_stats;
+
     struct dp_netdev *dp = get_dp_netdev(dpif);
     struct dp_netdev_port *port;
-    unsigned int nb_thread;
     uint64_t *port_nb_offloads;
+    unsigned int nb_thread;
+    unsigned int nb_counts;
     uint64_t *nb_offloads;
     unsigned int tid;
     size_t i;
+#define DP_NETDEV_STATS_TOTAL_COUNTS \
+    (ARRAY_SIZE(hwol_stats) + ARRAY_SIZE(e2e_stats))
 
     if (!netdev_is_flow_api_enabled()) {
         return EINVAL;
     }
 
     nb_thread = netdev_offload_thread_nb() + netdev_is_e2e_cache_enabled();
-    stats->size = ARRAY_SIZE(hwol_stats) * (nb_thread + 1);
+    nb_counts = ARRAY_SIZE(hwol_stats);
+    if (netdev_is_e2e_cache_enabled() && verbose) {
+        nb_counts += ARRAY_SIZE(e2e_stats);
+    }
+    stats->size = (nb_thread + 1) * nb_counts;
     stats->counters = xcalloc(stats->size, sizeof *stats->counters);
 
     nb_offloads = xcalloc(nb_thread, sizeof *nb_offloads);
@@ -5302,8 +5453,10 @@ dpif_netdev_offload_stats_get(struct dpif *dpif,
     free(port_nb_offloads);
 
     for (tid = 0; tid < nb_thread; tid++) {
-        uint64_t counts[ARRAY_SIZE(hwol_stats)];
-        size_t idx = ((tid + 1) * ARRAY_SIZE(hwol_stats));
+        uint64_t counts[DP_NETDEV_STATS_TOTAL_COUNTS];
+        uint64_t *e2e_counts = &counts[DP_NETDEV_HW_OFFLOADS_STATS_LAST];
+        size_t idx = (tid + 1) * nb_counts;
+        struct e2e_cache_stats *cur_e2e_stats;
 
         memset(counts, 0, sizeof(counts));
         counts[DP_NETDEV_HW_OFFLOADS_STATS_INSERTED] = nb_offloads[tid];
@@ -5314,23 +5467,75 @@ dpif_netdev_offload_stats_get(struct dpif *dpif,
                                 &counts[DP_NETDEV_HW_OFFLOADS_STATS_CT_UNI_DIR_CONNS]);
             atomic_read_relaxed(&dp_offload_threads[tid].ct_bi_dir_connections,
                                 &counts[DP_NETDEV_HW_OFFLOADS_STATS_CT_BI_DIR_CONNS]);
+
+            cur_e2e_stats = &dp_offload_threads[tid].e2e_stats;
+            e2e_counts[DP_NETDEV_E2E_STATS_GENERATED_TRCS] =
+                atomic_count_get(&cur_e2e_stats->generated_trcs);
+            e2e_counts[DP_NETDEV_E2E_STATS_PROCESSED_TRCS] =
+                cur_e2e_stats->processed_trcs;
+            e2e_counts[DP_NETDEV_E2E_STATS_DISCARRDED_TRCS] =
+                atomic_count_get(&cur_e2e_stats->discarded_trcs);
+            e2e_counts[DP_NETDEV_E2E_STATS_ABORTED_TRCS] =
+                atomic_count_get(&cur_e2e_stats->aborted_trcs);
+            e2e_counts[DP_NETDEV_E2E_STATS_THROTTLED_TRCS] =
+                atomic_count_get(&cur_e2e_stats->throttled_trcs);
+            e2e_counts[DP_NETDEV_E2E_STATS_QUEUE_TRCS] =
+                atomic_count_get(&cur_e2e_stats->queue_trcs);
+            e2e_counts[DP_NETDEV_E2E_STATS_OVERFLOW_TRCS] =
+                atomic_count_get(&cur_e2e_stats->overflow_trcs);
+            e2e_counts[DP_NETDEV_E2E_STATS_FLOW_ADDS] =
+                atomic_count_get(&cur_e2e_stats->flow_add_msgs);
+            e2e_counts[DP_NETDEV_E2E_STATS_FLOW_DELS] =
+                atomic_count_get(&cur_e2e_stats->flow_del_msgs);
+            e2e_counts[DP_NETDEV_E2E_STATS_FLOW_FLUSHS] =
+                cur_e2e_stats->flush_flow_msgs;
+            e2e_counts[DP_NETDEV_E2E_STATS_SUC_MERGES] =
+                cur_e2e_stats->succ_merged_flows;
+            e2e_counts[DP_NETDEV_E2E_STATS_REJ_MERGES] =
+                cur_e2e_stats->merge_rej_flows;
+            e2e_counts[DP_NETDEV_E2E_STATS_HW_ADD_E2E_FLOWS] =
+                cur_e2e_stats->add_merged_flow_hw;
+            e2e_counts[DP_NETDEV_E2E_STATS_HW_DEL_E2E_FLOWS] =
+                cur_e2e_stats->del_merged_flow_hw;
+            e2e_counts[DP_NETDEV_E2E_STATS_MERGED_FLOWS] =
+                atomic_count_get(&merged_flows_map_count);
+            e2e_counts[DP_NETDEV_E2E_STATS_DB_FLOWS] =
+                atomic_count_get(&flows_map_count);
+            e2e_counts[DP_NETDEV_E2E_STATS_CT_MT_ADDS] =
+                cur_e2e_stats->add_ct_mt_flow_hw;
+            e2e_counts[DP_NETDEV_E2E_STATS_CT_MT_DELS] =
+                cur_e2e_stats->del_ct_mt_flow_hw;
+            e2e_counts[DP_NETDEV_E2E_STATS_FAILED_CT_MT_ADDS] =
+                cur_e2e_stats->add_ct_mt_flow_err;
+            e2e_counts[DP_NETDEV_E2E_STATS_FAILED_CT_MT_DELS] =
+                cur_e2e_stats->del_ct_mt_flow_err;
         }
 
-        for (i = 0; i < ARRAY_SIZE(hwol_stats); i++) {
+        for (i = 0; i < nb_counts; i++) {
+            cur_stats = i < DP_NETDEV_HW_OFFLOADS_STATS_LAST
+                        ? &hwol_stats[i]
+                        : &e2e_stats[i - DP_NETDEV_HW_OFFLOADS_STATS_LAST];
             snprintf(stats->counters[idx + i].name,
                      sizeof(stats->counters[idx + i].name),
-                     "  [%3u] %s", tid, hwol_stats[i].name);
+                     "  [%3u] %s", tid, cur_stats->name);
             stats->counters[idx + i].value = counts[i];
-            hwol_stats[i].total += counts[i];
+            cur_stats->total += counts[i];
         }
+        e2e_stats[DP_NETDEV_E2E_STATS_MERGED_FLOWS].total =
+            atomic_count_get(&merged_flows_map_count);
+        e2e_stats[DP_NETDEV_E2E_STATS_DB_FLOWS].total =
+            atomic_count_get(&flows_map_count);
     }
 
     free(nb_offloads);
 
-    for (i = 0; i < ARRAY_SIZE(hwol_stats); i++) {
+    for (i = 0; i < nb_counts; i++) {
+        cur_stats = i < DP_NETDEV_HW_OFFLOADS_STATS_LAST
+                    ? &hwol_stats[i]
+                    : &e2e_stats[i - DP_NETDEV_HW_OFFLOADS_STATS_LAST];
         snprintf(stats->counters[i].name, sizeof(stats->counters[i].name),
-                 "  Total %s", hwol_stats[i].name);
-        stats->counters[i].value = hwol_stats[i].total;
+                 "  Total %s", cur_stats->name);
+        stats->counters[i].value = cur_stats->total;
     }
 
     return 0;
@@ -8180,50 +8385,6 @@ struct e2e_cache_thread_msg_queues {
     struct mpsc_queue trace_queue;
 };
 
-/* This struct holds the e2e-cache statistic counters
- * generated_trcs = Amount of trace messages generated/dispatched to E2E cache.
- * processed_trcs = Amount of trace messages processed by E2E cache.
- * discarded_trcs = Amount of trace messages discarded by E2E cache.
- * aborted_trcs = Amount of trace messages aborted by E2E cache.
- * throttled_trcs = Amount of trace messages throttled due to high message
- *                  rate.
- * queue_trcs = Amount of trace messages in E2E cache queue.
- * overflow_trcs = Amount of trace messages dropped due to queue overflow.
- * flow_add_msgs = Amount of flow add messages received by E2E cache.
- * flow_del_msgs = Amount of flow del messages received by E2E cache.
- * flush_flow_msgs = Amount of flush flow messages received by E2E cache.
- * succ_merged_flows = Amount of successfully merged flows.
- * merge_rej_flows = Amount of flows rejected by the merge engine.
- * add_merged_flow_hw = Amount of add merged flow messages dispatched to
- *                      HW offload.
- * del_merged_flow_hw = Amount of delete merged flow messages dispatched to
- *                      HW offload.
- * merged_flows_in_cache = Amount of merged flows in E2E cache.
- * add_ct_flow_hw = Amount of successful CT offload operations to MT.
- * add_ct_flow_err = Amount of failed CT offload operations MT.
- */
-struct e2e_cache_stats {
-    atomic_count generated_trcs;
-    uint32_t processed_trcs;
-    atomic_count discarded_trcs;
-    atomic_count aborted_trcs;
-    atomic_count throttled_trcs;
-    atomic_count queue_trcs;
-    atomic_count overflow_trcs;
-    atomic_count flow_add_msgs;
-    atomic_count flow_del_msgs;
-    uint32_t flush_flow_msgs;
-    uint32_t succ_merged_flows;
-    uint32_t merge_rej_flows;
-    uint32_t add_merged_flow_hw;
-    uint32_t del_merged_flow_hw;
-    uint32_t merged_flows_in_cache;
-    uint32_t add_ct_mt_flow_hw;
-    uint32_t del_ct_mt_flow_hw;
-    uint32_t add_ct_mt_flow_err;
-    uint32_t del_ct_mt_flow_err;
-};
-
 static struct e2e_cache_thread_msg_queues e2e_cache_thread_msg_queues = {
     .ufid_queue =
         MPSC_QUEUE_INITIALIZER(&e2e_cache_thread_msg_queues.ufid_queue),
@@ -8280,58 +8441,29 @@ e2e_cache_counter_alloc(const struct flows_counter_key *key, size_t hash,
     return item;
 }
 
-static struct e2e_cache_stats e2e_stats = {
-    .generated_trcs = ATOMIC_COUNT_INIT(0),
-    .processed_trcs = 0,
-    .discarded_trcs = ATOMIC_COUNT_INIT(0),
-    .aborted_trcs = ATOMIC_COUNT_INIT(0),
-    .throttled_trcs = ATOMIC_COUNT_INIT(0),
-    .queue_trcs = ATOMIC_COUNT_INIT(0),
-    .overflow_trcs = ATOMIC_COUNT_INIT(0),
-    .flow_add_msgs = ATOMIC_COUNT_INIT(0),
-    .flow_del_msgs = ATOMIC_COUNT_INIT(0),
-    .flush_flow_msgs = 0,
-    .succ_merged_flows = 0,
-    .merge_rej_flows = 0,
-    .add_merged_flow_hw = 0,
-    .del_merged_flow_hw = 0,
-    .merged_flows_in_cache = 0,
-    .add_ct_mt_flow_hw = 0,
-    .del_ct_mt_flow_hw = 0,
-    .add_ct_mt_flow_err = 0,
-    .del_ct_mt_flow_err = 0,
-};
-
-static struct ovs_mutex flows_map_mutex = OVS_MUTEX_INITIALIZER;
-static struct hmap flows_map OVS_GUARDED_BY(flows_map_mutex) =
-    HMAP_INITIALIZER(&flows_map);
-
-static struct ovs_mutex merged_flows_map_mutex = OVS_MUTEX_INITIALIZER;
-static struct hmap merged_flows_map OVS_GUARDED_BY(merged_flows_map_mutex) =
-    HMAP_INITIALIZER(&merged_flows_map);
-
 static void
 dpif_netdev_dump_e2e_stats(struct ds *s)
 {
-    struct e2e_cache_stats *stats = &e2e_stats;
+    struct e2e_cache_stats *stats;
 
-    ds_put_format(s, "%-45s : %"PRIu32"", "generated traces",
+    stats = &dp_offload_threads[netdev_offload_thread_nb()].e2e_stats;
+    ds_put_format(s, "%-45s : %"PRIu32"", "generated messages",
                   atomic_count_get(&stats->generated_trcs));
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "processed traces",
+    ds_put_format(s, "\n%-45s : %"PRIu32"", "processed messages",
                   stats->processed_trcs);
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "discarded traces",
+    ds_put_format(s, "\n%-45s : %"PRIu32"", "discarded messages",
                   atomic_count_get(&stats->discarded_trcs));
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "aborted traces",
+    ds_put_format(s, "\n%-45s : %"PRIu32"", "aborted messages",
                   atomic_count_get(&stats->aborted_trcs));
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "throttled traces",
+    ds_put_format(s, "\n%-45s : %"PRIu32"", "throttled messages",
                   atomic_count_get(&stats->throttled_trcs));
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "traces in e2e queue",
+    ds_put_format(s, "\n%-45s : %"PRIu32"", "messages in e2e queue",
                   atomic_count_get(&stats->queue_trcs));
-    ds_put_format(s, "\n%-45s : %"PRIu32,"traces dropped overflow",
+    ds_put_format(s, "\n%-45s : %"PRIu32,"dropped due to e2e queue overflow",
                   atomic_count_get(&stats->overflow_trcs));
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "flow add messages",
+    ds_put_format(s, "\n%-45s : %"PRIu32"", "new flow messages",
                   atomic_count_get(&stats->flow_add_msgs));
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "flow del messages",
+    ds_put_format(s, "\n%-45s : %"PRIu32"", "delete flow messages",
                   atomic_count_get(&stats->flow_del_msgs));
     ds_put_format(s, "\n%-45s : %"PRIu32"", "flush flow messages",
                   stats->flush_flow_msgs);
@@ -8344,9 +8476,9 @@ dpif_netdev_dump_e2e_stats(struct ds *s)
     ds_put_format(s, "\n%-45s : %"PRIu32"", "delete merged flows messages to HW",
                   stats->del_merged_flow_hw);
     ds_put_format(s, "\n%-45s : %"PRIu32"", "merged flows in e2e cache",
-                  stats->merged_flows_in_cache);
-    ds_put_format(s, "\n%-45s : %"PRIu64"", "flows in e2e DB",
-                  (uint64_t)hmap_count(&flows_map));
+                  atomic_count_get(&merged_flows_map_count));
+    ds_put_format(s, "\n%-45s : %"PRIu32"", "flows in e2e DB",
+                  atomic_count_get(&flows_map_count));
     ds_put_format(s, "\n%-45s : %"PRIu32"", "successful CT MT flows to HW",
                   stats->add_ct_mt_flow_hw);
     ds_put_format(s, "\n%-45s : %"PRIu32"", "successful deleted CT MT flows "
@@ -8399,11 +8531,14 @@ e2e_cache_trace_add_flow(struct dp_packet *p,
 }
 
 static inline void
-e2e_cache_trace_msg_enqueue(struct e2e_cache_trace_message *msg)
+e2e_cache_trace_msg_enqueue(struct e2e_cache_trace_message *msg,
+                            unsigned int tid)
 {
+    struct e2e_cache_stats *e2e_stats = &dp_offload_threads[tid].e2e_stats;
+
     mpsc_queue_insert(&e2e_cache_thread_msg_queues.trace_queue,
                       &msg->node);
-    atomic_count_inc(&e2e_stats.queue_trcs);
+    atomic_count_inc(&e2e_stats->queue_trcs);
 }
 
 #define E2E_CACHE_BACKOFF_MS_MIN 1
@@ -8416,10 +8551,14 @@ e2e_cache_poll_queues(struct e2e_cache_ufid_msg **ufid_msg,
     struct mpsc_queue *trace_list = &e2e_cache_thread_msg_queues.trace_queue;
     struct mpsc_queue *ufid_list = &e2e_cache_thread_msg_queues.ufid_queue;
     enum mpsc_queue_poll_result trace_poll_result;
+    unsigned int tid = netdev_offload_thread_id();
     enum mpsc_queue_poll_result ufid_poll_result;
     struct mpsc_queue_node *trace_node;
     struct mpsc_queue_node *ufid_node;
+    struct e2e_cache_stats *e2e_stats;
     uint64_t backoff;
+
+    e2e_stats = &dp_offload_threads[tid].e2e_stats;
 
     *ufid_msg = NULL;
     *trace_msg = NULL;
@@ -8456,7 +8595,7 @@ e2e_cache_poll_queues(struct e2e_cache_ufid_msg **ufid_msg,
     if (trace_poll_result == MPSC_QUEUE_ITEM) {
         *trace_msg = CONTAINER_OF(trace_node,
                                   struct e2e_cache_trace_message, node);
-        atomic_count_dec(&e2e_stats.queue_trcs);
+        atomic_count_dec(&e2e_stats->queue_trcs);
     }
 }
 
@@ -8629,10 +8768,14 @@ e2e_cache_associate_counters(struct e2e_cache_merged_flow *merged_flow,
 static int
 e2e_cache_merged_flow_offload_del(struct e2e_cache_merged_flow *merged_flow)
 {
+    unsigned int tid = netdev_offload_thread_id();
     struct dp_offload_thread_item *offload_item;
     struct dp_netdev *dp = merged_flow->dp;
+    struct e2e_cache_stats *e2e_stats;
     struct dp_netdev_flow flow;
     int rv;
+
+    e2e_stats = &dp_offload_threads[tid].e2e_stats;
 
     ovs_assert(dp);
 
@@ -8647,7 +8790,7 @@ e2e_cache_merged_flow_offload_del(struct e2e_cache_merged_flow *merged_flow)
                                     DP_NETDEV_FLOW_OFFLOAD_OP_DEL, dp, &flow);
 
     merged_flow->dp = NULL;
-    e2e_stats.del_merged_flow_hw++;
+    e2e_stats->del_merged_flow_hw++;
     rv = dp_netdev_flow_offload_del(offload_item);
     free(offload_item);
     return rv;
@@ -8699,11 +8842,15 @@ e2e_cache_merged_flow_offload_put(struct dp_netdev *dp,
                                   struct e2e_cache_ovs_flow *mt_flows[],
                                   const struct e2e_cache_trace_info *trc_info)
 {
+    unsigned int tid = netdev_offload_thread_id();
     struct dp_offload_thread_item *offload_item;
     struct dp_flow_offload_item *flow_offload;
+    struct e2e_cache_stats *e2e_stats;
     struct dp_netdev_flow flow;
     union flow_in_port in_port;
     int err;
+
+    e2e_stats = &dp_offload_threads[tid].e2e_stats;
 
     in_port = merged_flow->match.flow.in_port;
 
@@ -8746,7 +8893,7 @@ e2e_cache_merged_flow_offload_put(struct dp_netdev *dp,
     }
 
     merged_flow->dp = dp;
-    e2e_stats.add_merged_flow_hw++;
+    e2e_stats->add_merged_flow_hw++;
     return 0;
 
 error:
@@ -8894,8 +9041,8 @@ e2e_cache_merged_flow_db_rem(struct e2e_cache_merged_flow *merged_flow)
 
     ovs_mutex_lock(&merged_flows_map_mutex);
     hmap_remove(&merged_flows_map, &merged_flow->node.in_hmap);
-    e2e_stats.merged_flows_in_cache--;
     ovs_mutex_unlock(&merged_flows_map_mutex);
+    atomic_count_dec(&merged_flows_map_count);
 }
 
 static void
@@ -8945,9 +9092,9 @@ e2e_cache_merged_flow_db_put(struct e2e_cache_merged_flow *merged_flow)
     }
 
     hmap_insert(&merged_flows_map, &merged_flow->node.in_hmap, hash);
-    e2e_stats.merged_flows_in_cache++;
 
     ovs_mutex_unlock(&merged_flows_map_mutex);
+    atomic_count_inc(&merged_flows_map_count);
     return 0;
 }
 
@@ -9047,6 +9194,7 @@ e2e_cache_flow_db_del_protected(const ovs_u128 *ufid, uint32_t hash,
     }
     e2e_cache_del_associated_merged_flows(flow, merged_flows_to_delete);
     hmap_remove(&flows_map, &flow->node);
+    atomic_count_dec(&flows_map_count);
     if (flow->offload_state == E2E_OL_STATE_FLOW) {
         ovsrcu_postpone(e2e_cache_flow_free, flow);
         flow = NULL;
@@ -9058,10 +9206,13 @@ static int
 e2e_cache_ct_flow_offload_del_mt(struct dp_netdev *dp,
                                  struct e2e_cache_ovs_flow *ct_flow)
 {
+    unsigned int tid = netdev_offload_thread_id();
     struct dp_offload_thread_item *offload_item;
+    struct e2e_cache_stats *e2e_stats;
     struct dp_netdev_flow flow;
     int ret;
 
+    e2e_stats = &dp_offload_threads[tid].e2e_stats;
     memset(&flow, 0, sizeof flow);
     *CONST_CAST(ovs_u128 *, &flow.mega_ufid) = ct_flow->ufid;
     CONST_CAST(struct flow *, &flow.flow)->in_port.odp_port =
@@ -9075,9 +9226,9 @@ e2e_cache_ct_flow_offload_del_mt(struct dp_netdev *dp,
     ret = dp_netdev_flow_offload_del(offload_item);
     free(offload_item);
     if (!ret) {
-        e2e_stats.del_ct_mt_flow_hw++;
+        e2e_stats->del_ct_mt_flow_hw++;
     } else {
-        e2e_stats.del_ct_mt_flow_err++;
+        e2e_stats->del_ct_mt_flow_err++;
     }
     return ret;
 }
@@ -9140,9 +9291,13 @@ e2e_cache_ct_flow_offload_add_mt(struct dp_netdev *dp,
                                  struct nlattr *actions,
                                  uint16_t *actions_size)
 {
+    unsigned int tid = netdev_offload_thread_id();
     struct ct_flow_offload_item offload;
     uint16_t max_actions_len = *actions_size;
+    struct e2e_cache_stats *e2e_stats;
     int ret;
+
+    e2e_stats = &dp_offload_threads[tid].e2e_stats;
 
     memset(&offload, 0, sizeof offload);
 
@@ -9167,10 +9322,10 @@ e2e_cache_ct_flow_offload_add_mt(struct dp_netdev *dp,
                                       ct_flow->actions_size);
     if (OVS_LIKELY(ret == 0)) {
         e2e_cache_flow_state_set(ct_flow, E2E_OL_STATE_CT_MT);
-        e2e_stats.add_ct_mt_flow_hw++;
+        e2e_stats->add_ct_mt_flow_hw++;
     } else {
         e2e_cache_flow_state_set(ct_flow, E2E_OL_STATE_CT_ERR);
-        e2e_stats.add_ct_mt_flow_err++;
+        e2e_stats->add_ct_mt_flow_err++;
     }
 
     *actions_size = max_actions_len;
@@ -9279,6 +9434,7 @@ e2e_cache_flow_db_put(struct e2e_cache_ufid_msg *ufid_msg)
     hmap_insert(&flows_map, &flow->node, hash);
 
     ovs_mutex_unlock(&flows_map_mutex);
+    atomic_count_inc(&flows_map_count);
 
     e2e_cache_del_merged_flows(&merged_flows_to_delete);
     return 0;
@@ -9288,8 +9444,11 @@ static int
 e2e_cache_flow_del(const ovs_u128 *ufid, struct dp_netdev *dp)
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 10);
+    unsigned int tid = netdev_offload_thread_nb();
     struct e2e_cache_ufid_msg *del_msg;
+    struct e2e_cache_stats *e2e_stats;
 
+    e2e_stats = &dp_offload_threads[tid].e2e_stats;
     VLOG_DBG_RL(&rl, "%s: ufid="UUID_FMT, __FUNCTION__,
                 UUID_ARGS((struct uuid *)ufid));
 
@@ -9305,7 +9464,7 @@ e2e_cache_flow_del(const ovs_u128 *ufid, struct dp_netdev *dp)
      */
     mpsc_queue_insert(&e2e_cache_thread_msg_queues.ufid_queue,
                       &del_msg->node);
-    atomic_count_inc(&e2e_stats.flow_del_msgs);
+    atomic_count_inc(&e2e_stats->flow_del_msgs);
     return 0;
 }
 
@@ -9314,7 +9473,11 @@ e2e_cache_flow_put(bool is_ct, const ovs_u128 *ufid, const void *match,
                    const struct nlattr *actions, size_t actions_len)
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 10);
+    unsigned int tid = netdev_offload_thread_nb();
     struct e2e_cache_ufid_msg *put_msg;
+    struct e2e_cache_stats *e2e_stats;
+
+    e2e_stats = &dp_offload_threads[tid].e2e_stats;
 
     VLOG_DBG_RL(&rl, "%s: ufid="UUID_FMT, __FUNCTION__,
                 UUID_ARGS((struct uuid *)ufid));
@@ -9336,7 +9499,7 @@ e2e_cache_flow_put(bool is_ct, const ovs_u128 *ufid, const void *match,
      */
     mpsc_queue_insert(&e2e_cache_thread_msg_queues.ufid_queue,
                       &put_msg->node);
-    atomic_count_inc(&e2e_stats.flow_add_msgs);
+    atomic_count_inc(&e2e_stats->flow_add_msgs);
     return 0;
 }
 
@@ -9344,7 +9507,11 @@ static int
 e2e_cache_flow_flush(struct netdev *netdev, struct ovs_barrier *barrier,
                      struct dp_netdev *dp)
 {
+    unsigned int tid = netdev_offload_thread_nb();
+    struct e2e_cache_stats *e2e_stats;
     struct e2e_cache_ufid_msg *msg;
+
+    e2e_stats = &dp_offload_threads[tid].e2e_stats;
 
     msg = xzalloc(sizeof *msg);
     msg->op = E2E_UFID_MSG_FLUSH;
@@ -9357,7 +9524,7 @@ e2e_cache_flow_flush(struct netdev *netdev, struct ovs_barrier *barrier,
      */
     mpsc_queue_insert(&e2e_cache_thread_msg_queues.ufid_queue,
                       &msg->node);
-    e2e_stats.flush_flow_msgs++;
+    e2e_stats->flush_flow_msgs++;
     return 0;
 }
 
@@ -9394,17 +9561,21 @@ static void
 e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
                                  struct dp_packet_batch *batch)
 {
+    unsigned int tid = netdev_offload_thread_nb();
     struct e2e_cache_trace_info *cur_trace_info;
     struct e2e_cache_trace_message *buffer;
+    struct e2e_cache_stats *e2e_stats;
     struct dp_packet *packet;
     uint32_t num_elements;
     size_t buffer_size;
 
+    e2e_stats = &dp_offload_threads[tid].e2e_stats;
+
     if (dp_netdev_e2e_cache_trace_q_size) {
-        uint32_t cur_q_size = atomic_count_get(&e2e_stats.queue_trcs);
+        uint32_t cur_q_size = atomic_count_get(&e2e_stats->queue_trcs);
 
         if (OVS_UNLIKELY(cur_q_size >= dp_netdev_e2e_cache_trace_q_size)) {
-            atomic_count_inc(&e2e_stats.overflow_trcs);
+            atomic_count_inc(&e2e_stats->overflow_trcs);
             return;
         }
     }
@@ -9432,7 +9603,7 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
         /* Don't send aborted traces */
         if (OVS_UNLIKELY(packet->e2e_trace_flags &
                          E2E_CACHE_TRACE_FLAG_ABORT)) {
-            atomic_count_inc(&e2e_stats.aborted_trcs);
+            atomic_count_inc(&e2e_stats->aborted_trcs);
             continue;
         }
         /* In case the packet had tnl_pop, we split the trace to the tnl_pop
@@ -9460,18 +9631,18 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
          * omitted from sending due to high messages rate.
          */
         if (packet->e2e_trace_flags & E2E_CACHE_TRACE_FLAG_THROTTLED) {
-            atomic_count_inc(&e2e_stats.throttled_trcs);
+            atomic_count_inc(&e2e_stats->throttled_trcs);
             continue;
         }
         /* Don't send "partial" traces due to overflow of the trace storage */
         if (OVS_UNLIKELY(packet->e2e_trace_flags &
                          E2E_CACHE_TRACE_FLAG_OVERFLOW)) {
-            atomic_count_inc(&e2e_stats.discarded_trcs);
+            atomic_count_inc(&e2e_stats->discarded_trcs);
             continue;
         }
         /* Send only traces for packet that passed conntrack */
         if (!packet->e2e_trace_ct_ufids) {
-            atomic_count_inc(&e2e_stats.discarded_trcs);
+            atomic_count_inc(&e2e_stats->discarded_trcs);
             continue;
         }
 
@@ -9492,8 +9663,8 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
     buffer->dp = dp;
     buffer->num_elements = num_elements;
 
-    e2e_cache_trace_msg_enqueue(buffer);
-    atomic_count_inc(&e2e_stats.generated_trcs);
+    e2e_cache_trace_msg_enqueue(buffer, tid);
+    atomic_count_inc(&e2e_stats->generated_trcs);
     return;
 
 out:
@@ -9604,7 +9775,7 @@ e2e_cache_process_trace_info(struct dp_netdev *dp,
         return -1;
     }
     num_flows = trc_info->num_elements;
-    if (e2e_stats.merged_flows_in_cache >= dp_netdev_e2e_cache_size) {
+    if (atomic_count_get(&merged_flows_map_count) >= dp_netdev_e2e_cache_size) {
         e2e_cache_offload_ct_mt_flows(dp, mt_flows, num_flows);
         return -1;
     }
@@ -9758,10 +9929,14 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev,
 static void *
 dp_netdev_e2e_cache_main(void *arg OVS_UNUSED)
 {
+    unsigned int tid = netdev_offload_thread_id();
     struct e2e_cache_trace_message *trace_msg;
     struct e2e_cache_ufid_msg *ufid_msg;
+    struct e2e_cache_stats *e2e_stats;
     uint32_t i, num_elements;
     long long int next_rcu;
+
+    e2e_stats = &dp_offload_threads[tid].e2e_stats;
 
     mpsc_queue_acquire(&e2e_cache_thread_msg_queues.ufid_queue);
     mpsc_queue_acquire(&e2e_cache_thread_msg_queues.trace_queue);
@@ -9790,7 +9965,7 @@ dp_netdev_e2e_cache_main(void *arg OVS_UNUSED)
             continue;
         }
 
-        e2e_stats.processed_trcs++;
+        e2e_stats->processed_trcs++;
         num_elements = trace_msg->num_elements;
         for (i = 0; i < num_elements; i++) {
             e2e_cache_process_trace_info((struct dp_netdev *)trace_msg->dp,
@@ -9810,7 +9985,7 @@ dp_netdev_e2e_cache_main(void *arg OVS_UNUSED)
 }
 #else
 #define e2e_cache_trace_add_flow(p, ufid) do { } while (0)
-#define e2e_cache_trace_msg_enqueue(m) do { } while (0)
+#define e2e_cache_trace_msg_enqueue(m, t) do { } while (0)
 #define e2e_cache_poll_queues() do { } while (0)
 #define e2e_cache_dispatch_trace_message(d, b) do { } while (0)
 #define e2e_cache_trace_tnl_pop(p) do { } while (0)
@@ -12358,8 +12533,12 @@ e2e_cache_merge_flows(struct e2e_cache_ovs_flow **flows,
                       struct e2e_cache_merged_flow *merged_flow,
                       struct ofpbuf *merged_actions)
 {
+    unsigned int tid = netdev_offload_thread_id();
+    struct e2e_cache_stats *e2e_stats;
+
+    e2e_stats = &dp_offload_threads[tid].e2e_stats;
     if (!e2e_cache_flows_are_valid(flows, num_flows)) {
-        e2e_stats.merge_rej_flows++;
+        e2e_stats->merge_rej_flows++;
         return -1;
     }
     e2e_cache_merge_match(flows, num_flows, &merged_flow->match);
@@ -12367,10 +12546,10 @@ e2e_cache_merge_flows(struct e2e_cache_ovs_flow **flows,
     uuid_set_bits_v4((struct uuid *) &merged_flow->ufid, UUID_ATTR_3);
     e2e_cache_merge_actions(flows, num_flows, merged_actions);
     if (OVS_UNLIKELY(merged_actions->size < sizeof(struct nlattr))) {
-        e2e_stats.merge_rej_flows++;
+        e2e_stats->merge_rej_flows++;
         return -1;
     }
-    e2e_stats.succ_merged_flows++;
+    e2e_stats->succ_merged_flows++;
     return 0;
 }
 #endif /* E2E_CACHE_ENABLED */
