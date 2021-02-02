@@ -342,7 +342,8 @@ struct dpif_class {
      * netdev statistics), but a status of hardware offload management:
      * how many offloads are currently waiting, inserted, etc. */
     int (*offload_stats_get)(struct dpif *dpif,
-                             struct netdev_custom_stats *stats);
+                             struct netdev_custom_stats *stats,
+                             bool verbose);
 
     /* Enables or disables receiving packets with dpif_recv() for 'dpif'.
      * Turning packet receive off and then back on is allowed to change Netlink

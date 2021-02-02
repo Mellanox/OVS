@@ -5242,7 +5242,8 @@ dpif_netdev_operate(struct dpif *dpif, struct dpif_op **ops, size_t n_ops,
 
 static int
 dpif_netdev_offload_stats_get(struct dpif *dpif,
-                              struct netdev_custom_stats *stats)
+                              struct netdev_custom_stats *stats,
+                              bool verbose OVS_UNUSED)
 {
     enum {
         DP_NETDEV_HW_OFFLOADS_STATS_ENQUEUED_OFFLOADS,

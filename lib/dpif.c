@@ -1452,10 +1452,11 @@ dpif_operate(struct dpif *dpif, struct dpif_op **ops, size_t n_ops,
 }
 
 int dpif_offload_stats_get(struct dpif *dpif,
-                           struct netdev_custom_stats *stats)
+                           struct netdev_custom_stats *stats,
+                           bool verbose)
 {
     return (dpif->dpif_class->offload_stats_get
-            ? dpif->dpif_class->offload_stats_get(dpif, stats)
+            ? dpif->dpif_class->offload_stats_get(dpif, stats, verbose)
             : EOPNOTSUPP);
 }
 

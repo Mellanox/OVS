@@ -1623,7 +1623,7 @@ dpctl_offload_stats_show(int argc, const char *argv[],
     }
 
     memset(&stats, 0, sizeof(stats));
-    error = dpif_offload_stats_get(dpif, &stats);
+    error = dpif_offload_stats_get(dpif, &stats, dpctl_p->verbosity);
     if (error) {
         dpctl_error(dpctl_p, error, "retrieving offload statistics");
         goto close_dpif;

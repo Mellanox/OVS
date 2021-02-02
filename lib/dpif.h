@@ -797,7 +797,8 @@ void dpif_operate(struct dpif *, struct dpif_op **ops, size_t n_ops,
  * using 'netdev_free_custom_stats_counters'.
  */
 int dpif_offload_stats_get(struct dpif *dpif,
-                           struct netdev_custom_stats *stats);
+                           struct netdev_custom_stats *stats,
+                           bool verbose);
 
 /* Upcalls. */
 
