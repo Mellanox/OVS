@@ -417,7 +417,7 @@ static void meter_unlock(const struct dp_netdev *dp, uint32_t meter_id)
 
 static struct dp_netdev_port *dp_netdev_lookup_port(const struct dp_netdev *dp,
                                                     odp_port_t)
-    OVS_REQ_WRLOCK(dp->port_rwlock);
+    OVS_REQ_RDLOCK(dp->port_rwlock);
 
 enum rxq_cycles_counter_type {
     RXQ_CYCLES_PROC_CURR,       /* Cycles spent successfully polling and
@@ -985,10 +985,10 @@ struct e2e_cache_merged_set {
 
 static int get_port_by_number(struct dp_netdev *dp, odp_port_t port_no,
                               struct dp_netdev_port **portp)
-    OVS_REQ_WRLOCK(dp->port_rwlock);
+    OVS_REQ_RDLOCK(dp->port_rwlock);
 static int get_port_by_name(struct dp_netdev *dp, const char *devname,
                             struct dp_netdev_port **portp)
-    OVS_REQ_WRLOCK(dp->port_rwlock);
+    OVS_REQ_RDLOCK(dp->port_rwlock);
 static void dp_netdev_free(struct dp_netdev *)
     OVS_REQUIRES(dp_netdev_mutex);
 static int do_add_port(struct dp_netdev *dp, const char *devname,
@@ -1054,7 +1054,7 @@ static void dp_netdev_offload_flush(struct dp_netdev *dp,
 static void dp_netdev_offload_barrier(struct dp_netdev *dp);
 
 static void reconfigure_datapath(struct dp_netdev *dp)
-    OVS_REQ_WRLOCK(dp->port_rwlock);
+    OVS_REQ_RDLOCK(dp->port_rwlock);
 static bool dp_netdev_pmd_try_ref(struct dp_netdev_pmd_thread *pmd);
 static void dp_netdev_pmd_unref(struct dp_netdev_pmd_thread *pmd);
 static void dp_netdev_pmd_flow_flush(struct dp_netdev_pmd_thread *pmd);
@@ -1754,7 +1754,7 @@ dpif_netdev_subtable_lookup_set(struct unixctl_conn *conn, int argc,
     struct dp_netdev_pmd_thread **pmd_list;
     sorted_poll_thread_list(dp, &pmd_list, &n);
 
-    /* take port mutex as HMAP iters over them. */
+    /* take port rwlock as HMAP iters over them. */
     ovs_rwlock_rdlock(&dp->port_rwlock);
 
     for (size_t i = 0; i < n; i++) {
@@ -2072,7 +2072,7 @@ create_dpif_netdev(struct dp_netdev *dp)
  * Return ODPP_NONE on failure. */
 static odp_port_t
 choose_port(struct dp_netdev *dp, const char *name)
-    OVS_REQ_WRLOCK(dp->port_rwlock)
+    OVS_REQ_RDLOCK(dp->port_rwlock)
 {
     uint32_t port_no;
 
@@ -2566,7 +2566,7 @@ is_valid_port_number(odp_port_t port_no)
 
 static struct dp_netdev_port *
 dp_netdev_lookup_port(const struct dp_netdev *dp, odp_port_t port_no)
-    OVS_REQ_WRLOCK(dp->port_rwlock)
+    OVS_REQ_RDLOCK(dp->port_rwlock)
 {
     struct dp_netdev_port *port;
 
@@ -2581,7 +2581,7 @@ dp_netdev_lookup_port(const struct dp_netdev *dp, odp_port_t port_no)
 static int
 get_port_by_number(struct dp_netdev *dp,
                    odp_port_t port_no, struct dp_netdev_port **portp)
-    OVS_REQ_WRLOCK(dp->port_rwlock)
+    OVS_REQ_RDLOCK(dp->port_rwlock)
 {
     if (!is_valid_port_number(port_no)) {
         *portp = NULL;
@@ -2616,7 +2616,7 @@ port_destroy(struct dp_netdev_port *port)
 static int
 get_port_by_name(struct dp_netdev *dp,
                  const char *devname, struct dp_netdev_port **portp)
-    OVS_REQ_WRLOCK(dp->port_rwlock)
+    OVS_REQ_RDLOCK(dp->port_rwlock)
 {
     struct dp_netdev_port *port;
 
@@ -2635,7 +2635,7 @@ get_port_by_name(struct dp_netdev *dp,
 /* Returns 'true' if there is a port with pmd netdev. */
 static bool
 has_pmd_port(struct dp_netdev *dp)
-    OVS_REQ_WRLOCK(dp->port_rwlock)
+    OVS_REQ_RDLOCK(dp->port_rwlock)
 {
     struct dp_netdev_port *port;
 
@@ -2704,7 +2704,7 @@ dpif_netdev_port_query_by_name(const struct dpif *dpif, const char *devname,
     struct dp_netdev_port *port;
     int error;
 
-    ovs_rwlock_wrlock(&dp->port_rwlock);
+    ovs_rwlock_rdlock(&dp->port_rwlock);
     error = get_port_by_name(dp, devname, &port);
     if (!error && dpif_port) {
         answer_port_query(port, dpif_port);
@@ -6056,7 +6056,7 @@ compare_rxq_cycles(const void *a, const void *b)
  * in the 'pmd' member of each rxq. */
 static void
 rxq_scheduling(struct dp_netdev *dp, bool pinned)
-    OVS_REQ_WRLOCK(dp->port_rwlock)
+    OVS_REQ_RDLOCK(dp->port_rwlock)
 {
     struct dp_netdev_port *port;
     struct rr_numa_list rr;
@@ -6200,7 +6200,7 @@ reload_affected_pmds(struct dp_netdev *dp)
 
 static void
 reconfigure_pmd_threads(struct dp_netdev *dp)
-    OVS_REQ_WRLOCK(dp->port_rwlock)
+    OVS_REQ_RDLOCK(dp->port_rwlock)
 {
     struct dp_netdev_pmd_thread *pmd;
     struct ovs_numa_dump *pmd_cores;
@@ -6298,7 +6298,7 @@ static void
 pmd_remove_stale_ports(struct dp_netdev *dp,
                        struct dp_netdev_pmd_thread *pmd)
     OVS_EXCLUDED(pmd->port_mutex)
-    OVS_REQ_WRLOCK(dp->port_rwlock)
+    OVS_REQ_RDLOCK(dp->port_rwlock)
 {
     struct rxq_poll *poll, *poll_next;
     struct tx_port *tx, *tx_next;
@@ -6328,7 +6328,7 @@ pmd_remove_stale_ports(struct dp_netdev *dp,
  * rxqs and assigns all rxqs/txqs to pmd threads. */
 static void
 reconfigure_datapath(struct dp_netdev *dp)
-    OVS_REQ_WRLOCK(dp->port_rwlock)
+    OVS_REQ_RDLOCK(dp->port_rwlock)
 {
     struct hmapx busy_threads = HMAPX_INITIALIZER(&busy_threads);
     struct dp_netdev_pmd_thread *pmd;
@@ -6512,7 +6512,7 @@ reconfigure_datapath(struct dp_netdev *dp)
 /* Returns true if one of the netdevs in 'dp' requires a reconfiguration */
 static bool
 ports_require_restart(const struct dp_netdev *dp)
-    OVS_REQ_WRLOCK(dp->port_rwlock)
+    OVS_REQ_RDLOCK(dp->port_rwlock)
 {
     struct dp_netdev_port *port;
 
@@ -6563,7 +6563,7 @@ variance(uint64_t a[], int n)
 static bool
 get_dry_run_variance(struct dp_netdev *dp, uint32_t *core_list,
                      uint32_t num_pmds, uint64_t *predicted_variance)
-    OVS_REQ_WRLOCK(dp->port_rwlock)
+    OVS_REQ_RDLOCK(dp->port_rwlock)
 {
     struct dp_netdev_port *port;
     struct dp_netdev_pmd_thread *pmd;
@@ -6679,7 +6679,7 @@ cleanup:
  * better distribution of load on PMDs. */
 static bool
 pmd_rebalance_dry_run(struct dp_netdev *dp)
-    OVS_REQ_WRLOCK(dp->port_rwlock)
+    OVS_REQ_RDLOCK(dp->port_rwlock)
 {
     struct dp_netdev_pmd_thread *pmd;
     uint64_t *curr_pmd_usage;
@@ -6774,7 +6774,7 @@ dpif_netdev_run(struct dpif *dpif)
     long long int now = time_msec();
     struct dp_netdev_pmd_thread *pmd;
 
-    ovs_rwlock_wrlock(&dp->port_rwlock);
+    ovs_rwlock_rdlock(&dp->port_rwlock);
     non_pmd = dp_netdev_get_pmd(dp, NON_PMD_CORE_ID);
     if (non_pmd) {
         ovs_mutex_lock(&dp->non_pmd_mutex);
@@ -6866,7 +6866,7 @@ dpif_netdev_wait(struct dpif *dpif)
     struct dp_netdev *dp = get_dp_netdev(dpif);
 
     ovs_mutex_lock(&dp_netdev_mutex);
-    ovs_rwlock_wrlock(&dp->port_rwlock);
+    ovs_rwlock_rdlock(&dp->port_rwlock);
     HMAP_FOR_EACH (port, node, &dp->ports) {
         netdev_wait_reconf_required(port->netdev);
         if (!netdev_is_pmd(port->netdev)) {
