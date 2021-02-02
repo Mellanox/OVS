@@ -8176,17 +8176,16 @@ struct e2e_cache_thread_msg_queues {
 };
 
 /* This struct holds the e2e-cache statistic counters
- * generated_msgs = Amount of trace messages generated/dispatched to E2E cache.
- * processed_msgs = Amount of trace messages processed by E2E cache.
- * discarded_msgs = Amount of trace messages discarded by E2E cache.
- * aborted_msgs = Amount of trace messages aborted by E2E cache.
- * throttled_msgs = Amount of trace messages throttled due to high message
+ * generated_trcs = Amount of trace messages generated/dispatched to E2E cache.
+ * processed_trcs = Amount of trace messages processed by E2E cache.
+ * discarded_trcs = Amount of trace messages discarded by E2E cache.
+ * aborted_trcs = Amount of trace messages aborted by E2E cache.
+ * throttled_trcs = Amount of trace messages throttled due to high message
  *                  rate.
- * trace_msgs_in_queue = Amount of trace messages in E2E cache queue.
- * trace_msgs_queue_overflow = Amount of trace messages dropped due to
- *                             queue overflow.
- * new_flow_msgs = Amount of new flow messages received by E2E cache.
- * del_flow_msgs = Amount of delete flow messages received by E2E cache.
+ * queue_trcs = Amount of trace messages in E2E cache queue.
+ * overflow_trcs = Amount of trace messages dropped due to queue overflow.
+ * flow_add_msgs = Amount of flow add messages received by E2E cache.
+ * flow_del_msgs = Amount of flow del messages received by E2E cache.
  * flush_flow_msgs = Amount of flush flow messages received by E2E cache.
  * succ_merged_flows = Amount of successfully merged flows.
  * merge_rej_flows = Amount of flows rejected by the merge engine.
@@ -8199,15 +8198,15 @@ struct e2e_cache_thread_msg_queues {
  * add_ct_flow_err = Amount of failed CT offload operations MT.
  */
 struct e2e_cache_stats {
-    atomic_count generated_msgs;
-    uint32_t processed_msgs;
-    atomic_count discarded_msgs;
-    atomic_count aborted_msgs;
-    atomic_count throttled_msgs;
-    atomic_count trace_msgs_in_queue;
-    atomic_count trace_msgs_queue_overflow;
-    atomic_count new_flow_msgs;
-    atomic_count del_flow_msgs;
+    atomic_count generated_trcs;
+    uint32_t processed_trcs;
+    atomic_count discarded_trcs;
+    atomic_count aborted_trcs;
+    atomic_count throttled_trcs;
+    atomic_count queue_trcs;
+    atomic_count overflow_trcs;
+    atomic_count flow_add_msgs;
+    atomic_count flow_del_msgs;
     uint32_t flush_flow_msgs;
     uint32_t succ_merged_flows;
     uint32_t merge_rej_flows;
@@ -8277,15 +8276,15 @@ e2e_cache_counter_alloc(const struct flows_counter_key *key, size_t hash,
 }
 
 static struct e2e_cache_stats e2e_stats = {
-    .generated_msgs = ATOMIC_COUNT_INIT(0),
-    .processed_msgs = 0,
-    .discarded_msgs = ATOMIC_COUNT_INIT(0),
-    .aborted_msgs = ATOMIC_COUNT_INIT(0),
-    .throttled_msgs = ATOMIC_COUNT_INIT(0),
-    .trace_msgs_in_queue = ATOMIC_COUNT_INIT(0),
-    .trace_msgs_queue_overflow = ATOMIC_COUNT_INIT(0),
-    .new_flow_msgs = ATOMIC_COUNT_INIT(0),
-    .del_flow_msgs = ATOMIC_COUNT_INIT(0),
+    .generated_trcs = ATOMIC_COUNT_INIT(0),
+    .processed_trcs = 0,
+    .discarded_trcs = ATOMIC_COUNT_INIT(0),
+    .aborted_trcs = ATOMIC_COUNT_INIT(0),
+    .throttled_trcs = ATOMIC_COUNT_INIT(0),
+    .queue_trcs = ATOMIC_COUNT_INIT(0),
+    .overflow_trcs = ATOMIC_COUNT_INIT(0),
+    .flow_add_msgs = ATOMIC_COUNT_INIT(0),
+    .flow_del_msgs = ATOMIC_COUNT_INIT(0),
     .flush_flow_msgs = 0,
     .succ_merged_flows = 0,
     .merge_rej_flows = 0,
@@ -8311,24 +8310,24 @@ dpif_netdev_dump_e2e_stats(struct ds *s)
 {
     struct e2e_cache_stats *stats = &e2e_stats;
 
-    ds_put_format(s, "%-45s : %"PRIu32"", "generated messages",
-                  atomic_count_get(&stats->generated_msgs));
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "processed messages",
-                  stats->processed_msgs);
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "discarded messages",
-                  atomic_count_get(&stats->discarded_msgs));
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "aborted messages",
-                  atomic_count_get(&stats->aborted_msgs));
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "throttled messages",
-                  atomic_count_get(&stats->throttled_msgs));
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "messages in e2e queue",
-                  atomic_count_get(&stats->trace_msgs_in_queue));
-    ds_put_format(s, "\n%-45s : %"PRIu32,"dropped due to e2e queue overflow",
-                  atomic_count_get(&stats->trace_msgs_queue_overflow));
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "new flow messages",
-                  atomic_count_get(&stats->new_flow_msgs));
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "delete flow messages",
-                  atomic_count_get(&stats->del_flow_msgs));
+    ds_put_format(s, "%-45s : %"PRIu32"", "generated traces",
+                  atomic_count_get(&stats->generated_trcs));
+    ds_put_format(s, "\n%-45s : %"PRIu32"", "processed traces",
+                  stats->processed_trcs);
+    ds_put_format(s, "\n%-45s : %"PRIu32"", "discarded traces",
+                  atomic_count_get(&stats->discarded_trcs));
+    ds_put_format(s, "\n%-45s : %"PRIu32"", "aborted traces",
+                  atomic_count_get(&stats->aborted_trcs));
+    ds_put_format(s, "\n%-45s : %"PRIu32"", "throttled traces",
+                  atomic_count_get(&stats->throttled_trcs));
+    ds_put_format(s, "\n%-45s : %"PRIu32"", "traces in e2e queue",
+                  atomic_count_get(&stats->queue_trcs));
+    ds_put_format(s, "\n%-45s : %"PRIu32,"traces dropped overflow",
+                  atomic_count_get(&stats->overflow_trcs));
+    ds_put_format(s, "\n%-45s : %"PRIu32"", "flow add messages",
+                  atomic_count_get(&stats->flow_add_msgs));
+    ds_put_format(s, "\n%-45s : %"PRIu32"", "flow del messages",
+                  atomic_count_get(&stats->flow_del_msgs));
     ds_put_format(s, "\n%-45s : %"PRIu32"", "flush flow messages",
                   stats->flush_flow_msgs);
     ds_put_format(s, "\n%-45s : %"PRIu32"", "successfully merged flows",
@@ -8399,7 +8398,7 @@ e2e_cache_trace_msg_enqueue(struct e2e_cache_trace_message *msg)
 {
     mpsc_queue_insert(&e2e_cache_thread_msg_queues.trace_queue,
                       &msg->node);
-    atomic_count_inc(&e2e_stats.trace_msgs_in_queue);
+    atomic_count_inc(&e2e_stats.queue_trcs);
 }
 
 #define E2E_CACHE_BACKOFF_MS_MIN 1
@@ -8452,7 +8451,7 @@ e2e_cache_poll_queues(struct e2e_cache_ufid_msg **ufid_msg,
     if (trace_poll_result == MPSC_QUEUE_ITEM) {
         *trace_msg = CONTAINER_OF(trace_node,
                                   struct e2e_cache_trace_message, node);
-        atomic_count_dec(&e2e_stats.trace_msgs_in_queue);
+        atomic_count_dec(&e2e_stats.queue_trcs);
     }
 }
 
@@ -9301,7 +9300,7 @@ e2e_cache_flow_del(const ovs_u128 *ufid, struct dp_netdev *dp)
      */
     mpsc_queue_insert(&e2e_cache_thread_msg_queues.ufid_queue,
                       &del_msg->node);
-    atomic_count_inc(&e2e_stats.del_flow_msgs);
+    atomic_count_inc(&e2e_stats.flow_del_msgs);
     return 0;
 }
 
@@ -9332,7 +9331,7 @@ e2e_cache_flow_put(bool is_ct, const ovs_u128 *ufid, const void *match,
      */
     mpsc_queue_insert(&e2e_cache_thread_msg_queues.ufid_queue,
                       &put_msg->node);
-    atomic_count_inc(&e2e_stats.new_flow_msgs);
+    atomic_count_inc(&e2e_stats.flow_add_msgs);
     return 0;
 }
 
@@ -9397,10 +9396,10 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
     size_t buffer_size;
 
     if (dp_netdev_e2e_cache_trace_q_size) {
-        uint32_t cur_q_size = atomic_count_get(&e2e_stats.trace_msgs_in_queue);
+        uint32_t cur_q_size = atomic_count_get(&e2e_stats.queue_trcs);
 
         if (OVS_UNLIKELY(cur_q_size >= dp_netdev_e2e_cache_trace_q_size)) {
-            atomic_count_inc(&e2e_stats.trace_msgs_queue_overflow);
+            atomic_count_inc(&e2e_stats.overflow_trcs);
             return;
         }
     }
@@ -9428,7 +9427,7 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
         /* Don't send aborted traces */
         if (OVS_UNLIKELY(packet->e2e_trace_flags &
                          E2E_CACHE_TRACE_FLAG_ABORT)) {
-            atomic_count_inc(&e2e_stats.aborted_msgs);
+            atomic_count_inc(&e2e_stats.aborted_trcs);
             continue;
         }
         /* In case the packet had tnl_pop, we split the trace to the tnl_pop
@@ -9456,18 +9455,18 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
          * omitted from sending due to high messages rate.
          */
         if (packet->e2e_trace_flags & E2E_CACHE_TRACE_FLAG_THROTTLED) {
-            atomic_count_inc(&e2e_stats.throttled_msgs);
+            atomic_count_inc(&e2e_stats.throttled_trcs);
             continue;
         }
         /* Don't send "partial" traces due to overflow of the trace storage */
         if (OVS_UNLIKELY(packet->e2e_trace_flags &
                          E2E_CACHE_TRACE_FLAG_OVERFLOW)) {
-            atomic_count_inc(&e2e_stats.discarded_msgs);
+            atomic_count_inc(&e2e_stats.discarded_trcs);
             continue;
         }
         /* Send only traces for packet that passed conntrack */
         if (!packet->e2e_trace_ct_ufids) {
-            atomic_count_inc(&e2e_stats.discarded_msgs);
+            atomic_count_inc(&e2e_stats.discarded_trcs);
             continue;
         }
 
@@ -9489,7 +9488,7 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
     buffer->num_elements = num_elements;
 
     e2e_cache_trace_msg_enqueue(buffer);
-    atomic_count_inc(&e2e_stats.generated_msgs);
+    atomic_count_inc(&e2e_stats.generated_trcs);
     return;
 
 out:
@@ -9786,7 +9785,7 @@ dp_netdev_e2e_cache_main(void *arg OVS_UNUSED)
             continue;
         }
 
-        e2e_stats.processed_msgs++;
+        e2e_stats.processed_trcs++;
         num_elements = trace_msg->num_elements;
         for (i = 0; i < num_elements; i++) {
             e2e_cache_process_trace_info((struct dp_netdev *)trace_msg->dp,
