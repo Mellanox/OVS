@@ -1015,9 +1015,11 @@ netdev_geneve_pop_header(struct dp_packet *packet)
     tnl->tun_id = htonll(ntohl(get_16aligned_be32(&gnh->vni)) >> 8);
     tnl->flags |= FLOW_TNL_F_KEY;
 
-    memcpy(tnl->metadata.opts.gnv, gnh->options, opts_len);
-    tnl->metadata.present.len = opts_len;
-    tnl->flags |= FLOW_TNL_F_UDPIF;
+    if (opts_len > 0) {
+        memcpy(tnl->metadata.opts.gnv, gnh->options, opts_len);
+        tnl->metadata.present.len = opts_len;
+        tnl->flags |= FLOW_TNL_F_UDPIF;
+    }
 
     packet->packet_type = htonl(PT_ETH);
     dp_packet_reset_packet(packet, hlen);
