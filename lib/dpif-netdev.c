@@ -149,6 +149,7 @@ static bool dp_netdev_e2e_cache_enabled = false;
 static uint32_t dp_netdev_e2e_cache_size = 0;
 #define E2E_CACHE_MAX_TRACE_Q_SIZE   (10000u)
 static uint32_t dp_netdev_e2e_cache_trace_q_size = E2E_CACHE_MAX_TRACE_Q_SIZE;
+#define INVALID_OFFLOAD_THREAD_NB (MAX_OFFLOAD_THREAD_NB + 1)
 #endif
 
 /* EMC cache and SMC cache compose the datapath flow cache (DFC)
@@ -526,6 +527,7 @@ struct dp_offload_thread {
         atomic_uint64_t ct_bi_dir_connections;
         struct cmap megaflow_to_mark;
         struct cmap mark_to_flow;
+        struct mpsc_queue ufid_queue;
         struct e2e_cache_stats e2e_stats;
     );
 };
@@ -533,6 +535,32 @@ struct dp_offload_thread {
 #define HW_OFFLOAD_DEFAULT_QUEUE_SIZE 50000
 static unsigned long long int offload_queue_size =
     HW_OFFLOAD_DEFAULT_QUEUE_SIZE;
+
+#ifdef E2E_CACHE_ENABLED
+
+enum {
+    E2E_UFID_MSG_PUT = 1,
+    E2E_UFID_MSG_DEL = 2,
+    E2E_UFID_MSG_FLUSH = 3,
+};
+
+struct e2e_cache_ufid_msg {
+    struct mpsc_queue_node node;
+    ovs_u128 ufid;
+    int op;
+    bool is_ct;
+    struct nlattr *actions;
+    struct dp_netdev *dp;
+    struct netdev *netdev;
+    struct ovs_barrier *barrier;
+    size_t actions_len;
+    union {
+        struct match match[0];
+        struct ct_match ct_match[0];
+    };
+};
+
+#endif /* E2E_CACHE_ENABLED */
 
 static struct dp_offload_thread *dp_offload_threads = NULL;
 static void *dp_netdev_flow_offload_main(void *arg);
@@ -931,6 +959,7 @@ static const char * const e2e_offload_state_names[] = {
 struct e2e_cache_ovs_flow {
     struct hmap_node node;
     ovs_u128 ufid;
+    unsigned int merge_tid;
     struct nlattr *actions;
     struct e2e_cache_ovs_flow *ct_peer;
     enum e2e_offload_state offload_state;
@@ -976,6 +1005,7 @@ struct e2e_cache_merged_flow {
         struct ovs_list  in_list;
     } node;
     ovs_u128 ufid;
+    unsigned int tid;
     struct dp_netdev *dp;
     struct nlattr *actions;
     uint16_t actions_size;
@@ -1215,10 +1245,14 @@ dp_netdev_offload_init(void)
             cmap_init(&dp_offload_threads[i].mark_to_flow);
             atomic_init(&dp_offload_threads[i].enqueued_offload, 0);
             atomic_init(&dp_offload_threads[i].enqueued_offload_add, 0);
+            mpsc_queue_init(&dp_offload_threads[i].ufid_queue);
             dp_netdev_e2e_offload_init(&dp_offload_threads[i].e2e_stats);
             ovs_thread_create("hw_offload",
                               dp_netdev_flow_offload_main,
                               (void *)(uintptr_t) i);
+        }
+        if (netdev_is_e2e_cache_enabled()) {
+            mpsc_queue_init(&dp_offload_threads[i].ufid_queue);
         }
         dp_netdev_offload_ct_stats_reset();
         ovsthread_once_done(&offload_thread_start);
@@ -3633,19 +3667,31 @@ dp_netdev_offload_flush_handle(struct dp_offload_thread_item *item)
 
 static void
 dp_netdev_offload_poll_queues(struct dp_offload_thread *ofl_thread,
+                              struct e2e_cache_ufid_msg **ufid_msg,
                               struct dp_offload_thread_item **offload_item)
 {
     struct mpsc_queue_node *queue_node;
     struct mpsc_queue *offload_queue;
+    struct mpsc_queue *ufid_queue;
     uint64_t backoff;
 
+    ufid_queue = &ofl_thread->ufid_queue;
     offload_queue = &ofl_thread->offload_queue;
 
+    *ufid_msg = NULL;
     *offload_item = NULL;
 
     backoff = DP_NETDEV_OFFLOAD_BACKOFF_MIN;
 
     while (1) {
+        queue_node = mpsc_queue_pop(ufid_queue);
+        if (queue_node != NULL) {
+            /* ufid message is high priority. if we have it we are done. */
+            *ufid_msg = CONTAINER_OF(queue_node, struct e2e_cache_ufid_msg,
+                                     node);
+            return;
+        }
+
         queue_node = mpsc_queue_pop(offload_queue);
         if (queue_node != NULL) {
             *offload_item = CONTAINER_OF(queue_node,
@@ -3662,31 +3708,50 @@ dp_netdev_offload_poll_queues(struct dp_offload_thread *ofl_thread,
     }
 }
 
+static int e2e_cache_flow_db_put(struct e2e_cache_ufid_msg *ufid_msg);
+static void e2e_cache_flow_db_del(const ovs_u128 *ufid, struct dp_netdev *dp);
+static void e2e_cache_ufid_msg_free(struct e2e_cache_ufid_msg *msg);
+
 static void *
 dp_netdev_flow_offload_main(void *arg)
 {
     unsigned int tid = (unsigned int)(uintptr_t) arg;
     struct dp_offload_thread_item *offload_item;
     struct dp_offload_thread *ofl_thread;
+    struct e2e_cache_ufid_msg *ufid_msg;
     struct mpsc_queue *offload_queue;
     long long int next_rcu_quiesce;
+    struct mpsc_queue *ufid_queue;
     const char *op;
     int ret;
 
     netdev_offload_thread_init(tid);
     ofl_thread = &dp_offload_threads[tid];
 
+    ufid_queue = &ofl_thread->ufid_queue;
     offload_queue = &ofl_thread->offload_queue;
+    mpsc_queue_acquire(ufid_queue);
     mpsc_queue_acquire(offload_queue);
 
     next_rcu_quiesce = time_msec() + DP_NETDEV_OFFLOAD_QUIESCE_INTERVAL_MS;
 
     for (;;) {
-        dp_netdev_offload_poll_queues(ofl_thread, &offload_item);
+        dp_netdev_offload_poll_queues(ofl_thread, &ufid_msg, &offload_item);
 
-        ovs_assert(offload_item != NULL);
+        /* Only one of the message types should be popped. */
+        ovs_assert((ufid_msg != NULL && offload_item == NULL) ||
+                   (offload_item != NULL && ufid_msg == NULL));
 
-        if (offload_item != NULL) {
+        if (ufid_msg != NULL) {
+            if (ufid_msg->op == E2E_UFID_MSG_PUT) {
+                e2e_cache_flow_db_put(ufid_msg);
+            } else if (ufid_msg->op == E2E_UFID_MSG_DEL) {
+                e2e_cache_flow_db_del(&ufid_msg->ufid, ufid_msg->dp);
+            } else {
+                OVS_NOT_REACHED();
+            }
+            e2e_cache_ufid_msg_free(ufid_msg);
+        } else if (offload_item != NULL) {
             if (offload_item->type == DP_FLOW_OFFLOAD_ITEM) {
                 struct dp_flow_offload_item *dp_offload =
                         &offload_item->data->flow_offload;
@@ -8358,36 +8423,11 @@ packet_enqueue_to_flow_map(struct dp_packet *packet,
 
 #ifdef E2E_CACHE_ENABLED
 
-enum {
-    E2E_UFID_MSG_PUT = 1,
-    E2E_UFID_MSG_DEL = 2,
-    E2E_UFID_MSG_FLUSH = 3,
-};
-
-struct e2e_cache_ufid_msg {
-    struct mpsc_queue_node node;
-    ovs_u128 ufid;
-    int op;
-    bool is_ct;
-    struct nlattr *actions;
-    struct dp_netdev *dp;
-    struct netdev *netdev;
-    struct ovs_barrier *barrier;
-    size_t actions_len;
-    union {
-        struct match match[0];
-        struct ct_match ct_match[0];
-    };
-};
-
 struct e2e_cache_thread_msg_queues {
-    struct mpsc_queue ufid_queue;
     struct mpsc_queue trace_queue;
 };
 
 static struct e2e_cache_thread_msg_queues e2e_cache_thread_msg_queues = {
-    .ufid_queue =
-        MPSC_QUEUE_INITIALIZER(&e2e_cache_thread_msg_queues.ufid_queue),
     .trace_queue =
         MPSC_QUEUE_INITIALIZER(&e2e_cache_thread_msg_queues.trace_queue)
 };
@@ -8501,16 +8541,17 @@ e2e_cache_poll_queues(struct e2e_cache_ufid_msg **ufid_msg,
                       struct e2e_cache_trace_message **trace_msg)
 {
     struct mpsc_queue *trace_list = &e2e_cache_thread_msg_queues.trace_queue;
-    struct mpsc_queue *ufid_list = &e2e_cache_thread_msg_queues.ufid_queue;
     enum mpsc_queue_poll_result trace_poll_result;
     unsigned int tid = netdev_offload_thread_id();
     enum mpsc_queue_poll_result ufid_poll_result;
     struct mpsc_queue_node *trace_node;
     struct mpsc_queue_node *ufid_node;
     struct e2e_cache_stats *e2e_stats;
+    struct mpsc_queue *ufid_list;
     uint64_t backoff;
 
     e2e_stats = &dp_offload_threads[tid].e2e_stats;
+    ufid_list = &dp_offload_threads[tid].ufid_queue;
 
     *ufid_msg = NULL;
     *trace_msg = NULL;
@@ -9103,6 +9144,7 @@ e2e_cache_del_associated_merged_flows(struct e2e_cache_ovs_flow *flow,
                                       struct ovs_list *merged_flows_to_delete)
 {
     struct flow2flow_item *associated_flow_item, *next_item;
+    unsigned int tid = netdev_offload_thread_id();
     struct e2e_cache_merged_flow *merged_flow;
 
     LIST_FOR_EACH_SAFE (associated_flow_item, next_item, list,
@@ -9111,6 +9153,9 @@ e2e_cache_del_associated_merged_flows(struct e2e_cache_ovs_flow *flow,
             CONTAINER_OF(associated_flow_item,
                          struct e2e_cache_merged_flow,
                          associated_flows[associated_flow_item->index]);
+        if (merged_flow->tid != tid) {
+            continue;
+        }
 
         e2e_cache_merged_flow_db_rem(merged_flow);
         ovs_list_push_back(merged_flows_to_delete, &merged_flow->node.in_list);
@@ -9371,6 +9416,7 @@ e2e_cache_flow_db_put(struct e2e_cache_ufid_msg *ufid_msg)
     ufid_msg->actions = NULL;
     flow->actions_size = ufid_msg->actions_len;
     ovs_list_init(&flow->associated_merged_flows);
+    flow->merge_tid = INVALID_OFFLOAD_THREAD_NB;
     hmap_init(&flow->merged_counters);
 
     ufid = &flow->ufid;
@@ -9414,8 +9460,7 @@ e2e_cache_flow_del(const ovs_u128 *ufid, struct dp_netdev *dp)
     /* Insert message into queue, e2e_cache_ufid_msg_dequeue()
      * is used to dequeue it from there.
      */
-    mpsc_queue_insert(&e2e_cache_thread_msg_queues.ufid_queue,
-                      &del_msg->node);
+    mpsc_queue_insert(&dp_offload_threads[tid].ufid_queue, &del_msg->node);
     atomic_count_inc(&e2e_stats->flow_del_msgs);
     return 0;
 }
@@ -9449,8 +9494,7 @@ e2e_cache_flow_put(bool is_ct, const ovs_u128 *ufid, const void *match,
     /* Insert message into queue, e2e_cache_ufid_msg_dequeue()
      * is used to dequeue it from there.
      */
-    mpsc_queue_insert(&e2e_cache_thread_msg_queues.ufid_queue,
-                      &put_msg->node);
+    mpsc_queue_insert(&dp_offload_threads[tid].ufid_queue, &put_msg->node);
     atomic_count_inc(&e2e_stats->flow_add_msgs);
     return 0;
 }
@@ -9474,8 +9518,7 @@ e2e_cache_flow_flush(struct netdev *netdev, struct ovs_barrier *barrier,
     /* Insert message into queue, e2e_cache_ufid_msg_dequeue()
      * is used to dequeue it from there.
      */
-    mpsc_queue_insert(&e2e_cache_thread_msg_queues.ufid_queue,
-                      &msg->node);
+    mpsc_queue_insert(&dp_offload_threads[tid].ufid_queue, &msg->node);
     e2e_stats->flush_flow_msgs++;
     return 0;
 }
@@ -9491,15 +9534,16 @@ dp_netdev_ct_e2e_add_cb(struct ct_flow_offload_item *offload,
 }
 
 static struct e2e_cache_ufid_msg *
-e2e_cache_ufid_msg_dequeue(void)
+e2e_cache_ufid_msg_dequeue(struct dp_offload_thread *ofl_thread)
 {
-    struct mpsc_queue *ufid_list = &e2e_cache_thread_msg_queues.ufid_queue;
     enum mpsc_queue_poll_result poll_result;
     struct e2e_cache_ufid_msg *ufid_msg;
+    struct mpsc_queue *ufid_queue;
     struct mpsc_queue_node *node;
 
+    ufid_queue = &ofl_thread->ufid_queue;
     do {
-        poll_result = mpsc_queue_poll(ufid_list, &node);
+        poll_result = mpsc_queue_poll(ufid_queue, &node);
         if (poll_result == MPSC_QUEUE_EMPTY) {
             return NULL;
         }
@@ -9737,6 +9781,7 @@ e2e_cache_process_trace_info(struct dp_netdev *dp,
     if (OVS_UNLIKELY(!merged_flow)) {
         return -1;
     }
+    merged_flow->tid = netdev_offload_thread_id();
     ovs_list_init(&merged_flow->flow_counter_list);
     ovs_list_init(&merged_flow->ct_counter_list);
     for (i = 0; i < num_flows; i++) {
@@ -9883,14 +9928,16 @@ dp_netdev_e2e_cache_main(void *arg OVS_UNUSED)
 {
     unsigned int tid = netdev_offload_thread_id();
     struct e2e_cache_trace_message *trace_msg;
+    struct dp_offload_thread *ofl_thread;
     struct e2e_cache_ufid_msg *ufid_msg;
     struct e2e_cache_stats *e2e_stats;
     uint32_t i, num_elements;
     long long int next_rcu;
 
     e2e_stats = &dp_offload_threads[tid].e2e_stats;
+    ofl_thread = &dp_offload_threads[tid];
 
-    mpsc_queue_acquire(&e2e_cache_thread_msg_queues.ufid_queue);
+    mpsc_queue_acquire(&dp_offload_threads[tid].ufid_queue);
     mpsc_queue_acquire(&e2e_cache_thread_msg_queues.trace_queue);
 
     next_rcu = time_msec() + E2E_CACHE_QUIESCE_INTERVAL_MS;
@@ -9910,7 +9957,7 @@ dp_netdev_e2e_cache_main(void *arg OVS_UNUSED)
                 OVS_NOT_REACHED();
             }
             e2e_cache_ufid_msg_free(ufid_msg);
-            ufid_msg = e2e_cache_ufid_msg_dequeue();
+            ufid_msg = e2e_cache_ufid_msg_dequeue(ofl_thread);
         }
 
         if (!trace_msg) {

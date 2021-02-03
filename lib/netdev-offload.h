@@ -111,6 +111,7 @@ struct offload_info {
 };
 
 DECLARE_EXTERN_PER_THREAD_DATA(unsigned int, netdev_offload_thread_id);
+#define MAX_OFFLOAD_THREAD_NB 10
 
 unsigned int netdev_offload_thread_nb(void);
 unsigned int netdev_offload_thread_init(unsigned int);
