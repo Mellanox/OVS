@@ -2163,6 +2163,24 @@ dump_vxlan_encap(struct ds *s, const struct rte_flow_item *items)
     }
 }
 
+static void
+format_raw_encap(struct ds *s,
+                 struct ds *s_extra,
+                 const struct rte_flow_action_raw_encap *raw_encap)
+{
+    int i;
+
+    ds_put_cstr(s, "raw_encap index 0 / ");
+    if (raw_encap) {
+        ds_put_format(s_extra, "Raw-encap size=%ld set raw_encap 0 raw "
+                      "pattern is ", raw_encap->size);
+        for (i = 0; i < raw_encap->size; i++) {
+            ds_put_format(s_extra, "%02x", raw_encap->data[i]);
+        }
+        ds_put_cstr(s_extra, " / end_set;");
+    }
+}
+
 enum ct_mode {
     CT_MODE_NONE,
     CT_MODE_CT,
@@ -2323,15 +2341,7 @@ dump_flow_action(struct ds *s, struct ds *s_extra,
     } else if (actions->type == RTE_FLOW_ACTION_TYPE_RAW_ENCAP) {
         const struct rte_flow_action_raw_encap *raw_encap = actions->conf;
 
-        ds_put_cstr(s, "raw_encap index 0 / ");
-        if (raw_encap) {
-            ds_put_format(s_extra, "Raw-encap size=%ld set raw_encap 0 raw "
-                          "pattern is ", raw_encap->size);
-            for (int i = 0; i < raw_encap->size; i++) {
-                ds_put_format(s_extra, "%02x", raw_encap->data[i]);
-            }
-            ds_put_cstr(s_extra, " / end_set;");
-        }
+        format_raw_encap(s, s_extra, raw_encap);
     } else if (actions->type == RTE_FLOW_ACTION_TYPE_VXLAN_ENCAP) {
         const struct rte_flow_action_vxlan_encap *vxlan_encap = actions->conf;
         const struct rte_flow_item *items = vxlan_encap->definition;
