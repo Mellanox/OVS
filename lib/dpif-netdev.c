@@ -9094,6 +9094,7 @@ e2e_cache_merged_flow_db_put(struct e2e_cache_merged_flow *merged_flow)
 /* Find e2e_cache_ovs_flow with @ufid and calculated @hash */
 static inline struct e2e_cache_ovs_flow *
 e2e_cache_flow_find(const ovs_u128 *ufid, uint32_t hash)
+    OVS_REQUIRES(flows_map_mutex)
 {
     struct e2e_cache_ovs_flow *flow;
 
@@ -9182,6 +9183,7 @@ e2e_cache_del_merged_flows(struct ovs_list *merged_flows_to_delete)
 static struct e2e_cache_ovs_flow *
 e2e_cache_flow_db_del_protected(const ovs_u128 *ufid, uint32_t hash,
                                 struct ovs_list *merged_flows_to_delete)
+    OVS_REQUIRES(flows_map_mutex)
 {
     struct e2e_cache_ovs_flow *flow;
 
@@ -9674,16 +9676,18 @@ e2e_cache_trace_tnl_pop(struct dp_packet *packet)
 }
 
 static int
-e2e_cache_trace_info_to_flows(const struct e2e_cache_trace_info *trc_info,
-                              struct e2e_cache_ovs_flow *flows[])
+e2e_cache_ufids_to_flows(const ovs_u128 *ufids,
+                         uint16_t num_elements,
+                         struct e2e_cache_ovs_flow *flows[])
+    OVS_REQUIRES(flows_map_mutex)
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 10);
     const ovs_u128 *ufid;
     uint32_t hash;
     uint16_t i;
 
-    for (i = 0; i < trc_info->num_elements; i++) {
-        ufid = &trc_info->ufids[i];
+    for (i = 0; i < num_elements; i++) {
+        ufid = &ufids[i];
         hash = hash_bytes(ufid, sizeof *ufid, 0);
         flows[i] = e2e_cache_flow_find(ufid, hash);
         VLOG_DBG_RL(&rl, "%s: ufids[%d]="UUID_FMT" flows[%d]=%p", __func__,
@@ -9766,7 +9770,10 @@ e2e_cache_process_trace_info(struct dp_netdev *dp,
     uint16_t i, num_flows;
     int err;
 
-    err = e2e_cache_trace_info_to_flows(trc_info, mt_flows);
+    ovs_mutex_lock(&flows_map_mutex);
+    err = e2e_cache_ufids_to_flows(trc_info->ufids, trc_info->num_elements,
+                                   mt_flows);
+    ovs_mutex_unlock(&flows_map_mutex);
     if (OVS_UNLIKELY(err)) {
         return -1;
     }
