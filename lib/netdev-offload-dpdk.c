@@ -2384,6 +2384,21 @@ dump_flow_action(struct ds *s, struct ds *s_extra,
         if (raw_decap) {
             ds_put_format(s_extra, "%s", ds_cstr(&act_vars->s_extra));
         }
+    } else if (actions->type == RTE_FLOW_ACTION_TYPE_SAMPLE) {
+        const struct rte_flow_action_sample *sample = actions->conf;
+
+        ds_put_cstr(s_extra, "set sample_actions 0 ");
+        if (sample) {
+            const struct rte_flow_action *rte_actions;
+
+            rte_actions = sample->actions;
+            while (rte_actions &&
+                   rte_actions->type != RTE_FLOW_ACTION_TYPE_END) {
+                dump_flow_action(s_extra, s_extra, rte_actions++, act_vars);
+            }
+            ds_put_cstr(s_extra, "end;");
+            ds_put_format(s, "sample ratio %d index 0 / ", sample->ratio);
+        }
     } else {
         ds_put_format(s, "unknown rte flow action (%d)\n", actions->type);
     }
@@ -4037,6 +4052,48 @@ parse_clone_actions(struct netdev *netdev,
     return 0;
 }
 
+/* Maximum number of actions in port mirror.
+ * PORT_ID / END
+ */
+#define MIRROR_ACTIONS_NUM 2
+
+static int
+add_mirror_action(struct netdev *netdev,
+                  struct flow_actions *actions,
+                  const struct nlattr *nla)
+{
+    struct netdev *outdev;
+    struct sample_conf {
+        struct rte_flow_action_sample sample;
+        struct rte_flow_action_port_id port_id;
+        struct rte_flow_action sample_actions[MIRROR_ACTIONS_NUM];
+    } *sample_conf;
+    BUILD_ASSERT_DECL(offsetof(struct sample_conf, sample) == 0);
+    struct rte_flow_action *sample_itr;
+    int port_id;
+
+    if (get_netdev_by_port(netdev, nla, &port_id, &outdev)) {
+        return -1;
+    }
+    netdev_close(outdev);
+
+    sample_conf = xzalloc(sizeof *sample_conf);
+    sample_itr = sample_conf->sample_actions;
+    /* Initialize sample struct */
+    sample_conf->sample.ratio = 1;
+    sample_conf->sample.actions = sample_conf->sample_actions;
+    sample_conf->port_id.id = port_id;
+
+    sample_itr->conf = &sample_conf->port_id;
+    sample_itr->type = RTE_FLOW_ACTION_TYPE_PORT_ID;
+    sample_itr++;
+    sample_itr->type = RTE_FLOW_ACTION_TYPE_END;
+
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SAMPLE,
+                    sample_conf);
+    return 0;
+}
+
 static struct rte_flow_action_jump *
 add_jump_action(struct flow_actions *actions, uint32_t group)
 {
@@ -4573,11 +4630,17 @@ parse_flow_actions(struct netdev *netdev,
     }
     NL_ATTR_FOR_EACH_UNSAFE (nla, left, nl_actions, nl_actions_len) {
         if (nl_attr_type(nla) == OVS_ACTION_ATTR_OUTPUT) {
-            if (add_output_action(netdev, actions, nla)) {
-                return -1;
+            if (left <= NLA_ALIGN(nla->nla_len)) {
+                if (add_output_action(netdev, actions, nla)) {
+                   return -1;
+                }
+            } else {
+                if (add_mirror_action(netdev, actions, nla)) {
+                    return -1;
+                }
+                act_vars->pre_ct_cnt++;
+                act_vars->pre_ct_actions = nla;
             }
-            act_vars->pre_ct_cnt++;
-            act_vars->pre_ct_actions = nla;
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_DROP) {
             free_flow_actions(actions, true);
             if (add_count_action(actions, act_vars, act_resources)) {
