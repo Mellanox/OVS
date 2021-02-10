@@ -3918,28 +3918,33 @@ parse_set_actions(struct flow_actions *actions,
 
 static int
 add_vxlan_encap_action(struct flow_actions *actions,
-                       const void *header)
+                       const void *header,
+                       struct rte_flow_item *vxlan_items)
 {
     const struct eth_header *eth;
     const struct udp_header *udp;
     struct vxlan_data {
         struct rte_flow_action_vxlan_encap conf;
         struct rte_flow_item items[TUNNEL_ITEMS_NUM];
-    } *vxlan_data;
+    } *vxlan_data = NULL;
     BUILD_ASSERT_DECL(offsetof(struct vxlan_data, conf) == 0);
     const void *vxlan;
     const void *l3;
     const void *l4;
     int field;
 
-    vxlan_data = xzalloc(sizeof *vxlan_data);
+    if (!vxlan_items) {
+        vxlan_data = xzalloc(sizeof *vxlan_data);
+        vxlan_items = vxlan_data->items;
+        vxlan_data->conf.definition = vxlan_items;
+    }
     field = 0;
 
     eth = header;
     /* Ethernet */
-    vxlan_data->items[field].type = RTE_FLOW_ITEM_TYPE_ETH;
-    vxlan_data->items[field].spec = eth;
-    vxlan_data->items[field].mask = &rte_flow_item_eth_mask;
+    vxlan_items[field].type = RTE_FLOW_ITEM_TYPE_ETH;
+    vxlan_items[field].spec = eth;
+    vxlan_items[field].mask = &rte_flow_item_eth_mask;
     field++;
 
     l3 = eth + 1;
@@ -3948,9 +3953,9 @@ add_vxlan_encap_action(struct flow_actions *actions,
         /* IPv4 */
         const struct ip_header *ip = l3;
 
-        vxlan_data->items[field].type = RTE_FLOW_ITEM_TYPE_IPV4;
-        vxlan_data->items[field].spec = ip;
-        vxlan_data->items[field].mask = &rte_flow_item_ipv4_mask;
+        vxlan_items[field].type = RTE_FLOW_ITEM_TYPE_IPV4;
+        vxlan_items[field].spec = ip;
+        vxlan_items[field].mask = &rte_flow_item_ipv4_mask;
 
         if (ip->ip_proto != IPPROTO_UDP) {
             goto err;
@@ -3959,9 +3964,9 @@ add_vxlan_encap_action(struct flow_actions *actions,
     } else if (eth->eth_type == htons(ETH_TYPE_IPV6)) {
         const struct ovs_16aligned_ip6_hdr *ip6 = l3;
 
-        vxlan_data->items[field].type = RTE_FLOW_ITEM_TYPE_IPV6;
-        vxlan_data->items[field].spec = ip6;
-        vxlan_data->items[field].mask = &rte_flow_item_ipv6_mask;
+        vxlan_items[field].type = RTE_FLOW_ITEM_TYPE_IPV6;
+        vxlan_items[field].spec = ip6;
+        vxlan_items[field].mask = &rte_flow_item_ipv6_mask;
 
         if (ip6->ip6_nxt != IPPROTO_UDP) {
             goto err;
@@ -3973,26 +3978,28 @@ add_vxlan_encap_action(struct flow_actions *actions,
     field++;
 
     udp = l4;
-    vxlan_data->items[field].type = RTE_FLOW_ITEM_TYPE_UDP;
-    vxlan_data->items[field].spec = udp;
-    vxlan_data->items[field].mask = &rte_flow_item_udp_mask;
+    vxlan_items[field].type = RTE_FLOW_ITEM_TYPE_UDP;
+    vxlan_items[field].spec = udp;
+    vxlan_items[field].mask = &rte_flow_item_udp_mask;
     field++;
 
     vxlan = (udp + 1);
-    vxlan_data->items[field].type = RTE_FLOW_ITEM_TYPE_VXLAN;
-    vxlan_data->items[field].spec = vxlan;
-    vxlan_data->items[field].mask = &rte_flow_item_vxlan_mask;
+    vxlan_items[field].type = RTE_FLOW_ITEM_TYPE_VXLAN;
+    vxlan_items[field].spec = vxlan;
+    vxlan_items[field].mask = &rte_flow_item_vxlan_mask;
     field++;
 
-    vxlan_data->items[field].type = RTE_FLOW_ITEM_TYPE_END;
+    vxlan_items[field].type = RTE_FLOW_ITEM_TYPE_END;
 
-    vxlan_data->conf.definition = vxlan_data->items;
-
-    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_VXLAN_ENCAP, vxlan_data);
+    if (vxlan_data) {
+        add_flow_action(actions, RTE_FLOW_ACTION_TYPE_VXLAN_ENCAP, vxlan_data);
+    }
 
     return 0;
 err:
-    free(vxlan_data);
+    if (vxlan_data) {
+        free(vxlan_data);
+    }
     return -1;
 }
 
@@ -4024,9 +4031,13 @@ static int
 parse_clone_actions(struct netdev *netdev,
                     struct flow_actions *actions,
                     const struct nlattr *clone_actions,
-                    const size_t clone_actions_len)
+                    const size_t clone_actions_len,
+                    int *outdev_id,
+                    struct rte_flow_action_raw_encap *raw_encap,
+                    struct rte_flow_item *tnl_items)
 {
     const struct nlattr *ca;
+    struct netdev *outdev;
     unsigned int cleft;
 
     NL_ATTR_FOR_EACH_UNSAFE (ca, cleft, clone_actions, clone_actions_len) {
@@ -4034,23 +4045,35 @@ parse_clone_actions(struct netdev *netdev,
 
         if (clone_type == OVS_ACTION_ATTR_TUNNEL_PUSH) {
             const struct ovs_action_push_tnl *tnl_push = nl_attr_get(ca);
-            struct rte_flow_action_raw_encap *raw_encap;
+            struct rte_flow_action_raw_encap *actions_raw_encap = NULL;
 
             if (tnl_push->tnl_type == OVS_VPORT_TYPE_VXLAN &&
-                !add_vxlan_encap_action(actions, tnl_push->header)) {
+                !add_vxlan_encap_action(actions,
+                                        tnl_push->header, tnl_items)) {
                 continue;
             }
+            if (!raw_encap) {
+                actions_raw_encap = xzalloc(sizeof *actions_raw_encap);
+                raw_encap = actions_raw_encap;
+            }
 
-            raw_encap = xzalloc(sizeof *raw_encap);
             raw_encap->data = (uint8_t *) tnl_push->header;
             raw_encap->preserve = NULL;
             raw_encap->size = tnl_push->header_len;
-
-            add_flow_action(actions, RTE_FLOW_ACTION_TYPE_RAW_ENCAP,
-                            raw_encap);
+            if (actions_raw_encap) {
+                add_flow_action(actions, RTE_FLOW_ACTION_TYPE_RAW_ENCAP,
+                                actions_raw_encap);
+            }
         } else if (clone_type == OVS_ACTION_ATTR_OUTPUT) {
-            if (add_output_action(netdev, actions, ca)) {
-                return -1;
+            if (actions) {
+                if (add_output_action(netdev, actions, ca)) {
+                    return -1;
+                }
+            } else {
+                if (get_netdev_by_port(netdev, ca, outdev_id, &outdev)) {
+                    return -1;
+                }
+                netdev_close(outdev);
             }
         } else {
             VLOG_DBG_RL(&rl,
@@ -4681,7 +4704,8 @@ parse_flow_actions(struct netdev *netdev,
             size_t clone_actions_len = nl_attr_get_size(nla);
 
             if (parse_clone_actions(netdev, actions, clone_actions,
-                                    clone_actions_len)) {
+                                    clone_actions_len, NULL,
+                                    NULL, NULL)) {
                 return -1;
             }
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_TUNNEL_POP) {
