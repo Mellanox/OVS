@@ -9555,39 +9555,42 @@ e2e_cache_ufid_msg_dequeue(struct dp_offload_thread *ofl_thread)
     return ufid_msg;
 }
 
+static unsigned int
+netdev_offload_trace_to_thread_id(ovs_u128 *ufids,
+                                  uint16_t num_elements)
+{
+    (void)ufids;
+    (void)num_elements;
+    return netdev_offload_thread_nb();
+}
+
 static void
 e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
                                  struct dp_packet_batch *batch)
 {
-    unsigned int tid = netdev_offload_thread_nb();
-    struct e2e_cache_trace_info *cur_trace_info;
-    struct e2e_cache_trace_message *buffer;
-    struct e2e_cache_stats *e2e_stats;
+    struct e2e_cache_trace_info *cur_trace_info[MAX_OFFLOAD_THREAD_NB + 1];
+    struct e2e_cache_trace_message *buffer[MAX_OFFLOAD_THREAD_NB + 1];
+    struct e2e_cache_stats *e2e_stats[MAX_OFFLOAD_THREAD_NB + 1];
+    uint32_t num_elements[MAX_OFFLOAD_THREAD_NB + 1];
+    uint32_t cur_q_size[MAX_OFFLOAD_THREAD_NB + 1];
     struct dp_packet *packet;
-    uint32_t num_elements;
     size_t buffer_size;
-
-    e2e_stats = &dp_offload_threads[tid].e2e_stats;
-
-    if (dp_netdev_e2e_cache_trace_q_size) {
-        uint32_t cur_q_size = atomic_count_get(&e2e_stats->queue_trcs);
-
-        if (OVS_UNLIKELY(cur_q_size >= dp_netdev_e2e_cache_trace_q_size)) {
-            atomic_count_inc(&e2e_stats->overflow_trcs);
-            return;
-        }
-    }
+    unsigned int tid;
 
     buffer_size = sizeof(struct e2e_cache_trace_message) +
                          2 * batch->count * sizeof(struct e2e_cache_trace_info);
 
-    buffer = (struct e2e_cache_trace_message *) xmalloc_cacheline(buffer_size);
-    if (OVS_UNLIKELY(!buffer)) {
-        return;
+    for (tid = 0;
+         tid < netdev_offload_thread_nb() + netdev_is_e2e_cache_enabled();
+         tid++) {
+        buffer[tid] =
+            (struct e2e_cache_trace_message *) xmalloc_cacheline(buffer_size);
+        num_elements[tid] = 0;
+        cur_trace_info[tid] = &buffer[tid]->data[0];
+        cur_q_size[tid] =
+            atomic_count_get(&dp_offload_threads[tid].e2e_stats.queue_trcs);
+        e2e_stats[tid] = &dp_offload_threads[tid].e2e_stats;
     }
-
-    num_elements = 0;
-    cur_trace_info = &buffer->data[0];
 
     DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
         uint32_t e2e_trace_size = packet->e2e_trace_size;
@@ -9601,7 +9604,7 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
         /* Don't send aborted traces */
         if (OVS_UNLIKELY(packet->e2e_trace_flags &
                          E2E_CACHE_TRACE_FLAG_ABORT)) {
-            atomic_count_inc(&e2e_stats->aborted_trcs);
+            atomic_count_inc(&e2e_stats[0]->aborted_trcs);
             continue;
         }
         /* In case the packet had tnl_pop, we split the trace to the tnl_pop
@@ -9610,16 +9613,27 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
          * tnl_pop flow is offloaded, we will get only the virtual port path.
          */
         if (packet->e2e_trace_flags & E2E_CACHE_TRACE_FLAG_TNL_POP) {
-            cur_trace_info->num_elements = 1;
-            cur_trace_info->e2e_trace_ct_ufids = 0;
+            tid = netdev_offload_trace_to_thread_id(e2e_trace, 1);
+            if (tid == INVALID_OFFLOAD_THREAD_NB) {
+                continue;
+            }
+            if (dp_netdev_e2e_cache_trace_q_size &&
+                cur_q_size[tid] >= dp_netdev_e2e_cache_trace_q_size) {
+                atomic_count_inc(&e2e_stats[tid]->overflow_trcs);
+                continue;
+            }
+
+            cur_trace_info[tid]->num_elements = 1;
+            cur_trace_info[tid]->e2e_trace_ct_ufids = 0;
             packet->e2e_trace_ct_ufids >>= 1;
 
-            memcpy(&cur_trace_info->ufids[0], e2e_trace, sizeof *e2e_trace);
+            memcpy(&cur_trace_info[tid]->ufids[0], e2e_trace,
+                   sizeof *e2e_trace);
 
             e2e_trace_size--;
             e2e_trace++;
-            num_elements++;
-            cur_trace_info++;
+            num_elements[tid]++;
+            cur_trace_info[tid]++;
             packet->e2e_trace_flags &= ~E2E_CACHE_TRACE_FLAG_TNL_POP;
             if (!packet->e2e_trace_ct_ufids) {
                 continue;
@@ -9629,44 +9643,54 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
          * omitted from sending due to high messages rate.
          */
         if (packet->e2e_trace_flags & E2E_CACHE_TRACE_FLAG_THROTTLED) {
-            atomic_count_inc(&e2e_stats->throttled_trcs);
+            atomic_count_inc(&e2e_stats[0]->throttled_trcs);
             continue;
         }
         /* Don't send "partial" traces due to overflow of the trace storage */
         if (OVS_UNLIKELY(packet->e2e_trace_flags &
                          E2E_CACHE_TRACE_FLAG_OVERFLOW)) {
-            atomic_count_inc(&e2e_stats->discarded_trcs);
+            atomic_count_inc(&e2e_stats[0]->discarded_trcs);
             continue;
         }
         /* Send only traces for packet that passed conntrack */
         if (!packet->e2e_trace_ct_ufids) {
-            atomic_count_inc(&e2e_stats->discarded_trcs);
+            atomic_count_inc(&e2e_stats[0]->discarded_trcs);
             continue;
         }
 
-        cur_trace_info->e2e_trace_ct_ufids = packet->e2e_trace_ct_ufids;
-        cur_trace_info->num_elements = e2e_trace_size;
+        tid = netdev_offload_trace_to_thread_id(e2e_trace, e2e_trace_size);
+        ovs_assert (tid != INVALID_OFFLOAD_THREAD_NB);
 
-        memcpy(&cur_trace_info->ufids[0], e2e_trace,
+        if (dp_netdev_e2e_cache_trace_q_size &&
+            cur_q_size[tid] >= dp_netdev_e2e_cache_trace_q_size) {
+            atomic_count_inc(&e2e_stats[tid]->overflow_trcs);
+            continue;
+        }
+
+        cur_trace_info[tid]->e2e_trace_ct_ufids = packet->e2e_trace_ct_ufids;
+        cur_trace_info[tid]->num_elements = e2e_trace_size;
+
+        memcpy(&cur_trace_info[tid]->ufids[0], e2e_trace,
                e2e_trace_size * sizeof *e2e_trace);
 
-        num_elements++;
-        cur_trace_info++;
+        num_elements[tid]++;
+        cur_trace_info[tid]++;
     }
 
-    if (num_elements == 0) {
-        goto out;
+    for (tid = 0;
+         tid < netdev_offload_thread_nb() + netdev_is_e2e_cache_enabled();
+         tid++) {
+        if (num_elements[tid] == 0) {
+            free_cacheline(buffer[tid]);
+            continue;
+        }
+
+        buffer[tid]->dp = dp;
+        buffer[tid]->num_elements = num_elements[tid];
+
+        e2e_cache_trace_msg_enqueue(buffer[tid], tid);
+        atomic_count_inc(&e2e_stats[tid]->generated_trcs);
     }
-
-    buffer->dp = dp;
-    buffer->num_elements = num_elements;
-
-    e2e_cache_trace_msg_enqueue(buffer, tid);
-    atomic_count_inc(&e2e_stats->generated_trcs);
-    return;
-
-out:
-    free_cacheline(buffer);
 }
 
 static void
