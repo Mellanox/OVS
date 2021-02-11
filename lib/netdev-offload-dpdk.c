@@ -2388,15 +2388,38 @@ dump_flow_action(struct ds *s, struct ds *s_extra,
         }
     } else if (actions->type == RTE_FLOW_ACTION_TYPE_SAMPLE) {
         const struct rte_flow_action_sample *sample = actions->conf;
+        bool remote = false;
 
-        ds_put_cstr(s_extra, "set sample_actions 0 ");
         if (sample) {
             const struct rte_flow_action *rte_actions;
 
             rte_actions = sample->actions;
             while (rte_actions &&
                    rte_actions->type != RTE_FLOW_ACTION_TYPE_END) {
-                dump_flow_action(s_extra, s_extra, rte_actions++, act_vars);
+                if (rte_actions->type == RTE_FLOW_ACTION_TYPE_RAW_ENCAP) {
+                    format_raw_encap(s, s_extra, rte_actions->conf);
+                    rte_actions++;
+                    ds_put_cstr(s_extra,
+                                " set sample_actions 0 raw_encap index 0 ");
+                    remote = true;
+                } else if (rte_actions->type ==
+                           RTE_FLOW_ACTION_TYPE_VXLAN_ENCAP) {
+                    const struct rte_flow_action_vxlan_encap *vxlan_encap =
+                        rte_actions->conf;
+                    const struct rte_flow_item *items =
+                        vxlan_encap->definition;
+
+                    rte_actions++;
+                    dump_vxlan_encap(s_extra, items);
+                    ds_put_cstr(s_extra, " set sample_actions"
+                                " 0 vxlan_encap / ");
+                    remote = true;
+                } else if (!remote) {
+                        ds_put_cstr(s_extra, "set sample_actions 0 ");
+                }
+                dump_flow_action(s_extra, s_extra,
+                                 rte_actions++, act_vars);
+
             }
             ds_put_cstr(s_extra, "end;");
             ds_put_format(s, "sample ratio %d index 0 / ", sample->ratio);
@@ -4116,37 +4139,66 @@ parse_clone_actions(struct netdev *netdev,
 }
 
 /* Maximum number of actions in port mirror.
- * PORT_ID / END
+ * RAW_ENCAP(VXLAN_ENCAP) / PORT_ID / END
  */
-#define MIRROR_ACTIONS_NUM 2
+#define MIRROR_ACTIONS_NUM 3
 
 static int
 add_mirror_action(struct netdev *netdev,
                   struct flow_actions *actions,
-                  const struct nlattr *nla)
+                  const struct nlattr *nla,
+                  const size_t clone_actions_len)
 {
     struct netdev *outdev;
     struct sample_conf {
         struct rte_flow_action_sample sample;
         struct rte_flow_action_port_id port_id;
+        struct rte_flow_action_raw_encap raw_encap;
+        struct rte_flow_action_vxlan_encap vxlan_encap;
+        struct rte_flow_item vxlan_items[TUNNEL_ITEMS_NUM];
         struct rte_flow_action sample_actions[MIRROR_ACTIONS_NUM];
     } *sample_conf;
     BUILD_ASSERT_DECL(offsetof(struct sample_conf, sample) == 0);
     struct rte_flow_action *sample_itr;
+    bool is_vxlan, is_raw;
     int port_id;
-
-    if (get_netdev_by_port(netdev, nla, &port_id, &outdev)) {
-        return -1;
-    }
-    netdev_close(outdev);
 
     sample_conf = xzalloc(sizeof *sample_conf);
     sample_itr = sample_conf->sample_actions;
+    is_vxlan = false;
+    is_raw = false;
+    if (!clone_actions_len) {
+        if (get_netdev_by_port(netdev, nla, &port_id, &outdev)) {
+            goto err;
+        }
+        netdev_close(outdev);
+    } else {
+        if (parse_clone_actions(netdev, NULL, nla,
+                                clone_actions_len, &port_id,
+                                &sample_conf->raw_encap,
+                                sample_conf->vxlan_items)) {
+            goto err;
+        }
+        /* Identify whether to use vxlan_encap or raw_encap */
+        is_vxlan = sample_conf->vxlan_items[0].type !=
+            RTE_FLOW_ITEM_TYPE_END;
+        is_raw = sample_conf->raw_encap.size > 0;
+        sample_conf->vxlan_encap.definition = sample_conf->vxlan_items;
+    }
+
     /* Initialize sample struct */
     sample_conf->sample.ratio = 1;
     sample_conf->sample.actions = sample_conf->sample_actions;
     sample_conf->port_id.id = port_id;
-
+    if (is_vxlan) {
+        sample_itr->conf = &sample_conf->vxlan_encap;
+        sample_itr->type = RTE_FLOW_ACTION_TYPE_VXLAN_ENCAP;
+        sample_itr++;
+    } else if (is_raw) {
+        sample_itr->conf = &sample_conf->raw_encap;
+        sample_itr->type = RTE_FLOW_ACTION_TYPE_RAW_ENCAP;
+        sample_itr++;
+    }
     sample_itr->conf = &sample_conf->port_id;
     sample_itr->type = RTE_FLOW_ACTION_TYPE_PORT_ID;
     sample_itr++;
@@ -4155,6 +4207,9 @@ add_mirror_action(struct netdev *netdev,
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SAMPLE,
                     sample_conf);
     return 0;
+err:
+    free(sample_conf);
+    return -1;
 }
 
 static struct rte_flow_action_jump *
@@ -4695,7 +4750,7 @@ parse_flow_actions(struct netdev *netdev,
                    return -1;
                 }
             } else {
-                if (add_mirror_action(netdev, actions, nla)) {
+                if (add_mirror_action(netdev, actions, nla, 0)) {
                     return -1;
                 }
                 act_vars->pre_ct_cnt++;
@@ -4725,15 +4780,23 @@ parse_flow_actions(struct netdev *netdev,
             }
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_POP_VLAN) {
             add_flow_action(actions, RTE_FLOW_ACTION_TYPE_OF_POP_VLAN, NULL);
-        } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_CLONE &&
-                   left <= NLA_ALIGN(nla->nla_len)) {
+        } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_CLONE) {
             const struct nlattr *clone_actions = nl_attr_get(nla);
             size_t clone_actions_len = nl_attr_get_size(nla);
 
-            if (parse_clone_actions(netdev, actions, clone_actions,
-                                    clone_actions_len, NULL,
-                                    NULL, NULL)) {
-                return -1;
+            if (left <= NLA_ALIGN(nla->nla_len)) {
+                if (parse_clone_actions(netdev, actions, clone_actions,
+                                        clone_actions_len, NULL,
+                                        NULL, NULL)) {
+                    return -1;
+                }
+            } else {
+                if (add_mirror_action(netdev, actions, clone_actions,
+                                      clone_actions_len)) {
+                    return -1;
+                }
+                act_vars->pre_ct_cnt++;
+                act_vars->pre_ct_actions = nla;
             }
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_TUNNEL_POP) {
             if (add_tnl_pop_action(actions, nla, act_resources, act_vars)) {
