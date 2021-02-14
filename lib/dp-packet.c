@@ -124,6 +124,7 @@ void
 dp_packet_init(struct dp_packet *b, size_t size)
 {
     dp_packet_use(b, size ? xmalloc(size) : NULL, size);
+    dp_packet_e2e_init(b);
 }
 
 /* Frees memory that 'b' points to. */

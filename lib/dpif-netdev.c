@@ -8297,14 +8297,6 @@ dpif_netdev_dump_e2e_flows(struct hmap *portno_names,
 }
 
 static inline void
-e2e_cache_trace_init(struct dp_packet *p)
-{
-    p->e2e_trace_size = 0;
-    p->e2e_trace_flags = 0;
-    p->e2e_trace_ct_ufids = 0;
-}
-
-static inline void
 e2e_cache_trace_add_flow(struct dp_packet *p,
                          const ovs_u128 *ufid)
 {
@@ -9494,6 +9486,11 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
         uint32_t e2e_trace_size = packet->e2e_trace_size;
         ovs_u128 *e2e_trace = &packet->e2e_trace[0];
 
+        /* Don't send untraced packets. */
+        if (!e2e_trace_size) {
+            continue;
+        }
+
         /* Don't send aborted traces */
         if (OVS_UNLIKELY(packet->e2e_trace_flags &
                          E2E_CACHE_TRACE_FLAG_ABORT)) {
@@ -9887,7 +9884,6 @@ dp_netdev_e2e_cache_main(void *arg OVS_UNUSED)
     return NULL;
 }
 #else
-#define e2e_cache_trace_init(p) do { } while (0)
 #define e2e_cache_trace_add_flow(p, ufid) do { } while (0)
 #define e2e_cache_trace_msg_enqueue(m) do { } while (0)
 #define e2e_cache_poll_queues() do { } while (0)
@@ -10085,7 +10081,7 @@ dfc_processing(struct dp_netdev_pmd_thread *pmd,
         if (!md_is_valid) {
             pkt_metadata_init(&packet->md, port_no);
             if (dp_netdev_e2e_cache_enabled) {
-                e2e_cache_trace_init(packet);
+                dp_packet_e2e_init(packet);
             }
         }
 

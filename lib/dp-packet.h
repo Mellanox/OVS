@@ -1120,6 +1120,14 @@ dp_packet_l4_checksum_bad(const struct dp_packet *p)
             DP_PACKET_OL_RX_L4_CKSUM_BAD;
 }
 
+static inline void
+dp_packet_e2e_init(struct dp_packet *p)
+{
+    p->e2e_trace_size = 0;
+    p->e2e_trace_flags = 0;
+    p->e2e_trace_ct_ufids = 0;
+}
+
 #ifdef  __cplusplus
 }
 #endif
