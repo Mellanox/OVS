@@ -8442,54 +8442,6 @@ e2e_cache_counter_alloc(const struct flows_counter_key *key, size_t hash,
 }
 
 static void
-dpif_netdev_dump_e2e_stats(struct ds *s)
-{
-    struct e2e_cache_stats *stats;
-
-    stats = &dp_offload_threads[netdev_offload_thread_nb()].e2e_stats;
-    ds_put_format(s, "%-45s : %"PRIu32"", "generated messages",
-                  atomic_count_get(&stats->generated_trcs));
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "processed messages",
-                  stats->processed_trcs);
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "discarded messages",
-                  atomic_count_get(&stats->discarded_trcs));
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "aborted messages",
-                  atomic_count_get(&stats->aborted_trcs));
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "throttled messages",
-                  atomic_count_get(&stats->throttled_trcs));
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "messages in e2e queue",
-                  atomic_count_get(&stats->queue_trcs));
-    ds_put_format(s, "\n%-45s : %"PRIu32,"dropped due to e2e queue overflow",
-                  atomic_count_get(&stats->overflow_trcs));
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "new flow messages",
-                  atomic_count_get(&stats->flow_add_msgs));
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "delete flow messages",
-                  atomic_count_get(&stats->flow_del_msgs));
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "flush flow messages",
-                  stats->flush_flow_msgs);
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "successfully merged flows",
-                  stats->succ_merged_flows);
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "flows rejected by the merge engine",
-                  stats->merge_rej_flows);
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "add merged flows messages to HW",
-                  stats->add_merged_flow_hw);
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "delete merged flows messages to HW",
-                  stats->del_merged_flow_hw);
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "merged flows in e2e cache",
-                  atomic_count_get(&merged_flows_map_count));
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "flows in e2e DB",
-                  atomic_count_get(&flows_map_count));
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "successful CT MT flows to HW",
-                  stats->add_ct_mt_flow_hw);
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "successful deleted CT MT flows "
-                  "from HW", stats->del_ct_mt_flow_hw);
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "failed CT MT flows to HW",
-                  stats->add_ct_mt_flow_err);
-    ds_put_format(s, "\n%-45s : %"PRIu32"", "failed CT MT flow removals from "
-                  "HW", stats->del_ct_mt_flow_err);
-}
-
-static void
 dpif_netdev_dump_e2e_flows(struct hmap *portno_names,
                            struct ofputil_port_map *port_map, struct ds *s)
 {
@@ -10021,10 +9973,6 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev OVS_UNUSED,
                                  struct ofpbuf *buf OVS_UNUSED,
                                  long long now OVS_UNUSED,
                                  long long prev_now OVS_UNUSED)
-{
-}
-static void
-dpif_netdev_dump_e2e_stats(struct ds *s OVS_UNUSED)
 {
 }
 static void
@@ -11633,7 +11581,6 @@ const struct dpif_class dpif_netdev_class = {
     dpif_netdev_flow_dump_thread_create,
     dpif_netdev_flow_dump_thread_destroy,
     dpif_netdev_flow_dump_next,
-    dpif_netdev_dump_e2e_stats,
     dpif_netdev_dump_e2e_flows,
     dpif_netdev_operate,
     dpif_netdev_offload_stats_get,

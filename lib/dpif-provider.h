@@ -322,8 +322,6 @@ struct dpif_class {
     int (*flow_dump_next)(struct dpif_flow_dump_thread *thread,
                           struct dpif_flow *flows, int max_flows);
 
-    /* Dump E2E cache statistics. */
-    void (*dump_e2e_stats)(struct ds *);
     /* Dump E2E cache flows. */
     void (*dump_e2e_flows)(struct hmap *, struct ofputil_port_map *,
                            struct ds *);
