@@ -125,3 +125,5 @@ Change-Id=I30a66e4df05f3cde50139f66e6a61354d030d2e7; subject=dpif-netdev: e2e: R
 Change-Id=Idee6194067f84bcb64029fce6fabf37ae16dc5a6; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I5e152abff2ee124f6dc3ffe5c833330437e09d1d; subject=netdev: Disable lock safety analysis for external lock; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I93853cfbbf35587d4f77642fa1af47b8872391d2; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ia6438ecb863cb25372bbca591ec6f03abac2488b; subject=dpif-netdev: Relax port rwlock write locking; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I8feef94b0196cec0b4e32d27b7732c2099ac4839; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
