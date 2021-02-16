@@ -57,6 +57,29 @@ struct alg_exp_node {
     bool nat_rpl_dst;
 };
 
+/* Timeouts: all the possible timeout states passed to update_expiration()
+ * are listed here. The name will be prefix by CT_TM_ and the value is in
+ * milliseconds */
+#define CT_TIMEOUTS \
+    CT_TIMEOUT(TCP_FIRST_PACKET) \
+    CT_TIMEOUT(TCP_OPENING) \
+    CT_TIMEOUT(TCP_ESTABLISHED) \
+    CT_TIMEOUT(TCP_CLOSING) \
+    CT_TIMEOUT(TCP_FIN_WAIT) \
+    CT_TIMEOUT(TCP_CLOSED) \
+    CT_TIMEOUT(OTHER_FIRST) \
+    CT_TIMEOUT(OTHER_MULTIPLE) \
+    CT_TIMEOUT(OTHER_BIDIR) \
+    CT_TIMEOUT(ICMP_FIRST) \
+    CT_TIMEOUT(ICMP_REPLY)
+
+enum ct_timeout {
+#define CT_TIMEOUT(NAME) CT_TM_##NAME,
+    CT_TIMEOUTS
+#undef CT_TIMEOUT
+    N_CT_TM
+};
+
 enum OVS_PACKED_ENUM ct_conn_type {
     CT_CONN_TYPE_DEFAULT,
     CT_CONN_TYPE_UN_NAT,
@@ -92,9 +115,20 @@ struct ct_offloads {
     struct ct_dir_info dir_info[CT_DIR_NUM];
 };
 
-struct conn_exp_node {
+struct conn_expire {
+    /* Set once when initializing the expiration node. */
+    struct conntrack *ct;
+    /* Timeout state of the connection.
+     * It follows the connection state updates.
+     */
+    enum ct_timeout tm;
+    /* Insert and remove the expiration node only once per RCU syncs.
+     * If multiple threads update the connection, its expiration should
+     * be removed only once and added only once to timeout lists.
+     */
+    atomic_flag insert_once;
+    atomic_flag remove_once;
     struct rculist node;
-    struct conn *up;
 };
 
 struct conn {
@@ -102,7 +136,6 @@ struct conn {
     struct conn_key key;
     struct conn_key rev_key;
     struct conn_key master_key; /* Only used for orig_tuple support. */
-    struct conn_exp_node *exp;
     struct cmap_node cm_node;
     struct nat_action_info_t *nat_info;
     char *alg;
@@ -115,6 +148,7 @@ struct conn {
 
     /* Mutable data. */
     struct ovs_mutex lock; /* Guards all mutable fields. */
+    struct conn_expire exp;
     ovs_u128 label;
     atomic_llong expiration;
     long long prev_query;
@@ -143,29 +177,6 @@ enum ct_update_res {
     CT_UPDATE_VALID,
     CT_UPDATE_NEW,
     CT_UPDATE_VALID_NEW,
-};
-
-/* Timeouts: all the possible timeout states passed to update_expiration()
- * are listed here. The name will be prefix by CT_TM_ and the value is in
- * milliseconds */
-#define CT_TIMEOUTS \
-    CT_TIMEOUT(TCP_FIRST_PACKET) \
-    CT_TIMEOUT(TCP_OPENING) \
-    CT_TIMEOUT(TCP_ESTABLISHED) \
-    CT_TIMEOUT(TCP_CLOSING) \
-    CT_TIMEOUT(TCP_FIN_WAIT) \
-    CT_TIMEOUT(TCP_CLOSED) \
-    CT_TIMEOUT(OTHER_FIRST) \
-    CT_TIMEOUT(OTHER_MULTIPLE) \
-    CT_TIMEOUT(OTHER_BIDIR) \
-    CT_TIMEOUT(ICMP_FIRST) \
-    CT_TIMEOUT(ICMP_REPLY)
-
-enum ct_timeout {
-#define CT_TIMEOUT(NAME) CT_TM_##NAME,
-    CT_TIMEOUTS
-#undef CT_TIMEOUT
-    N_CT_TM
 };
 
 struct conntrack {
@@ -232,6 +243,22 @@ tcp_payload_length(struct dp_packet *pkt)
                 - tcp_payload);
     } else {
         return 0;
+    }
+}
+
+static inline void
+conn_expire_remove(struct conn_expire *exp, bool need_ct_lock)
+    OVS_NO_THREAD_SAFETY_ANALYSIS
+{
+    if (!atomic_flag_test_and_set(&exp->remove_once)
+        && rculist_next(&exp->node)) {
+        if (need_ct_lock) {
+            ovs_mutex_lock(&exp->ct->ct_lock);
+        }
+        rculist_remove(&exp->node);
+        if (need_ct_lock) {
+            ovs_mutex_unlock(&exp->ct->ct_lock);
+        }
     }
 }
 
