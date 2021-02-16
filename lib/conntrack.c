@@ -574,7 +574,7 @@ conn_clean(struct conntrack *ct, struct conn *conn)
         uint32_t hash = conn_key_hash(&conn->nat_conn->key, ct->hash_basis);
         cmap_remove(&ct->conns, &conn->nat_conn->cm_node, hash);
     }
-    rculist_remove(&conn->exp->node);
+    conn_expire_remove(&conn->exp, false);
     conn->cleaned = true;
     ovsrcu_postpone(delete_conn, conn);
     atomic_count_dec(&ct->n_conn);
@@ -596,7 +596,7 @@ conn_clean_one(struct conntrack *ct, struct conn *conn)
 
     conn_clean_cmn(ct, conn);
     if (conn->conn_type == CT_CONN_TYPE_DEFAULT) {
-        rculist_remove(&conn->exp->node);
+        conn_expire_remove(&conn->exp, false);
         conn->cleaned = true;
         atomic_count_dec(&ct->n_conn);
     }
@@ -1221,7 +1221,7 @@ conn_not_found(struct conntrack *ct, struct dp_packet *pkt,
      * can limit DoS impact. */
 nat_res_exhaustion:
     free(nat_conn);
-    rculist_remove(&nc->exp->node);
+    conn_expire_remove(&nc->exp, false);
     ovsrcu_postpone(delete_conn_cmn, nc);
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 5);
     VLOG_WARN_RL(&rl, "Unable to NAT due to tuple space exhaustion - "
@@ -1957,7 +1957,6 @@ ct_sweep(struct conntrack *ct, long long now, size_t limit)
 {
     struct conntrack_offload_class *offload_class = NULL;
     struct conn *conn;
-    struct conn_exp_node *conn_it;
     struct conn *conn_batch[CT_SWEEP_BATCH_SIZE];
     size_t batch_count = 0;
     long long min_expiration = LLONG_MAX;
@@ -1986,10 +1985,9 @@ rcu_quiesce:
                                        &ct->offload_class);
         }
 
-        RCULIST_FOR_EACH (conn_it, node, &ct->exp_lists[i]) {
+        RCULIST_FOR_EACH (conn, exp.node, &ct->exp_lists[i]) {
             bool next_list = false;
 
-            conn = conn_it->up;
             ovs_mutex_lock(&conn->lock);
             rv_active = 0;
             hw_updated = conn_hw_update(ct, offload_class, conn, now,
@@ -2917,7 +2915,6 @@ new_conn(struct conntrack *ct, struct dp_packet *pkt, struct conn_key *key,
 static void
 delete_conn_cmn(struct conn *conn)
 {
-    free(conn->exp);
     free(conn->nat_info);
     free(conn->alg);
     free(conn);
