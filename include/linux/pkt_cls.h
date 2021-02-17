@@ -1,7 +1,7 @@
 #ifndef __LINUX_PKT_CLS_WRAPPER_H
 #define __LINUX_PKT_CLS_WRAPPER_H 1
 
-#if defined(__KERNEL__) || defined(HAVE_TCA_CT_FLAGS_REPLY)
+#if defined(__KERNEL__) || defined(HAVE_TCA_FLOWER_KEY_CT_FLAGS_REPLY)
 #include_next <linux/pkt_cls.h>
 #else
 
