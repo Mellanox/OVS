@@ -113,7 +113,7 @@ struct offload_info {
 DECLARE_EXTERN_PER_THREAD_DATA(unsigned int, netdev_offload_thread_id);
 
 unsigned int netdev_offload_thread_nb(void);
-unsigned int netdev_offload_thread_init(void);
+unsigned int netdev_offload_thread_init(unsigned int);
 unsigned int netdev_offload_ufid_to_thread_id(const ovs_u128 ufid);
 
 static inline unsigned int
@@ -122,7 +122,7 @@ netdev_offload_thread_id(void)
     unsigned int id = *netdev_offload_thread_id_get();
 
     if (OVS_UNLIKELY(id == OVSTHREAD_ID_UNSET)) {
-        id = netdev_offload_thread_init();
+        id = netdev_offload_thread_init(OVSTHREAD_ID_UNSET);
     }
 
     return id;

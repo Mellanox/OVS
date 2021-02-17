@@ -621,9 +621,8 @@ netdev_offload_ufid_to_thread_id(const ovs_u128 ufid)
 }
 
 unsigned int
-netdev_offload_thread_init(void)
+netdev_offload_thread_init(unsigned int tid)
 {
-    static atomic_count next_id = ATOMIC_COUNT_INIT(0);
     bool thread_is_hw_offload;
     bool thread_is_e2e_cache;
     bool thread_is_ct_clean;
@@ -658,7 +657,7 @@ netdev_offload_thread_init(void)
             id = 0;
         } else {
             /* Only the actual offload threads are allowed to have their own ID. */
-            id = atomic_count_inc(&next_id);
+            id = tid;
         }
         /* Panic if any offload thread is getting a spurious ID. */
         ovs_assert(id < netdev_offload_thread_nb());
