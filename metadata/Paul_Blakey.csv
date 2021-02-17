@@ -2,3 +2,5 @@ sep=;
 Change-Id=I023e26189b318259864423f28971c618a0a1b926; subject=compat: Add TCA_FLOWER_KEY_CT_FLAGS_REPLY/INVALID definitions; feature=bp_2_14; upstream_status=in_progress; general=;
 Change-Id=Ic9912f564f648697b5545473a121c51aa1da8394; subject=netdev-offload-tc: Add support for ct_state rpl and inv flags; feature=bp_2_14; upstream_status=in_progress; general=;
 Change-Id=I247a0b06165327a750aeee37ae4b810ae686e70b; subject=metadata/Paul_Blakey: Update; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ib89d09c50c57761b357664f1709ade9596e2f975; subject=fixup! compat: Add TCA_FLOWER_KEY_CT_FLAGS_REPLY/INVALID definitions; feature=bp_2_14; upstream_status=in_progress; general=;
+Change-Id=I9108228efd7ce91d3d2519e86f7bac8cb0a91666; subject=metadata/Paul_Blakey: Update; feature=ofed_scripts; upstream_status=ignore; general=;
