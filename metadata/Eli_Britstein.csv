@@ -187,3 +187,5 @@ Change-Id=Iffacd7fed701d8e93178e003dc75f55cb917fe6f; subject=netdev-offload: Pro
 Change-Id=Ib8bb93602ca94532b3dffd388e534a6ac25d7d62; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I8ad6efe0d6fe08eb848eb11637f753037e677903; subject=netdev-offload: Get skip actions number from packet recover; feature=dpdk; upstream_status=ignore; general=;
 Change-Id=I89f2ec5a18df327980a11a32993b0053a9673bb8; subject=netdev-offload-dpdk: Set number of skipped actions for flow miss; feature=dpdk; upstream_status=ignore; general=;
+Change-Id=I60003bae00d4326ec777d1579029ae5b756929c8; subject=netdev-offload-dpdk: Fix assert on miss flow race condition; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I181d2b4ff7c30534ac2c10307054b59b9ee8e488; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
