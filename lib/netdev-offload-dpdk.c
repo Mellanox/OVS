@@ -297,7 +297,8 @@ ufid_to_rte_flow_data_find_protected(struct netdev *netdev,
 static inline struct ufid_to_rte_flow_data *
 ufid_to_rte_flow_associate(const ovs_u128 *ufid, struct netdev *netdev,
                            struct flows_handle *flows, bool actions_offloaded,
-                           struct act_resources *act_resources)
+                           struct act_resources *act_resources,
+                           bool abort_on_dup)
 {
     size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
     struct cmap *map = offload_data_map(netdev);
@@ -308,7 +309,6 @@ ufid_to_rte_flow_associate(const ovs_u128 *ufid, struct netdev *netdev,
         return NULL;
     }
 
-    data = xzalloc(sizeof *data);
     offload_data_lock(netdev);
 
     /*
@@ -316,12 +316,18 @@ ufid_to_rte_flow_associate(const ovs_u128 *ufid, struct netdev *netdev,
      * We should have deleted it first before re-adding it.
      * Thus, if following assert triggers, something is wrong:
      * the rte_flow is not destroyed.
+     * However, in a multh-thread environment, miss rules might be added by
+     * another thread while not in protected mode, so this is possible. For
+     * this, allow it.
      */
     data_prev = ufid_to_rte_flow_data_find_protected(netdev, ufid);
     if (data_prev && !data_prev->dead) {
-        ovs_assert(data_prev->flows.cnt == 0);
+        ovs_assert(!(abort_on_dup && data_prev->flows.cnt));
+        offload_data_unlock(netdev);
+        return NULL;
     }
 
+    data = xzalloc(sizeof *data);
     data->ufid = *ufid;
     data->netdev = netdev_ref(netdev);
     data->actions_offloaded = actions_offloaded;
@@ -2514,6 +2520,11 @@ create_rte_flow(struct netdev *netdev,
 }
 
 static int
+netdev_offload_dpdk_destroy_flow(struct netdev *netdev,
+                                 struct rte_flow *rte_flow,
+                                 unsigned int creation_tid,
+                                 const ovs_u128 *ufid);
+static int
 add_e2e_miss_flow(struct netdev *netdev,
                   const char *devargs,
                   uint32_t e2e_table_id,
@@ -2559,7 +2570,12 @@ add_e2e_miss_flow(struct netdev *netdev,
                 netdev_get_name(netdev), flow_item.rte_flow[0],
                 UUID_ARGS((struct uuid *) &ufid));
     add_flow_item(&flows, &flow_item);
-    ufid_to_rte_flow_associate(&ufid, netdev, &flows, true, &act_resources);
+    if (!ufid_to_rte_flow_associate(&ufid, netdev, &flows, true,
+                                    &act_resources, false)) {
+        netdev_offload_dpdk_destroy_flow(netdev, flow_item.rte_flow[0],
+                                         netdev_offload_thread_id(), &ufid);
+        free_flow_handle(&flows);
+    }
     return 0;
 }
 
@@ -4242,7 +4258,12 @@ add_miss_flow(struct netdev *netdev,
                 netdev_get_name(netdev), flow_item.rte_flow[0],
                 UUID_ARGS((struct uuid *) &ufid));
     add_flow_item(&flows, &flow_item);
-    ufid_to_rte_flow_associate(&ufid, netdev, &flows, true, &act_resources);
+    if (!ufid_to_rte_flow_associate(&ufid, netdev, &flows, true,
+                                    &act_resources, false)) {
+        netdev_offload_dpdk_destroy_flow(netdev, flow_item.rte_flow[0],
+                                         netdev_offload_thread_id(), &ufid);
+        free_flow_handle(&flows);
+    }
     return 0;
 }
 
@@ -4977,8 +4998,10 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
     if (ret) {
         goto out;
     }
+
     flows_data = ufid_to_rte_flow_associate(ufid, netdev, &flows,
-                                            actions_offloaded, &act_resources);
+                                            actions_offloaded, &act_resources,
+                                            true);
 
 out:
     if (ret) {
