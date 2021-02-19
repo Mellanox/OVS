@@ -1938,7 +1938,9 @@ conn_hw_update(struct conntrack *ct,
             *rv_active = offload_class->conn_active(&item, now,
                                                     conn->prev_query);
             if (!*rv_active) {
+                ovs_mutex_lock(&conn->lock);
                 conn_update_expiration(ct, conn, tm, now);
+                ovs_mutex_unlock(&conn->lock);
                 updated = true;
                 break;
             }
@@ -1949,7 +1951,9 @@ conn_hw_update(struct conntrack *ct,
             *rv_active = offload_class->conn_active(&item, now,
                                                     conn->prev_query);
             if (!*rv_active) {
+                ovs_mutex_lock(&conn->lock);
                 conn_update_expiration(ct, conn, tm, now);
+                ovs_mutex_unlock(&conn->lock);
                 updated = true;
                 break;
             }
@@ -2003,14 +2007,12 @@ rcu_quiesce:
         RCULIST_FOR_EACH (conn, exp.node, &ct->exp_lists[i]) {
             bool next_list = false;
 
-            ovs_mutex_lock(&conn->lock);
             rv_active = 0;
             hw_updated = conn_hw_update(ct, offload_class, conn, now,
                                         &rv_active);
 
             if (rv_active == EAGAIN) {
                 /* Impossible to query offload status, try later. */
-                ovs_mutex_unlock(&conn->lock);
                 if (now - start > CT_SWEEP_TIMEOUT_MS) {
                     /* The hardware might be unavailable for status
                      * update. Do not repeat RCU quiescing endlessly,
@@ -2025,16 +2027,16 @@ rcu_quiesce:
             }
 
             if (!hw_updated) {
-                if (!conn_expired(conn, now) || count >= limit) {
-                    min_expiration = MIN(min_expiration, conn->expiration);
+                long long int expiration = conn_expiration(conn);
+
+                if (now < expiration || count >= limit) {
+                    min_expiration = MIN(min_expiration, expiration);
                     next_list = true;
                 } else {
                     conn_batch[batch_count++] = conn;
                     count++;
                 }
             }
-
-            ovs_mutex_unlock(&conn->lock);
 
             if (batch_count == ARRAY_SIZE(conn_batch)) {
                 conn_batch_clean(ct, conn_batch, &batch_count);
