@@ -276,7 +276,7 @@ conn_schedule_expiration(struct conntrack *ct, struct conn *conn,
                          enum ct_timeout tm, long long now, uint32_t tp_value)
 {
     conn_expire_init(conn, ct);
-    conn->expiration = now + tp_value * 1000;
+    atomic_store_relaxed(&conn->expiration, now + tp_value * 1000);
     conn->exp.tm = tm;
     if (!atomic_flag_test_and_set(&conn->exp.insert_once)) {
         ovsrcu_postpone(conn_expire_insert, conn);
