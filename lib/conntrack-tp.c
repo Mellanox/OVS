@@ -272,31 +272,13 @@ conn_expire_insert(struct conn *conn)
 }
 
 static void
-conn_schedule_expiration(struct conntrack *ct, struct conn *conn,
-                         enum ct_timeout tm, long long now, uint32_t tp_value)
+conn_schedule_expiration(struct conn *conn, enum ct_timeout tm, long long now,
+                         uint32_t tp_value)
 {
-    conn_expire_init(conn, ct);
     atomic_store_relaxed(&conn->expiration, now + tp_value * 1000);
     conn->exp.tm = tm;
     if (!atomic_flag_test_and_set(&conn->exp.insert_once)) {
         ovsrcu_postpone(conn_expire_insert, conn);
-    }
-}
-
-
-static void
-conn_update_expiration__(struct conntrack *ct, struct conn *conn,
-                         enum ct_timeout tm, long long now,
-                         uint32_t tp_value)
-    OVS_REQUIRES(conn->lock)
-{
-    VLOG_DBG_RL(&rl, "Update timeout %s zone=%u with policy id=%d "
-                "val=%u sec.",
-                ct_timeout_str[tm], conn->key.zone, conn->tp_id, tp_value);
-
-    if (!conn->cleaned) {
-        conn_expire_remove(&conn->exp, true);
-        conn_schedule_expiration(ct, conn, tm, now, tp_value);
     }
 }
 
@@ -324,7 +306,15 @@ conn_update_expiration(struct conntrack *ct, struct conn *conn,
     uint32_t tp_value;
 
     tp_value = get_tp_id_val(ct, conn->tp_id, tm);
-    conn_update_expiration__(ct, conn, tm, now, tp_value);
+
+    VLOG_DBG_RL(&rl, "Update timeout %s zone=%u with policy id=%d "
+                "val=%u sec.",
+                ct_timeout_str[tm], conn->key.zone, conn->tp_id, tp_value);
+
+    if (!conn->cleaned) {
+        conn_expire_remove(&conn->exp, true);
+        conn_schedule_expiration(conn, tm, now, tp_value);
+    }
 }
 
 /* ct_lock must be held. */
@@ -345,5 +335,6 @@ conn_init_expiration(struct conntrack *ct, struct conn *conn,
     VLOG_DBG_RL(&rl, "Init timeout %s zone=%u with policy id=%d val=%u sec.",
                 ct_timeout_str[tm], conn->key.zone, conn->tp_id, val);
 
-    conn_schedule_expiration(ct, conn, tm, now, val);
+    conn_expire_init(conn, ct);
+    conn_schedule_expiration(conn, tm, now, val);
 }
