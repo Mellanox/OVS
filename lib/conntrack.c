@@ -104,11 +104,13 @@ static enum ct_update_res conn_update(struct conntrack *ct, struct conn *conn,
                                       long long now);
 static long long int conn_expiration(const struct conn *);
 static bool conn_expired(struct conn *, long long now);
-static void set_mark(struct dp_packet *, struct conn *,
-                     uint32_t val, uint32_t mask);
-static void set_label(struct dp_packet *, struct conn *,
-                      const struct ovs_key_ct_labels *val,
-                      const struct ovs_key_ct_labels *mask);
+static void set_mark(struct dp_packet *, struct conn *conn,
+                     uint32_t, uint32_t)
+    OVS_REQUIRES(conn->lock);
+static void set_label(struct dp_packet *, struct conn *conn,
+                      const struct ovs_key_ct_labels *,
+                      const struct ovs_key_ct_labels *)
+    OVS_REQUIRES(conn->lock);
 static void *clean_thread_main(void *f_);
 
 static bool
@@ -712,34 +714,8 @@ conn_lookup(struct conntrack *ct, const struct conn_key *key,
 }
 
 static void
-write_ct_md(struct dp_packet *pkt, uint16_t zone, const struct conn *conn,
-            const struct conn_key *key, const struct alg_exp_node *alg_exp)
+write_ct_md_key(struct dp_packet *pkt, const struct conn_key *key)
 {
-    pkt->md.ct_state |= CS_TRACKED;
-    pkt->md.ct_zone = zone;
-
-    if (conn) {
-        ovs_mutex_lock(&conn->lock);
-        pkt->md.ct_mark = conn->mark;
-        pkt->md.ct_label = conn->label;
-        ovs_mutex_unlock(&conn->lock);
-    } else {
-        pkt->md.ct_mark = 0;
-        pkt->md.ct_label = OVS_U128_ZERO;
-    }
-
-    /* Use the original direction tuple if we have it. */
-    if (conn) {
-        if (conn->alg_related) {
-            key = &conn->parent_key;
-        } else {
-            key = &conn->key;
-        }
-    } else if (alg_exp) {
-        pkt->md.ct_mark = alg_exp->parent_mark;
-        pkt->md.ct_label = alg_exp->parent_label;
-        key = &alg_exp->parent_key;
-    }
 
     pkt->md.ct_orig_tuple_ipv6 = false;
 
@@ -769,6 +745,48 @@ write_ct_md(struct dp_packet *pkt, uint16_t zone, const struct conn *conn,
     } else {
         memset(&pkt->md.ct_orig_tuple, 0, sizeof pkt->md.ct_orig_tuple);
     }
+}
+
+static void
+write_ct_md_conn(struct dp_packet *pkt, uint16_t zone,
+                 const struct conn *conn)
+    OVS_REQUIRES(conn->lock)
+{
+    const struct conn_key *key;
+
+    pkt->md.ct_state |= CS_TRACKED;
+    pkt->md.ct_zone = zone;
+
+    pkt->md.ct_mark = conn->mark;
+    pkt->md.ct_label = conn->label;
+
+    /* Use the original direction tuple if we have it. */
+    if (conn->alg_related) {
+        key = &conn->parent_key;
+    } else {
+        key = &conn->key;
+    }
+
+    write_ct_md_key(pkt, key);
+}
+
+static void
+write_ct_md_alg_exp(struct dp_packet *pkt, uint16_t zone,
+                    const struct conn_key *key, const struct alg_exp_node *alg_exp)
+{
+    pkt->md.ct_state |= CS_TRACKED;
+    pkt->md.ct_zone = zone;
+
+    if (alg_exp) {
+        pkt->md.ct_mark = alg_exp->parent_mark;
+        pkt->md.ct_label = alg_exp->parent_label;
+        key = &alg_exp->parent_key;
+    } else {
+        pkt->md.ct_mark = 0;
+        pkt->md.ct_label = OVS_U128_ZERO;
+    }
+
+    write_ct_md_key(pkt, key);
 }
 
 static uint8_t
@@ -1424,7 +1442,6 @@ process_one_fast(uint16_t zone, const uint32_t *setmark,
     ovs_mutex_lock(&conn->lock);
     pkt->md.ct_mark = conn->mark;
     pkt->md.ct_label = conn->label;
-    ovs_mutex_unlock(&conn->lock);
 
     if (setmark) {
         set_mark(pkt, conn, setmark[0], setmark[1]);
@@ -1433,6 +1450,8 @@ process_one_fast(uint16_t zone, const uint32_t *setmark,
     if (setlabel) {
         set_label(pkt, conn, &setlabel[0], &setlabel[1]);
     }
+
+    ovs_mutex_unlock(&conn->lock);
 }
 
 static void
@@ -1471,7 +1490,7 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
 
             if (!conn) {
                 pkt->md.ct_state |= CS_INVALID;
-                write_ct_md(pkt, zone, NULL, NULL, NULL);
+                write_ct_md_alg_exp(pkt, zone, NULL, NULL);
                 char *log_msg = xasprintf("Missing parent conn %p", rev_conn);
                 ct_print_conn_info(rev_conn, log_msg, VLL_INFO, true, true);
                 free(log_msg);
@@ -1527,14 +1546,20 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
         }
     }
 
-    write_ct_md(pkt, zone, conn, &ctx->key, alg_exp);
+    if (conn) {
+        ovs_mutex_lock(&conn->lock);
 
-    if (conn && setmark) {
-        set_mark(pkt, conn, setmark[0], setmark[1]);
-    }
+        write_ct_md_conn(pkt, zone, conn);
+        if (setmark) {
+            set_mark(pkt, conn, setmark[0], setmark[1]);
+        }
+        if (setlabel) {
+            set_label(pkt, conn, &setlabel[0], &setlabel[1]);
+        }
 
-    if (conn && setlabel) {
-        set_label(pkt, conn, &setlabel[0], &setlabel[1]);
+        ovs_mutex_unlock(&conn->lock);
+    } else {
+        write_ct_md_alg_exp(pkt, zone, &ctx->key, alg_exp);
     }
 
     handle_alg_ctl(ct, ctx, pkt, ct_alg_ctl, conn, now, !!nat_action_info);
@@ -1801,7 +1826,7 @@ conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
         label = conn ? conn->label : OVS_U128_ZERO;
         ctx.conn = NULL;
         if (OVS_UNLIKELY(packet->md.ct_state == CS_INVALID)) {
-            write_ct_md(packet, zone, NULL, NULL, NULL);
+            write_ct_md_alg_exp(packet, zone, NULL, NULL);
         } else if (conn && conn->key.zone == zone && !force
                    && !get_alg_ctl_type(packet, tp_src, tp_dst, helper)) {
             process_one_fast(zone, setmark, setlabel, nat_action_info,
@@ -1809,7 +1834,7 @@ conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
         } else if (OVS_UNLIKELY(!conn_key_extract(ct, packet, dl_type, &ctx,
                                 zone))) {
             packet->md.ct_state = CS_INVALID;
-            write_ct_md(packet, zone, NULL, NULL, NULL);
+            write_ct_md_alg_exp(packet, zone, NULL, NULL);
         } else {
             process_one(ct, packet, &ctx, zone, force, commit, now, setmark,
                         setlabel, nat_action_info, tp_src, tp_dst, helper,
@@ -1847,23 +1872,22 @@ conntrack_clear(struct dp_packet *packet)
 
 static void
 set_mark(struct dp_packet *pkt, struct conn *conn, uint32_t val, uint32_t mask)
+    OVS_REQUIRES(conn->lock)
 {
-    ovs_mutex_lock(&conn->lock);
     if (conn->alg_related) {
         pkt->md.ct_mark = conn->mark;
     } else {
         pkt->md.ct_mark = val | (pkt->md.ct_mark & ~(mask));
         conn->mark = pkt->md.ct_mark;
     }
-    ovs_mutex_unlock(&conn->lock);
 }
 
 static void
 set_label(struct dp_packet *pkt, struct conn *conn,
           const struct ovs_key_ct_labels *val,
           const struct ovs_key_ct_labels *mask)
+    OVS_REQUIRES(conn->lock)
 {
-    ovs_mutex_lock(&conn->lock);
     if (conn->alg_related) {
         pkt->md.ct_label = conn->label;
     } else {
@@ -1878,7 +1902,6 @@ set_label(struct dp_packet *pkt, struct conn *conn,
                               | (pkt->md.ct_label.u64.hi & ~(m.u64.hi));
         conn->label = pkt->md.ct_label;
     }
-    ovs_mutex_unlock(&conn->lock);
 }
 
 
