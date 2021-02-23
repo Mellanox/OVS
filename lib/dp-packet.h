@@ -126,7 +126,8 @@ OVS_PACKED(
 struct e2e_cache_trace_info {
     uint16_t num_elements;
     uint16_t e2e_trace_ct_ufids;
-    ovs_u128 ufids[E2E_CACHE_MAX_TRACE];
+    uint32_t pad;
+    OVS_ALIGNED_VAR(sizeof(void *)) ovs_u128 ufids[E2E_CACHE_MAX_TRACE];
 });
 
 /* The address of the field 'node' will be used for list insertion,
@@ -138,7 +139,8 @@ struct e2e_cache_trace_message {
     OVS_ALIGNED_VAR(sizeof(void *)) struct mpsc_queue_node node;
     void *dp;
     uint32_t num_elements;
-    struct e2e_cache_trace_info data[0];
+    uint32_t pad;
+    OVS_ALIGNED_VAR((sizeof(void *))) struct e2e_cache_trace_info data[0];
 });
 
 #endif
