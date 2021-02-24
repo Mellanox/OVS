@@ -1007,6 +1007,7 @@ static void do_del_port(struct dp_netdev *dp, struct dp_netdev_port *)
     OVS_REQ_WRLOCK(dp->port_rwlock);
 static int dpif_netdev_open(const struct dpif_class *, const char *name,
                             bool create, struct dpif **);
+static sflow_upcall_callback *sflow_upcall_cb;
 static void dp_netdev_execute_actions(struct dp_netdev_pmd_thread *pmd,
                                       struct dp_packet_batch *,
                                       bool should_steal,
@@ -7563,6 +7564,13 @@ dpif_netdev_enable_upcall(struct dpif *dpif)
 }
 
 static void
+dpif_netdev_register_sflow_upcall_cb(struct dpif *dpif OVS_UNUSED,
+                                     sflow_upcall_callback *cb)
+{
+    sflow_upcall_cb = cb;
+}
+
+static void
 dp_netdev_pmd_reload_done(struct dp_netdev_pmd_thread *pmd)
 {
     atomic_store_relaxed(&pmd->wait_for_reload, false);
@@ -11579,7 +11587,7 @@ const struct dpif_class dpif_netdev_class = {
     dpif_netdev_register_upcall_cb,
     dpif_netdev_enable_upcall,
     dpif_netdev_disable_upcall,
-    NULL,                       /* register_sflow_upcall_cb */
+    dpif_netdev_register_sflow_upcall_cb,
     dpif_netdev_get_datapath_version,
     dpif_netdev_ct_dump_start,
     dpif_netdev_ct_dump_next,
