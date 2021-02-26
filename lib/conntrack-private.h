@@ -180,7 +180,7 @@ enum ct_update_res {
 };
 
 struct conntrack {
-    struct ovs_mutex ct_lock; /* Protects 2 following fields. */
+    struct ovs_spin ct_lock; /* Protects 2 following fields. */
     struct cmap conns OVS_GUARDED;
     struct rculist exp_lists[N_CT_TM] OVS_GUARDED;
     struct cmap zone_limits OVS_GUARDED;
@@ -212,16 +212,16 @@ struct conntrack {
 };
 
 #define conntrack_lock_init(ct) do { \
-    ovs_mutex_init_adaptive(&(ct)->ct_lock); \
+    ovs_spin_init(&(ct)->ct_lock); \
 } while (0)
 #define conntrack_lock_destroy(ct) do { \
-    ovs_mutex_destroy(&(ct)->ct_lock); \
+    ovs_spin_destroy(&(ct)->ct_lock); \
 } while (0)
 #define conntrack_lock(ct) do { \
-    ovs_mutex_lock(&(ct)->ct_lock); \
+    ovs_spin_lock(&(ct)->ct_lock); \
 } while (0)
 #define conntrack_unlock(ct) do { \
-    ovs_mutex_unlock(&(ct)->ct_lock); \
+    ovs_spin_unlock(&(ct)->ct_lock); \
 } while (0)
 
 /* Lock acquisition order:
