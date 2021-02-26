@@ -214,6 +214,19 @@ struct conntrack {
     OVSRCU_TYPE(struct conntrack_offload_class *) offload_class;
 };
 
+#define conntrack_lock_init(ct) do { \
+    ovs_mutex_init_adaptive(&(ct)->ct_lock); \
+} while (0)
+#define conntrack_lock_destroy(ct) do { \
+    ovs_mutex_destroy(&(ct)->ct_lock); \
+} while (0)
+#define conntrack_lock(ct) do { \
+    ovs_mutex_lock(&(ct)->ct_lock); \
+} while (0)
+#define conntrack_unlock(ct) do { \
+    ovs_mutex_unlock(&(ct)->ct_lock); \
+} while (0)
+
 /* Lock acquisition order:
  *    1. 'conn->lock'
  *    2. 'ct_lock'
@@ -256,11 +269,11 @@ conn_expire_remove(struct conn_expire *exp, bool need_ct_lock)
     if (!atomic_flag_test_and_set(&exp->remove_once)
         && rculist_next(&exp->node)) {
         if (need_ct_lock) {
-            ovs_mutex_lock(&exp->ct->ct_lock);
+            conntrack_lock(exp->ct);
         }
         rculist_remove(&exp->node);
         if (need_ct_lock) {
-            ovs_mutex_unlock(&exp->ct->ct_lock);
+            conntrack_unlock(exp->ct);
         }
     }
 }

@@ -167,9 +167,9 @@ timeout_policy_delete(struct conntrack *ct, uint32_t tp_id)
 {
     int err;
 
-    ovs_mutex_lock(&ct->ct_lock);
+    conntrack_lock(ct);
     err = timeout_policy_delete__(ct, tp_id, true);
-    ovs_mutex_unlock(&ct->ct_lock);
+    conntrack_unlock(ct);
     return err;
 }
 
@@ -194,10 +194,10 @@ timeout_policy_update(struct conntrack *ct,
     uint32_t tp_id = new_tp->policy.id;
     int err = 0;
 
-    ovs_mutex_lock(&ct->ct_lock);
+    conntrack_lock(ct);
     timeout_policy_delete__(ct, tp_id, false);
     timeout_policy_create(ct, new_tp);
-    ovs_mutex_unlock(&ct->ct_lock);
+    conntrack_unlock(ct);
     return err;
 }
 
@@ -260,9 +260,9 @@ conn_expire_insert(struct conn *conn)
     ovs_mutex_lock(&conn->lock);
 
     if (!conn->cleaned) {
-        ovs_mutex_lock(&exp->ct->ct_lock);
+        conntrack_lock(exp->ct);
         rculist_push_back(&exp->ct->exp_lists[exp->tm], &exp->node);
-        ovs_mutex_unlock(&exp->ct->ct_lock);
+        conntrack_unlock(exp->ct);
 
         atomic_flag_clear(&exp->insert_once);
         atomic_flag_clear(&exp->remove_once);
