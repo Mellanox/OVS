@@ -147,7 +147,7 @@ struct conn {
                             * its memory. */
 
     /* Mutable data. */
-    struct ovs_mutex lock; /* Guards all mutable fields. */
+    struct ovs_spin lock; /* Guards all mutable fields. */
     struct conn_expire exp;
     ovs_u128 label;
     atomic_llong expiration;
@@ -173,16 +173,16 @@ struct conn {
 };
 
 #define conn_lock_init(conn) do { \
-    ovs_mutex_init(&(conn)->lock); \
+    ovs_spin_init(&(conn)->lock); \
 } while (0)
 #define conn_lock_destroy(conn) do { \
-    ovs_mutex_destroy(&(conn)->lock); \
+    ovs_spin_destroy(&(conn)->lock); \
 } while (0)
 #define conn_lock(conn) do { \
-    ovs_mutex_lock(&(conn)->lock); \
+    ovs_spin_lock(&(conn)->lock); \
 } while (0)
 #define conn_unlock(conn) do { \
-    ovs_mutex_unlock(&(conn)->lock); \
+    ovs_spin_unlock(&(conn)->lock); \
 } while (0)
 
 enum ct_update_res {
