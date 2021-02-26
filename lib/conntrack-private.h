@@ -172,6 +172,19 @@ struct conn {
     struct ct_offloads offloads;
 };
 
+#define conn_lock_init(conn) do { \
+    ovs_mutex_init(&(conn)->lock); \
+} while (0)
+#define conn_lock_destroy(conn) do { \
+    ovs_mutex_destroy(&(conn)->lock); \
+} while (0)
+#define conn_lock(conn) do { \
+    ovs_mutex_lock(&(conn)->lock); \
+} while (0)
+#define conn_unlock(conn) do { \
+    ovs_mutex_unlock(&(conn)->lock); \
+} while (0)
+
 enum ct_update_res {
     CT_UPDATE_INVALID,
     CT_UPDATE_VALID,

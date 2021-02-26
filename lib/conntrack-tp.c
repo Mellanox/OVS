@@ -257,7 +257,7 @@ conn_expire_insert(struct conn *conn)
 {
     struct conn_expire *exp = &conn->exp;
 
-    ovs_mutex_lock(&conn->lock);
+    conn_lock(conn);
 
     if (!conn->cleaned) {
         conntrack_lock(exp->ct);
@@ -268,7 +268,7 @@ conn_expire_insert(struct conn *conn)
         atomic_flag_clear(&exp->remove_once);
     }
 
-    ovs_mutex_unlock(&conn->lock);
+    conn_unlock(conn);
 }
 
 static void
