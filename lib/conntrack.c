@@ -375,8 +375,8 @@ conntrack_init(void *dp)
     hindex_init(&ct->alg_expectation_refs);
     ovs_rwlock_unlock(&ct->resources_lock);
 
-    ovs_mutex_init_adaptive(&ct->ct_lock);
-    ovs_mutex_lock(&ct->ct_lock);
+    conntrack_lock_init(ct);
+    conntrack_lock(ct);
     cmap_init(&ct->conns);
     for (unsigned i = 0; i < ARRAY_SIZE(ct->exp_lists); i++) {
         rculist_init(&ct->exp_lists[i]);
@@ -385,7 +385,7 @@ conntrack_init(void *dp)
 
     ct->zone_limit_seq = 0;
     timeout_policy_init(ct);
-    ovs_mutex_unlock(&ct->ct_lock);
+    conntrack_unlock(ct);
 
     ct->hash_basis = random_uint32();
     atomic_count_init(&ct->n_conn, 0);
@@ -488,9 +488,9 @@ zone_limit_update(struct conntrack *ct, int32_t zone, uint32_t limit)
         zl->czl.limit = limit;
         VLOG_INFO("Changed zone limit of %u for zone %d", limit, zone);
     } else {
-        ovs_mutex_lock(&ct->ct_lock);
+        conntrack_lock(ct);
         err = zone_limit_create(ct, zone, limit);
-        ovs_mutex_unlock(&ct->ct_lock);
+        conntrack_unlock(ct);
         if (!err) {
             VLOG_INFO("Created zone limit of %u for zone %d", limit, zone);
         } else {
@@ -513,14 +513,14 @@ zone_limit_clean(struct conntrack *ct, struct zone_limit *zl)
 int
 zone_limit_delete(struct conntrack *ct, uint16_t zone)
 {
-    ovs_mutex_lock(&ct->ct_lock);
+    conntrack_lock(ct);
     struct zone_limit *zl = zone_limit_lookup_protected(ct, zone);
     if (zl) {
         zone_limit_clean(ct, zl);
-        ovs_mutex_unlock(&ct->ct_lock);
+        conntrack_unlock(ct);
         VLOG_INFO("Deleted zone limit for zone %d", zone);
     } else {
-        ovs_mutex_unlock(&ct->ct_lock);
+        conntrack_unlock(ct);
         VLOG_INFO("Attempted delete of non-existent zone limit: zone %d",
                   zone);
     }
@@ -561,7 +561,7 @@ conn_clean(struct conntrack *ct, struct conn *conn)
     }
 
     ovs_mutex_lock(&conn->lock);
-    ovs_mutex_lock(&ct->ct_lock);
+    conntrack_lock(ct);
 
     conn_clean_cmn(ct, conn);
     if (conn->nat_conn) {
@@ -573,7 +573,7 @@ conn_clean(struct conntrack *ct, struct conn *conn)
     ovsrcu_postpone(delete_conn, conn);
     atomic_count_dec(&ct->n_conn);
 
-    ovs_mutex_unlock(&ct->ct_lock);
+    conntrack_unlock(ct);
     ovs_mutex_unlock(&conn->lock);
 }
 
@@ -586,7 +586,7 @@ conn_clean_one(struct conntrack *ct, struct conn *conn)
     }
 
     ovs_mutex_lock(&conn->lock);
-    ovs_mutex_lock(&ct->ct_lock);
+    conntrack_lock(ct);
 
     conn_clean_cmn(ct, conn);
     if (conn->conn_type == CT_CONN_TYPE_DEFAULT) {
@@ -596,7 +596,7 @@ conn_clean_one(struct conntrack *ct, struct conn *conn)
     }
     ovsrcu_postpone(delete_conn_one, conn);
 
-    ovs_mutex_unlock(&ct->ct_lock);
+    conntrack_unlock(ct);
     ovs_mutex_unlock(&conn->lock);
 }
 
@@ -615,7 +615,7 @@ conntrack_destroy(struct conntrack *ct)
         conn_clean_one(ct, conn);
     }
 
-    ovs_mutex_lock(&ct->ct_lock);
+    conntrack_lock(ct);
 
     cmap_destroy(&ct->conns);
 
@@ -631,8 +631,8 @@ conntrack_destroy(struct conntrack *ct)
     }
     cmap_destroy(&ct->timeout_policies);
 
-    ovs_mutex_unlock(&ct->ct_lock);
-    ovs_mutex_destroy(&ct->ct_lock);
+    conntrack_unlock(ct);
+    conntrack_lock_destroy(ct);
 
     ovs_rwlock_wrlock(&ct->resources_lock);
     struct alg_exp_node *alg_exp_node;
@@ -1197,18 +1197,18 @@ conn_not_found(struct conntrack *ct, struct dp_packet *pkt,
             nat_conn->master_conn = nc;
             uint32_t nat_hash = conn_key_hash(&nat_conn->key, ct->hash_basis);
             atomic_flag_clear(&nc->reclaimed);
-            ovs_mutex_lock(&ct->ct_lock);
+            conntrack_lock(ct);
             cmap_insert(&ct->conns, &nat_conn->cm_node, nat_hash);
-            ovs_mutex_unlock(&ct->ct_lock);
+            conntrack_unlock(ct);
         }
 
         nc->nat_conn = nat_conn;
         ovs_mutex_init_adaptive(&nc->lock);
         nc->conn_type = CT_CONN_TYPE_DEFAULT;
         atomic_flag_clear(&nc->reclaimed);
-        ovs_mutex_lock(&ct->ct_lock);
+        conntrack_lock(ct);
         cmap_insert(&ct->conns, &nc->cm_node, ctx->hash);
-        ovs_mutex_unlock(&ct->ct_lock);
+        conntrack_unlock(ct);
         atomic_count_inc(&ct->n_conn);
         ctx->conn = nc; /* For completeness. */
 
