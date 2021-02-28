@@ -120,6 +120,8 @@ void mpsc_queue_init(struct mpsc_queue *queue);
 void mpsc_queue_destroy(struct mpsc_queue *queue);
 /* Acquire the reader lock if 1 is returned. */
 int mpsc_queue_acquire(struct mpsc_queue *queue);
+/* Wait until the reader lock is acquired. */
+void mpsc_queue_acquire_wait(struct mpsc_queue *queue);
 /* Release the reader lock. */
 void mpsc_queue_release(struct mpsc_queue *queue);
 
@@ -141,6 +143,24 @@ enum mpsc_queue_poll_result {
  */
 enum mpsc_queue_poll_result
 mpsc_queue_poll(struct mpsc_queue *queue, struct mpsc_queue_node **node);
+
+/* Pop an element if there is any in the queue. */
+struct mpsc_queue_node *
+mpsc_queue_pop(struct mpsc_queue *queue);
+
+/* Insert at the back of the queue. Only the consumer can do it. */
+void mpsc_queue_push_back(struct mpsc_queue *queue,
+                          struct mpsc_queue_node *node);
+
+/* Get the current queue tail. */
+struct mpsc_queue_node *mpsc_queue_tail(struct mpsc_queue *queue);
+
+#define MPSC_QUEUE_FOR_EACH(node, queue) \
+    for (node = mpsc_queue_tail(queue); node != NULL; \
+         atomic_read_explicit(&node->next, &node, memory_order_acquire))
+
+#define MPSC_QUEUE_FOR_EACH_POP(node, queue) \
+    while ((node = mpsc_queue_pop(queue)))
 
 /* Producer API. */
 
