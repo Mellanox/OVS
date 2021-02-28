@@ -116,19 +116,14 @@ struct ct_offloads {
 };
 
 struct conn_expire {
-    /* Set once when initializing the expiration node. */
-    struct conntrack *ct;
+    struct mpsc_queue_node node;
+    struct conn *up;
     /* Timeout state of the connection.
      * It follows the connection state updates.
      */
     enum ct_timeout tm;
-    /* Insert and remove the expiration node only once per RCU syncs.
-     * If multiple threads update the connection, its expiration should
-     * be removed only once and added only once to timeout lists.
-     */
-    atomic_flag insert_once;
-    atomic_flag remove_once;
-    struct rculist node;
+    struct ovs_refcount refcount;
+    atomic_flag reschedule;
 };
 
 struct conn {
@@ -146,9 +141,11 @@ struct conn {
                             * True as soon as a thread has started freeing
                             * its memory. */
 
+    /* Inserted once by a PMD, then managed by the 'ct_clean' thread. */
+    struct conn_expire *exp;
+
     /* Mutable data. */
     struct ovs_spin lock; /* Guards all mutable fields. */
-    struct conn_expire exp;
     ovs_u128 label;
     atomic_llong expiration;
     long long prev_query;
@@ -195,7 +192,7 @@ enum ct_update_res {
 struct conntrack {
     struct ovs_spin ct_lock; /* Protects 2 following fields. */
     struct cmap conns OVS_GUARDED;
-    struct rculist exp_lists[N_CT_TM] OVS_GUARDED;
+    struct mpsc_queue exp_lists[N_CT_TM] OVS_GUARDED;
     struct cmap zone_limits OVS_GUARDED;
     struct cmap timeout_policies OVS_GUARDED;
 
@@ -272,19 +269,40 @@ tcp_payload_length(struct dp_packet *pkt)
     }
 }
 
-static inline void
-conn_expire_remove(struct conn_expire *exp, bool need_ct_lock)
-    OVS_NO_THREAD_SAFETY_ANALYSIS
+static inline bool
+conn_expire_tryref(struct conn_expire *exp)
 {
-    if (!atomic_flag_test_and_set(&exp->remove_once)
-        && rculist_next(&exp->node)) {
-        if (need_ct_lock) {
-            conntrack_lock(exp->ct);
-        }
-        rculist_remove(&exp->node);
-        if (need_ct_lock) {
-            conntrack_unlock(exp->ct);
-        }
+    return ovs_refcount_try_ref_rcu(&exp->refcount);
+}
+
+static inline bool
+conn_expire_unref(struct conn_expire *exp)
+{
+    if (ovs_refcount_unref(&exp->refcount) == 1) {
+        ovsrcu_postpone(free, exp);
+        return true;
+    }
+
+    return false;
+}
+
+static inline void
+conn_expire_push_front(struct conntrack *ct, struct conn *conn)
+{
+    if (conn_expire_tryref(conn->exp)) {
+        atomic_flag_clear(&conn->exp->reschedule);
+        mpsc_queue_insert(&ct->exp_lists[conn->exp->tm], &conn->exp->node);
+    }
+}
+
+static inline void
+conn_expire_push_back(struct conntrack *ct, struct conn *conn)
+{
+    if (conn_expire_tryref(conn->exp)) {
+        /* Do not change 'reschedule' state, if this expire node is put
+         * at the tail of the list, it will be re-examined next sweep.
+         */
+        mpsc_queue_push_back(&ct->exp_lists[conn->exp->tm], &conn->exp->node);
     }
 }
 

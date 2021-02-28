@@ -379,7 +379,7 @@ conntrack_init(void *dp)
     conntrack_lock(ct);
     cmap_init(&ct->conns);
     for (unsigned i = 0; i < ARRAY_SIZE(ct->exp_lists); i++) {
-        rculist_init(&ct->exp_lists[i]);
+        mpsc_queue_init(&ct->exp_lists[i]);
     }
     cmap_init(&ct->zone_limits);
 
@@ -528,6 +528,14 @@ zone_limit_delete(struct conntrack *ct, uint16_t zone)
 }
 
 static void
+conn_do_delete(struct conn *conn,
+               void (*delete_cb)(struct conn *))
+{
+    conn_expire_unref(conn->exp);
+    ovsrcu_postpone(delete_cb, conn);
+}
+
+static void
 conn_clean_cmn(struct conntrack *ct, struct conn *conn)
     OVS_REQUIRES(conn->lock, ct->ct_lock)
 {
@@ -568,9 +576,7 @@ conn_clean(struct conntrack *ct, struct conn *conn)
         uint32_t hash = conn_key_hash(&conn->nat_conn->key, ct->hash_basis);
         cmap_remove(&ct->conns, &conn->nat_conn->cm_node, hash);
     }
-    conn_expire_remove(&conn->exp, false);
-    conn->cleaned = true;
-    ovsrcu_postpone(delete_conn, conn);
+    conn_do_delete(conn, delete_conn);
     atomic_count_dec(&ct->n_conn);
 
     conntrack_unlock(ct);
@@ -590,11 +596,9 @@ conn_clean_one(struct conntrack *ct, struct conn *conn)
 
     conn_clean_cmn(ct, conn);
     if (conn->conn_type == CT_CONN_TYPE_DEFAULT) {
-        conn_expire_remove(&conn->exp, false);
-        conn->cleaned = true;
         atomic_count_dec(&ct->n_conn);
     }
-    ovsrcu_postpone(delete_conn_one, conn);
+    conn_do_delete(conn, delete_conn_one);
 
     conntrack_unlock(ct);
     conn_unlock(conn);
@@ -1231,22 +1235,11 @@ conn_not_found(struct conntrack *ct, struct dp_packet *pkt,
      * can limit DoS impact. */
 nat_res_exhaustion:
     free(nat_conn);
-    conn_expire_remove(&nc->exp, false);
-    ovsrcu_postpone(delete_conn_cmn, nc);
+    conn_do_delete(nc, delete_conn_cmn);
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 5);
     VLOG_WARN_RL(&rl, "Unable to NAT due to tuple space exhaustion - "
                  "if DoS attack, use firewalling and/or zone partitioning.");
     return NULL;
-}
-
-static int
-conn_get_tm(struct conn *conn, enum ct_timeout *tm)
-{
-    if (!l4_protos[conn->key.nw_proto]->get_tm) {
-        return -1;
-    }
-    *tm = l4_protos[conn->key.nw_proto]->get_tm(conn);
-    return 0;
 }
 
 static bool
@@ -1915,29 +1908,24 @@ conn_batch_clean(struct conntrack *ct,
     *batch_count = 0;
 }
 
-static bool
+static int
 conn_hw_update(struct conntrack *ct,
                struct conntrack_offload_class *offload_class,
                struct conn *conn,
-               long long now,
-               int *rv_active)
+               enum ct_timeout tm,
+               long long now)
 {
     struct ct_flow_offload_item item;
-    enum ct_timeout tm = 0;
     bool updated = false;
+    int ret = 0;
     int dir;
-
-    if (!offload_class || !offload_class->conn_active ||
-        conn_get_tm(conn, &tm)) {
-        return false;
-    }
 
     for (dir = 0; dir < CT_DIR_NUM; dir++) {
         if (!updated &&
             conntrack_offload_fill_item_common(&item, conn, dir)) {
-            *rv_active = offload_class->conn_active(&item, now,
-                                                    conn->prev_query);
-            if (!*rv_active) {
+            ret = offload_class->conn_active(&item, now,
+                                             conn->prev_query);
+            if (!ret) {
                 conn_lock(conn);
                 conn_update_expiration(ct, conn, tm, now);
                 conn_unlock(conn);
@@ -1948,9 +1936,9 @@ conn_hw_update(struct conntrack *ct,
         if (!updated && conn->nat_conn &&
             conntrack_offload_fill_item_common(&item, conn->nat_conn,
                                                dir)) {
-            *rv_active = offload_class->conn_active(&item, now,
-                                                    conn->prev_query);
-            if (!*rv_active) {
+            ret = offload_class->conn_active(&item, now,
+                                             conn->prev_query);
+            if (!ret) {
                 conn_lock(conn);
                 conn_update_expiration(ct, conn, tm, now);
                 conn_unlock(conn);
@@ -1960,7 +1948,7 @@ conn_hw_update(struct conntrack *ct,
         }
     }
     conn->prev_query = now;
-    return updated;
+    return ret;
 }
 
 #define CT_SWEEP_BATCH_SIZE 32
@@ -1975,21 +1963,28 @@ static long long
 ct_sweep(struct conntrack *ct, long long now, size_t limit)
 {
     struct conntrack_offload_class *offload_class = NULL;
-    struct conn *conn;
     struct conn *conn_batch[CT_SWEEP_BATCH_SIZE];
+    struct mpsc_queue_node *node;
     size_t batch_count = 0;
     long long min_expiration = LLONG_MAX;
     long long int next_rcu_quiesce;
     long long int start = now;
     size_t count = 0;
-    bool hw_updated;
     int rv_active;
+
+    {
+        static bool queue_acquire_once;
+        if (!queue_acquire_once) {
+            for (unsigned i = 0; i < N_CT_TM; i++) {
+                mpsc_queue_acquire_wait(&ct->exp_lists[i]);
+            }
+            queue_acquire_once = true;
+        }
+    }
 
     next_rcu_quiesce = now + CT_SWEEP_QUIESCE_INTERVAL_MS;
     for (unsigned i = 0; i < N_CT_TM; i++) {
 
-        /* Quiesce outside of RCU list iteration,
-         * no reference should be held. */
         if (now >= next_rcu_quiesce) {
 rcu_quiesce:
             /* Do not delay further releasing batched conns if any. */
@@ -2004,15 +1999,25 @@ rcu_quiesce:
                                        &ct->offload_class);
         }
 
-        RCULIST_FOR_EACH (conn, exp.node, &ct->exp_lists[i]) {
-            bool next_list = false;
+        MPSC_QUEUE_FOR_EACH_POP (node, &ct->exp_lists[i]) {
+            struct conn_expire *exp;
+            long long int expiration;
+            struct conn *conn;
 
-            rv_active = 0;
-            hw_updated = conn_hw_update(ct, offload_class, conn, now,
-                                        &rv_active);
+            exp = CONTAINER_OF(node, struct conn_expire, node);
+            if (conn_expire_unref(exp)) {
+                /* Expire node was destroyed by conn RCU calls, nothing
+                 * remaining to do here.
+                 */
+                continue;
+            }
+            conn = exp->up;
+
+            rv_active = conn_hw_update(ct, offload_class, conn, exp->tm, now);
 
             if (rv_active == EAGAIN) {
                 /* Impossible to query offload status, try later. */
+                conn_expire_push_back(ct, conn);
                 if (now - start > CT_SWEEP_TIMEOUT_MS) {
                     /* The hardware might be unavailable for status
                      * update. Do not repeat RCU quiescing endlessly,
@@ -2026,42 +2031,43 @@ rcu_quiesce:
                 }
             }
 
-            if (!hw_updated) {
-                long long int expiration = conn_expiration(conn);
+            expiration = conn_expiration(conn);
 
-                if (now < expiration || count >= limit) {
-                    min_expiration = MIN(min_expiration, expiration);
-                    next_list = true;
+            if (now < expiration) {
+                if (atomic_flag_test_and_set(&conn->exp->reschedule)) {
+                    /* Reschedule was true, another thread marked
+                     * this conn to be enqueued again.
+                     * The conn is not yet expired, still valid, and
+                     * this list should still be iterated.
+                     */
+                    conn_expire_push_front(ct, conn);
                 } else {
-                    conn_batch[batch_count++] = conn;
-                    count++;
+                    /* This connection is still valid, while no other thread
+                     * modified it: it means this list iteration is finished
+                     * for now. Put back the connection within the list.
+                     */
+                    atomic_flag_clear(&conn->exp->reschedule);
+                    conn_expire_push_back(ct, conn);
+                    min_expiration = MIN(min_expiration, expiration);
+                    break;
                 }
-            }
-
-            if (batch_count == ARRAY_SIZE(conn_batch)) {
-                conn_batch_clean(ct, conn_batch, &batch_count);
+            } else {
+                conn_batch[batch_count++] = conn;
+                if (batch_count == ARRAY_SIZE(conn_batch)) {
+                    conn_batch_clean(ct, conn_batch, &batch_count);
+                }
+                count++;
+                if (count >= limit) {
+                    min_expiration = MIN(min_expiration, expiration);
+                    /* Do not check other lists. */
+                    COVERAGE_INC(conntrack_long_cleanup);
+                    goto out;
+                }
             }
 
             /* Attempt quiescing at fixed interval. */
             if (time_msec() >= next_rcu_quiesce) {
-                /* Restarting rculist iteration after quiescing should be fine,
-                 * we are always reading the list front.
-                 */
                 goto rcu_quiesce;
-            }
-
-            if (hw_updated) {
-                continue;
-            }
-
-            if (count >= limit) {
-                /* Do not check other lists. */
-                COVERAGE_INC(conntrack_long_cleanup);
-                goto out;
-            }
-
-            if (next_list) {
-                break;
             }
         }
     }
