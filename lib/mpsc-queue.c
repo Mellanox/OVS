@@ -117,6 +117,7 @@ mpsc_queue_init(struct mpsc_queue *queue)
 
 void
 mpsc_queue_destroy(struct mpsc_queue *queue)
+    OVS_EXCLUDED(queue->read_lock)
 {
     ovs_mutex_destroy(&queue->read_lock);
 }
@@ -126,6 +127,13 @@ mpsc_queue_acquire(struct mpsc_queue *queue)
     OVS_TRY_LOCK(1, queue->read_lock)
 {
     return !ovs_mutex_trylock(&queue->read_lock);
+}
+
+void
+mpsc_queue_acquire_wait(struct mpsc_queue *queue)
+    OVS_ACQUIRES(queue->read_lock)
+{
+    ovs_mutex_lock(&queue->read_lock);
 }
 
 void
@@ -177,6 +185,56 @@ mpsc_queue_poll(struct mpsc_queue *queue, struct mpsc_queue_node **node)
     }
 
     return MPSC_QUEUE_EMPTY;
+}
+
+struct mpsc_queue_node *
+mpsc_queue_pop(struct mpsc_queue *queue)
+    OVS_REQUIRES(queue->read_lock)
+{
+    enum mpsc_queue_poll_result result;
+    struct mpsc_queue_node *node;
+
+    do {
+        result = mpsc_queue_poll(queue, &node);
+        if (result == MPSC_QUEUE_EMPTY) {
+            return NULL;
+        }
+    } while (result == MPSC_QUEUE_RETRY);
+
+    return node;
+}
+
+void
+mpsc_queue_push_back(struct mpsc_queue *queue, struct mpsc_queue_node *node)
+    OVS_REQUIRES(queue->read_lock)
+{
+    struct mpsc_queue_node *tail;
+
+    atomic_read_relaxed(&queue->tail, &tail);
+    atomic_store_relaxed(&node->next, tail);
+    atomic_store_relaxed(&queue->tail, node);
+}
+
+struct mpsc_queue_node *
+mpsc_queue_tail(struct mpsc_queue *queue)
+    OVS_REQUIRES(queue->read_lock)
+{
+    struct mpsc_queue_node *tail;
+    struct mpsc_queue_node *next;
+
+    atomic_read_relaxed(&queue->tail, &tail);
+    atomic_read_explicit(&tail->next, &next, memory_order_acquire);
+
+    if (tail == &queue->stub) {
+        if (next == NULL) {
+            return NULL;
+        }
+
+        atomic_store_relaxed(&queue->tail, next);
+        tail = next;
+    }
+
+    return tail;
 }
 
 void
