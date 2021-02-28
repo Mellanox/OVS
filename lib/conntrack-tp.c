@@ -237,49 +237,12 @@ tm_to_ct_dpif_tp(enum ct_timeout tm)
 }
 
 static void
-conn_expire_init(struct conn *conn, struct conntrack *ct)
-{
-    struct conn_expire *exp = &conn->exp;
-
-    if (exp->ct != NULL) {
-        return;
-    }
-
-    exp->ct = ct;
-    atomic_flag_clear(&exp->insert_once);
-    atomic_flag_clear(&exp->remove_once);
-    /* The expiration is initially unscheduled, flag it as 'removed'. */
-    atomic_flag_test_and_set(&exp->remove_once);
-}
-
-static void
-conn_expire_insert(struct conn *conn)
-{
-    struct conn_expire *exp = &conn->exp;
-
-    conn_lock(conn);
-
-    if (!conn->cleaned) {
-        conntrack_lock(exp->ct);
-        rculist_push_back(&exp->ct->exp_lists[exp->tm], &exp->node);
-        conntrack_unlock(exp->ct);
-
-        atomic_flag_clear(&exp->insert_once);
-        atomic_flag_clear(&exp->remove_once);
-    }
-
-    conn_unlock(conn);
-}
-
-static void
 conn_schedule_expiration(struct conn *conn, enum ct_timeout tm, long long now,
                          uint32_t tp_value)
 {
     atomic_store_relaxed(&conn->expiration, now + tp_value * 1000);
-    conn->exp.tm = tm;
-    if (!atomic_flag_test_and_set(&conn->exp.insert_once)) {
-        ovsrcu_postpone(conn_expire_insert, conn);
-    }
+    conn->exp->tm = tm;
+    ignore(atomic_flag_test_and_set(&conn->exp->reschedule));
 }
 
 static uint32_t
@@ -311,10 +274,17 @@ conn_update_expiration(struct conntrack *ct, struct conn *conn,
                 "val=%u sec.",
                 ct_timeout_str[tm], conn->key.zone, conn->tp_id, tp_value);
 
-    if (!conn->cleaned) {
-        conn_expire_remove(&conn->exp, true);
-        conn_schedule_expiration(conn, tm, now, tp_value);
-    }
+    conn_schedule_expiration(conn, tm, now, tp_value);
+}
+
+static void
+conn_expire_init(struct conn *conn)
+{
+    ovs_assert(conn->exp == NULL);
+    conn->exp = xmalloc(sizeof *conn->exp);
+    conn->exp->up = conn;
+    atomic_flag_clear(&conn->exp->reschedule);
+    ovs_refcount_init(&conn->exp->refcount);
 }
 
 void
@@ -334,6 +304,7 @@ conn_init_expiration(struct conntrack *ct, struct conn *conn,
     VLOG_DBG_RL(&rl, "Init timeout %s zone=%u with policy id=%d val=%u sec.",
                 ct_timeout_str[tm], conn->key.zone, conn->tp_id, val);
 
-    conn_expire_init(conn, ct);
+    conn_expire_init(conn);
     conn_schedule_expiration(conn, tm, now, val);
+    conn_expire_push_front(ct, conn);
 }
