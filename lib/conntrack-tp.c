@@ -317,7 +317,6 @@ conn_update_expiration(struct conntrack *ct, struct conn *conn,
     }
 }
 
-/* ct_lock must be held. */
 void
 conn_init_expiration(struct conntrack *ct, struct conn *conn,
                      enum ct_timeout tm, long long now)
