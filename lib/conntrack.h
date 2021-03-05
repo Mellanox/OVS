@@ -169,6 +169,7 @@ struct conntrack_offload_class {
                        long long prev_now);
     void (*conn_e2e_add)(struct ct_flow_offload_item *);
     void (*conn_e2e_del)(ovs_u128 *, void *dp);
+    bool (*queue_full)(void);
 };
 
 struct conntrack *conntrack_init(void *dp);
