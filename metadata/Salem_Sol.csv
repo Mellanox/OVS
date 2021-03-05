@@ -62,3 +62,5 @@ Change-Id=I54ec711089700c71ce3527f4598755d1a586b068; subject=netdev-offload-dpdk
 Change-Id=I68b032742e139e4e204e9b746a395dcecc2c1ef2; subject=netdev-offload-dpdk: Propogate remote mirroring fields; feature=dpdk; upstream_status=NA; general=;
 Change-Id=Ic4774e27ebfb39c67c0468054c3bbe7ebbecc716; subject=netdev-offload-dpdk: Support remote mirroring; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I0f0d6a10917076f3c15f59ea3d4fc42ba2a493ca; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ib4090205b610f305436438023775502ba75b5c12; subject=netdev-offload-dpdk: Refactor geneve option length; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I723a99c245f2b9c2f3f7e547dc2ed13e340caaf6; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
