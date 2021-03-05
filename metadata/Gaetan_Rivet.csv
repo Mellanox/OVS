@@ -145,3 +145,5 @@ Change-Id=Iea36e9c5d1e309a70a75252ffadd31ab844edf72; subject=conntrack: Use spin
 Change-Id=Icf411f3dc0d85ee81bdea537b21efccdef630327; subject=mpsc-queue: Add iterators and extended API; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I06cd75dc25efa39f56bfef87bda7bb2c4412745f; subject=conntrack: Update expirations only from ct_clean; feature=dpdk; upstream_status=NA; general=;
 Change-Id=Ia35df805b07ebc8dd32b49282993860eee8fca05; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I8410a7f3a8d05a48b64f3d1c0ce1ae00b43588f2; subject=netdev-offload-dpdk: Use proper try-ref function; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Ib82b2f27459cf2398b8457e3d779bdf8d7a561b2; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
