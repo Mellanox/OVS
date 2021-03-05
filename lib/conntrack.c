@@ -1717,8 +1717,14 @@ conntrack_offload_add_conn(struct conntrack *ct,
     offload_class = ovsrcu_get(struct conntrack_offload_class *,
                                &ct->offload_class);
     if (conn->alg || conn->alg_related || !offload_class ||
-        !offload_class->conn_add || !offload_class->conn_get_ufid) {
+        !offload_class->conn_add || !offload_class->conn_get_ufid ||
+        !offload_class->queue_full) {
         conn->offloads.flags |= CT_OFFLOAD_SKIP;
+        return;
+    }
+
+    if (offload_class->queue_full()) {
+        /* Try again later. */
         return;
     }
 
