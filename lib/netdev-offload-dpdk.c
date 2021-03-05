@@ -2084,24 +2084,24 @@ dump_flow_pattern(struct ds *s, const struct rte_flow_item *item)
              DUMP_PATTERN_ITEM(opt_mask->option_type, NULL, "type",
                                "0x%"PRIx8,opt_spec->option_type,
                                opt_mask->option_type, 0);
-             len = opt_spec->length;
-             len_mask = opt_mask->length;
+             len = opt_spec->option_len;
+             len_mask = opt_mask->option_len;
              DUMP_PATTERN_ITEM(len_mask, NULL, "length", "0x%"PRIx8,
                                len, len_mask, 0);
              if (is_all_ones(opt_mask->data,
-                             sizeof (uint32_t) * opt_spec->length)) {
+                             sizeof (uint32_t) * opt_spec->option_len)) {
                  ds_put_cstr(s, "data is 0x");
-                 for (i = 0; i < opt_spec->length; i++) {
+                 for (i = 0; i < opt_spec->option_len; i++) {
                      ds_put_format(s,"%"PRIx32"", htonl(opt_spec->data[i]));
                  }
              } else if (!is_all_zeros(opt_mask->data,
-                         sizeof (uint32_t) * opt_spec->length)) {
+                         sizeof (uint32_t) * opt_spec->option_len)) {
                  ds_put_cstr(s, "data spec 0x");
-                 for (i = 0; i < opt_spec->length; i++) {
+                 for (i = 0; i < opt_spec->option_len; i++) {
                      ds_put_format(s,"%"PRIx32"", htonl(opt_spec->data[i]));
                  }
                  ds_put_cstr(s, "data mask 0x");
-                 for (i = 0; i < opt_spec->length; i++) {
+                 for (i = 0; i < opt_spec->option_len; i++) {
                      ds_put_format(s,"%"PRIx32"", htonl(opt_mask->data[i]));
                  }
              }
@@ -3009,8 +3009,8 @@ parse_geneve_opt_match(struct flow *consumed_masks,
             gnv_opts->opts[idx].option_type = curr_opt_spec.type;
             gnv_opts_mask->opts_mask[idx].option_type = curr_opt_mask.type;
 
-            gnv_opts->opts[idx].length = curr_opt_spec.length;
-            gnv_opts_mask->opts_mask[idx].length = curr_opt_mask.length;
+            gnv_opts->opts[idx].option_len = curr_opt_spec.length;
+            gnv_opts_mask->opts_mask[idx].option_len = curr_opt_mask.length;
 
             /* According to the Geneve protocol
             * https://tools.ietf.org/html/draft-gross-geneve-00#section-3.1
