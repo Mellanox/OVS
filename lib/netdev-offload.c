@@ -267,14 +267,16 @@ int
 netdev_hw_miss_packet_recover(struct netdev *netdev,
                               uint32_t flow_miss_ctx_id,
                               struct dp_packet *packet,
-                              uint8_t *skip_actions)
+                              uint8_t *skip_actions,
+                              struct dpif_sflow_attr *sflow_attr)
 {
     const struct netdev_flow_api *flow_api =
         ovsrcu_get(const struct netdev_flow_api *, &netdev->flow_api);
 
     return (flow_api && flow_api->hw_miss_packet_recover)
             ? flow_api->hw_miss_packet_recover(netdev, flow_miss_ctx_id,
-                                               packet, skip_actions)
+                                               packet, skip_actions,
+                                               sflow_attr)
             : EOPNOTSUPP;
 }
 

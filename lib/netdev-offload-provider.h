@@ -91,7 +91,8 @@ struct netdev_flow_api {
      * in software.
      * Return 0 if successful, otherwise returns a positive errno value. */
     int (*hw_miss_packet_recover)(struct netdev *, uint32_t flow_miss_ctx_id,
-                                  struct dp_packet *, uint8_t *);
+                                  struct dp_packet *, uint8_t *,
+                                  struct dpif_sflow_attr *);
 
     /* Queries an offload provider hardware statistics.
      * One counter per offload thread is expected.

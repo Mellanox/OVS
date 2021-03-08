@@ -10099,7 +10099,7 @@ dp_netdev_hw_flow(const struct dp_netdev_pmd_thread *pmd,
     p = pmd_send_port_cache_lookup(pmd, port_no);
     if (OVS_LIKELY(p)) {
         int err = netdev_hw_miss_packet_recover(p->port->netdev, mark, packet,
-                                                skip_actions);
+                                                skip_actions, NULL);
 
         if (err != 0 && err != EOPNOTSUPP) {
             return -1;
