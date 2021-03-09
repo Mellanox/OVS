@@ -167,6 +167,7 @@ struct cmap_impl {
         uint32_t mask;              /* Number of 'buckets', minus one. */
         uint32_t basis;             /* Basis for rehashing client's
                                        hash values. */
+        uint32_t min_load;          /* User-configured min-load. */
     );
 
     PADDED_MEMBERS_CACHELINE_MARKER(CACHE_LINE_SIZE, cacheline1,
@@ -219,6 +220,12 @@ calc_min_n(uint32_t mask)
     return ((uint64_t) (mask + 1) * CMAP_K * CMAP_MIN_LOAD) >> 32;
 }
 
+static void
+set_custom_min_n(struct cmap_impl *impl, uint32_t mask)
+{
+    impl->min_n = ((uint64_t) (mask + 1) * CMAP_K * impl->min_load) >> 32;
+}
+
 static struct cmap_impl *
 cmap_impl_create(uint32_t mask)
 {
@@ -236,6 +243,21 @@ cmap_impl_create(uint32_t mask)
     impl->basis = random_uint32();
 
     return impl;
+}
+
+void
+cmap_set_min_load(struct cmap *cmap, double load)
+{
+    struct cmap_impl *impl = cmap_get_impl(cmap);
+
+    if (impl == &empty_cmap) {
+        /* Do no set the min_load for the shared empty_cmap,
+         * it would propagate to all CMAPs. Force a rehash to get
+         * a new implementation, and set it there.
+         */
+        impl = cmap_rehash(cmap, impl->mask);
+    }
+    impl->min_load = ((uint32_t) (UINT32_MAX * load));
 }
 
 /* Initializes 'cmap' as an empty concurrent hash map. */
@@ -960,6 +982,11 @@ cmap_rehash(struct cmap *cmap, uint32_t mask)
 
     new = cmap_impl_create(mask);
     ovs_assert(old->n < new->max_n);
+
+    if (old->min_load != CMAP_MIN_LOAD) {
+        new->min_load = old->min_load;
+        set_custom_min_n(new, mask);
+    }
 
     while (!cmap_try_rehash(old, new)) {
         memset(new->buckets, 0, (mask + 1) * sizeof *new->buckets);

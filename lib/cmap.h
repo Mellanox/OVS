@@ -89,6 +89,8 @@ extern OVS_ALIGNED_VAR(CACHE_LINE_SIZE) const struct cmap_impl empty_cmap;
 void cmap_init(struct cmap *);
 void cmap_destroy(struct cmap *);
 
+void cmap_set_min_load(struct cmap *, double load);
+
 /* Count. */
 size_t cmap_count(const struct cmap *);
 bool cmap_is_empty(const struct cmap *);
