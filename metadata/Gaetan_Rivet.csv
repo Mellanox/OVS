@@ -129,3 +129,5 @@ Change-Id=Ia6438ecb863cb25372bbca591ec6f03abac2488b; subject=dpif-netdev: Relax 
 Change-Id=I8feef94b0196cec0b4e32d27b7732c2099ac4839; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I152e2e9c57976aa1e3292571ed704ff6d6e30fce; subject=conntrack-tp: Do not reallocate expiration node; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I6c14cbed85bdef47944887231794d236d385406d; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I6b9f4f7fc7ed7f7826d80157d451c514f8e31200; subject=dp-packet: Align trace structures for aarch64; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I21b7377eabb8135a485d2b31ded83d6268d099e0; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
