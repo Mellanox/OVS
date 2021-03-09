@@ -147,3 +147,5 @@ Change-Id=I06cd75dc25efa39f56bfef87bda7bb2c4412745f; subject=conntrack: Update e
 Change-Id=Ia35df805b07ebc8dd32b49282993860eee8fca05; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I8410a7f3a8d05a48b64f3d1c0ce1ae00b43588f2; subject=netdev-offload-dpdk: Use proper try-ref function; feature=dpdk; upstream_status=NA; general=;
 Change-Id=Ib82b2f27459cf2398b8457e3d779bdf8d7a561b2; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I6200e1844e77ebe4a569ee35183c9209e1fb298e; subject=dpif-netdev: Add offload queue size config; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I0b2e9cb2937e49ddfa5cabe1d577954cd4f5edbe; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
