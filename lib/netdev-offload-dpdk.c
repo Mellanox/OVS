@@ -176,6 +176,8 @@ offload_data_init(struct netdev *netdev)
     data = xzalloc(sizeof *data);
     ovs_mutex_init(&data->map_lock);
     cmap_init(&data->ufid_to_rte_flow);
+    /* Configure cmap to never shrink. */
+    cmap_set_min_load(&data->ufid_to_rte_flow, 0.0);
     data->rte_flow_counters = xcalloc(netdev_offload_dpdk_thread_nb(),
                                       sizeof *data->rte_flow_counters);
 
