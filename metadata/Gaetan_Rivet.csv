@@ -137,3 +137,11 @@ Change-Id=I6fe3983ae97a119fefb52271a068450cd19c6e69; subject=conntrack-tp: Remov
 Change-Id=I2db5b1434bd466621e35289b593de5cc9c4884d8; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I4ae5ca2a75c650aa8375a86f6a6c747693eda72e; subject=conntrack: Refactor conn lock in datapath; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I9f2b38e28ddb546b24e1f782130d4347403f70f8; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ia6bdcf6bc924c3b961f99c9566eb2f01a3914962; subject=conntrack: Restrict conn locks to status update; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I66b7b86486755f149892deaa5fc70e9cfa8c6ecc; subject=conntrack: Abstract conntrack locks; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I4c3ab30e4954c13594dd7569a4fc07357a3e9ce7; subject=conntrack: Use spin-lock for conntrack struct; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I764b6ab098caede5fe1277bc866a2655b3048ef0; subject=conntrack: Abstract conn locks; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Iea36e9c5d1e309a70a75252ffadd31ab844edf72; subject=conntrack: Use spin-lock for conn struct; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Icf411f3dc0d85ee81bdea537b21efccdef630327; subject=mpsc-queue: Add iterators and extended API; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I06cd75dc25efa39f56bfef87bda7bb2c4412745f; subject=conntrack: Update expirations only from ct_clean; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Ia35df805b07ebc8dd32b49282993860eee8fca05; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
