@@ -131,3 +131,7 @@ Change-Id=I152e2e9c57976aa1e3292571ed704ff6d6e30fce; subject=conntrack-tp: Do no
 Change-Id=I6c14cbed85bdef47944887231794d236d385406d; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I6b9f4f7fc7ed7f7826d80157d451c514f8e31200; subject=dp-packet: Align trace structures for aarch64; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I21b7377eabb8135a485d2b31ded83d6268d099e0; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I095802563a8519303a2e4da67eb78d094524cfd0; subject=conntrack-tp: Use atomic store to write conn expiration; feature=dpdk; upstream_status=NA; general=;
+Change-Id=If9a86ff9927e574d70394d28c61f1a098cf36877; subject=conntrack-tp: Refactor expiration update; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I6fe3983ae97a119fefb52271a068450cd19c6e69; subject=conntrack-tp: Remove false comment; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I2db5b1434bd466621e35289b593de5cc9c4884d8; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
