@@ -135,3 +135,5 @@ Change-Id=I095802563a8519303a2e4da67eb78d094524cfd0; subject=conntrack-tp: Use a
 Change-Id=If9a86ff9927e574d70394d28c61f1a098cf36877; subject=conntrack-tp: Refactor expiration update; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I6fe3983ae97a119fefb52271a068450cd19c6e69; subject=conntrack-tp: Remove false comment; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I2db5b1434bd466621e35289b593de5cc9c4884d8; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I4ae5ca2a75c650aa8375a86f6a6c747693eda72e; subject=conntrack: Refactor conn lock in datapath; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I9f2b38e28ddb546b24e1f782130d4347403f70f8; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
