@@ -4575,7 +4575,7 @@ create_ct_conn(struct netdev *netdev,
     }
     fi->has_count[1] = true;
     ret = create_offload_flow(netdev, act_resources->self_table_id, items,
-                              nat_actions.actions, error, act_resources,
+                              ct_actions.actions, error, act_resources,
                               act_vars, fi, 0);
     if (ret) {
         goto ct_err;
