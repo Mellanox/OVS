@@ -98,7 +98,7 @@ flows_handle_unref(struct flows_handle *flows)
 
 static void put_table_id(const char *devargs, uint32_t table_id);
 static void
-free_flow_handle(struct flows_handle *flows)
+free_flow_handle(struct flows_handle *flows, bool postpone_unref)
 {
     int i;
 
@@ -113,7 +113,11 @@ free_flow_handle(struct flows_handle *flows)
             free(CONST_CAST(void *, fi->devargs));
         }
     }
-    ovsrcu_postpone(flows_handle_unref, flows);
+    if (postpone_unref) {
+        ovsrcu_postpone(flows_handle_unref, flows);
+    } else {
+        flows_handle_unref(flows);
+    }
 }
 
 static void
@@ -2553,7 +2557,7 @@ add_e2e_miss_flow(struct netdev *netdev,
                                     &act_resources, false)) {
         netdev_offload_dpdk_destroy_flow(netdev, flow_item.rte_flow[0],
                                          netdev_offload_thread_id(), &ufid);
-        free_flow_handle(&flows);
+        free_flow_handle(&flows, false);
     }
     return 0;
 }
@@ -4241,7 +4245,7 @@ add_miss_flow(struct netdev *netdev,
                                     &act_resources, false)) {
         netdev_offload_dpdk_destroy_flow(netdev, flow_item.rte_flow[0],
                                          netdev_offload_thread_id(), &ufid);
-        free_flow_handle(&flows);
+        free_flow_handle(&flows, false);
     }
     return 0;
 }
@@ -5056,7 +5060,7 @@ netdev_offload_dpdk_remove_flows(struct ufid_to_rte_flow_data *rte_flow_data)
 
     ret = 0;
 out:
-    free_flow_handle(flows);
+    free_flow_handle(flows, true);
     ovs_mutex_unlock(&rte_flow_data->lock);
     if (!ret) {
         put_action_resources(netdev, &rte_flow_data->act_resources);
