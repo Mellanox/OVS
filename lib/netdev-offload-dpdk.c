@@ -532,6 +532,7 @@ static struct ovs_list *context_release_lists;
 
 struct context_release_item {
     struct ovs_list node;
+    struct ovsrcu_gc_node gc_node;
     long long int timestamp;
     struct context_metadata *md;
     const void *arg;
@@ -541,7 +542,7 @@ struct context_release_item {
 };
 
 static void
-context_item_unref(struct context_release_item *item)
+context_item_gc(struct context_release_item *item)
 {
     free(item->data);
     free(item);
@@ -595,7 +596,7 @@ context_release(struct context_release_item *item)
                         &data->associated_i2d_node,
                         data->associated_i2d_hash);
         }
-        ovsrcu_postpone(context_item_unref, item);
+        ovsrcu_gc(context_item_gc, item, gc_node);
         ovs_mutex_unlock(&md->maps_lock);
         return;
     }
