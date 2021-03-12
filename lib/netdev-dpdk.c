@@ -5627,17 +5627,10 @@ netdev_dpdk_rte_flow_query_count(struct netdev *netdev,
             .type = RTE_FLOW_ACTION_TYPE_END,
         },
     };
-    struct netdev_dpdk *dev;
+    struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
     int ret;
 
-    if (!is_dpdk_class(netdev->netdev_class)) {
-        return -1;
-    }
-
-    dev = netdev_dpdk_cast(netdev);
-    ovs_mutex_lock(&dev->mutex);
     ret = rte_flow_query(dev->port_id, rte_flow, actions, query, error);
-    ovs_mutex_unlock(&dev->mutex);
     return ret;
 }
 
