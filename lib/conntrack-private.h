@@ -144,6 +144,8 @@ struct conn {
                             * True as soon as a thread has started freeing
                             * its memory. */
 
+    struct ovsrcu_gc_node gc_node;
+
     /* Inserted once by a PMD, then managed by the 'ct_clean' thread. */
     struct conn_expire *exp;
 

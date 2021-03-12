@@ -539,7 +539,7 @@ conn_do_delete(struct conn *conn,
                void (*delete_cb)(struct conn *))
 {
     conn_expire_unref(conn->exp);
-    ovsrcu_postpone(delete_cb, conn);
+    ovsrcu_gc(delete_cb, conn, gc_node);
 }
 
 static void
