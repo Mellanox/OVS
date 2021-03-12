@@ -84,13 +84,14 @@ struct flow_item {
 };
 
 struct flows_handle {
+    struct ovsrcu_gc_node gc_node;
     struct flow_item *items;
     int cnt;
     int current_max;
 };
 
 static void
-flows_handle_unref(struct flows_handle *flows)
+flows_handle_gc(struct flows_handle *flows)
 {
     free(flows->items);
     flows->items = NULL;
@@ -115,9 +116,9 @@ free_flow_handle(struct flows_handle *flows, bool postpone_unref)
         }
     }
     if (postpone_unref) {
-        ovsrcu_postpone(flows_handle_unref, flows);
+        ovsrcu_gc(flows_handle_gc, flows, gc_node);
     } else {
-        flows_handle_unref(flows);
+        flows_handle_gc(flows);
     }
 }
 
