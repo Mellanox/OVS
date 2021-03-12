@@ -120,7 +120,6 @@ struct ct_offloads {
 
 struct conn_expire {
     struct mpsc_queue_node node;
-    struct conn *up;
     /* Timeout state of the connection.
      * It follows the connection state updates.
      */
@@ -147,7 +146,7 @@ struct conn {
     struct ovsrcu_gc_node gc_node;
 
     /* Inserted once by a PMD, then managed by the 'ct_clean' thread. */
-    struct conn_expire *exp;
+    struct conn_expire exp;
 
     /* Mutable data. */
     struct ovs_spin lock; /* Guards all mutable fields. */
@@ -274,40 +273,23 @@ tcp_payload_length(struct dp_packet *pkt)
     }
 }
 
-static inline bool
-conn_expire_tryref(struct conn_expire *exp)
-{
-    return ovs_refcount_try_ref_rcu(&exp->refcount);
-}
-
-static inline bool
-conn_expire_unref(struct conn_expire *exp)
-{
-    if (ovs_refcount_unref(&exp->refcount) == 1) {
-        ovsrcu_postpone(free, exp);
-        return true;
-    }
-
-    return false;
-}
-
 static inline void
 conn_expire_push_back(struct conntrack *ct, struct conn *conn)
 {
-    if (conn_expire_tryref(conn->exp)) {
-        atomic_flag_clear(&conn->exp->reschedule);
-        mpsc_queue_insert(&ct->exp_lists[conn->exp->tm], &conn->exp->node);
+    if (ovs_refcount_try_ref_rcu(&conn->exp.refcount)) {
+        atomic_flag_clear(&conn->exp.reschedule);
+        mpsc_queue_insert(&ct->exp_lists[conn->exp.tm], &conn->exp.node);
     }
 }
 
 static inline void
 conn_expire_push_front(struct conntrack *ct, struct conn *conn)
 {
-    if (conn_expire_tryref(conn->exp)) {
+    if (ovs_refcount_try_ref_rcu(&conn->exp.refcount)) {
         /* Do not change 'reschedule' state, if this expire node is put
          * at the tail of the list, it will be re-examined next sweep.
          */
-        mpsc_queue_push_front(&ct->exp_lists[conn->exp->tm], &conn->exp->node);
+        mpsc_queue_push_front(&ct->exp_lists[conn->exp.tm], &conn->exp.node);
     }
 }
 

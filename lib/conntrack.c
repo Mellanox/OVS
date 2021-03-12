@@ -538,7 +538,6 @@ static void
 conn_do_delete(struct conn *conn,
                void (*delete_cb)(struct conn *))
 {
-    conn_expire_unref(conn->exp);
     ovsrcu_gc(delete_cb, conn, gc_node);
 }
 
@@ -563,6 +562,16 @@ conn_clean_cmn(struct conntrack *ct, struct conn *conn)
     }
 }
 
+static inline bool
+conn_unref(struct conn *conn)
+{
+    if (ovs_refcount_unref(&conn->exp.refcount) == 1) {
+        conn_do_delete(conn, delete_conn);
+        return true;
+    }
+    return false;
+}
+
 /* Must be called with 'conn' of 'conn_type' CT_CONN_TYPE_DEFAULT.  Also
  * removes the associated nat 'conn' from the lookup datastructures. */
 static void
@@ -583,7 +592,7 @@ conn_clean(struct conntrack *ct, struct conn *conn)
         uint32_t hash = conn_key_hash(&conn->nat_conn->key, ct->hash_basis);
         cmap_remove(&ct->conns, &conn->nat_conn->cm_node, hash);
     }
-    conn_do_delete(conn, delete_conn);
+    conn_unref(conn);
     atomic_count_dec(&ct->n_conn);
 
     conntrack_unlock(ct);
@@ -606,10 +615,8 @@ conntrack_destroy(struct conntrack *ct)
 
         mpsc_queue_acquire(&ct->exp_lists[i]);
         MPSC_QUEUE_FOR_EACH_POP (node, &ct->exp_lists[i]) {
-            struct conn_expire *exp;
-
-            exp = CONTAINER_OF(node, struct conn_expire, node);
-            conn_expire_unref(exp);
+            conn = CONTAINER_OF(node, struct conn, exp.node);
+            conn_unref(conn);
         }
         mpsc_queue_release(&ct->exp_lists[i]);
         mpsc_queue_destroy(&ct->exp_lists[i]);
@@ -2006,18 +2013,15 @@ rcu_quiesce:
         }
 
         MPSC_QUEUE_FOR_EACH_POP (node, &ct->exp_lists[i]) {
-            struct conn_expire *exp;
             long long int expiration;
             struct conn *conn;
 
-            exp = CONTAINER_OF(node, struct conn_expire, node);
-            if (conn_expire_unref(exp)) {
-                /* Expire node was destroyed by conn RCU calls, nothing
-                 * remaining to do here.
-                 */
+            conn = CONTAINER_OF(node, struct conn, exp.node);
+            if (conn_unref(conn)) {
+                /* Node was destroyed by RCU calls. */
                 continue;
             }
-            conn = exp->up;
+
             if (conn == end_of_queue) {
                 /* If we already re-enqueued this conn during this sweep,
                  * stop iterating this list and skip to the next.
@@ -2033,8 +2037,8 @@ rcu_quiesce:
                 goto out;
             }
 
-            rv_active = conn_hw_update(ct, offload_class, conn, exp->tm, now);
-
+            rv_active = conn_hw_update(ct, offload_class, conn,
+                                       conn->exp.tm, now);
             if (rv_active == EAGAIN) {
                 /* Impossible to query offload status, try later. */
                 conn_expire_push_front(ct, conn);
@@ -2044,7 +2048,7 @@ rcu_quiesce:
             expiration = conn_expiration(conn);
 
             if (now < expiration) {
-                if (atomic_flag_test_and_set(&conn->exp->reschedule)) {
+                if (atomic_flag_test_and_set(&conn->exp.reschedule)) {
                     /* Reschedule was true, another thread marked
                      * this conn to be enqueued again.
                      * The conn is not yet expired, still valid, and
@@ -2059,7 +2063,7 @@ rcu_quiesce:
                      * modified it: it means this list iteration is finished
                      * for now. Put back the connection within the list.
                      */
-                    atomic_flag_clear(&conn->exp->reschedule);
+                    atomic_flag_clear(&conn->exp.reschedule);
                     conn_expire_push_front(ct, conn);
                     min_expiration = MIN(min_expiration, expiration);
                     break;

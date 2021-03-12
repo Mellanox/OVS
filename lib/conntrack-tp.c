@@ -241,8 +241,8 @@ conn_schedule_expiration(struct conn *conn, enum ct_timeout tm, long long now,
                          uint32_t tp_value)
 {
     atomic_store_relaxed(&conn->expiration, now + tp_value * 1000);
-    conn->exp->tm = tm;
-    ignore(atomic_flag_test_and_set(&conn->exp->reschedule));
+    conn->exp.tm = tm;
+    ignore(atomic_flag_test_and_set(&conn->exp.reschedule));
 }
 
 static uint32_t
@@ -280,11 +280,8 @@ conn_update_expiration(struct conntrack *ct, struct conn *conn,
 static void
 conn_expire_init(struct conn *conn)
 {
-    ovs_assert(conn->exp == NULL);
-    conn->exp = xmalloc(sizeof *conn->exp);
-    conn->exp->up = conn;
-    atomic_flag_clear(&conn->exp->reschedule);
-    ovs_refcount_init(&conn->exp->refcount);
+    atomic_flag_clear(&conn->exp.reschedule);
+    ovs_refcount_init(&conn->exp.refcount);
 }
 
 void
