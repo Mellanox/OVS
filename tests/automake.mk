@@ -468,6 +468,7 @@ tests_ovstest_SOURCES = \
 	tests/test-packets.c \
 	tests/test-random.c \
 	tests/test-rcu.c \
+	tests/test-rcu-gc.c \
 	tests/test-reconnect.c \
 	tests/test-rstp.c \
 	tests/test-seq-pool.c \
