@@ -155,6 +155,7 @@ struct ufid_to_rte_flow_data {
     struct dpif_flow_stats stats;
     struct act_resources act_resources;
     struct ovs_mutex lock;
+    struct ovsrcu_gc_node gc_node;
     volatile bool dead;
 };
 
@@ -350,7 +351,7 @@ ufid_to_rte_flow_associate(const ovs_u128 *ufid, struct netdev *netdev,
 }
 
 static void
-ufid_to_rte_flow_data_unref(struct ufid_to_rte_flow_data *data)
+ufid_to_rte_flow_data_gc(struct ufid_to_rte_flow_data *data)
 {
     ovs_mutex_destroy(&data->lock);
     free(data);
@@ -5322,7 +5323,7 @@ out:
     ovs_mutex_unlock(&rte_flow_data->lock);
     if (!ret) {
         put_action_resources(netdev, &rte_flow_data->act_resources);
-        ovsrcu_postpone(ufid_to_rte_flow_data_unref, rte_flow_data);
+        ovsrcu_gc(ufid_to_rte_flow_data_gc, rte_flow_data, gc_node);
     }
     return ret;
 }
