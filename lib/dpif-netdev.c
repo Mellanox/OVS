@@ -468,6 +468,7 @@ union dp_offload_thread_data {
 
 struct dp_offload_thread_item {
     struct mpsc_queue_node node;
+    struct ovsrcu_gc_node gc_node;
     int type;
     struct dp_netdev *dp;
     union dp_offload_thread_data data[0];
@@ -3062,10 +3063,10 @@ dp_netdev_offload_item_unref(struct dp_offload_thread_item *offload_item)
     switch (offload_item->type) {
     case DP_FLOW_OFFLOAD_ITEM:
         dp_netdev_flow_unref(offload_item->data->flow_offload.flow);
-        ovsrcu_postpone(dp_netdev_flow_offload_free, offload_item);
+        ovsrcu_gc(dp_netdev_flow_offload_free, offload_item, gc_node);
         break;
     case DP_CT_OFFLOAD_ITEM:
-        ovsrcu_postpone(dp_netdev_ct_offload_free, offload_item);
+        ovsrcu_gc(dp_netdev_ct_offload_free, offload_item, gc_node);
         break;
     case DP_FLUSH_OFFLOAD_ITEM:
         free(offload_item);
