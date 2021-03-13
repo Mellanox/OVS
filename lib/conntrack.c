@@ -673,7 +673,11 @@ conn_key_lookup(struct conntrack *ct, const struct conn_key *key,
              * T1 - T0 as well as current ct_sweep expiration backlog is
              * over the connection timeout.
              */
-            conn_clean(ct, conn);
+            if (conn->conn_type == CT_CONN_TYPE_DEFAULT) {
+                conn_clean(ct, conn);
+            } else {
+                conn_clean(ct, conn->master_conn);
+            }
             break;
         }
 
