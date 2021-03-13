@@ -149,3 +149,5 @@ Change-Id=I8410a7f3a8d05a48b64f3d1c0ce1ae00b43588f2; subject=netdev-offload-dpdk
 Change-Id=Ib82b2f27459cf2398b8457e3d779bdf8d7a561b2; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I6200e1844e77ebe4a569ee35183c9209e1fb298e; subject=dpif-netdev: Add offload queue size config; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I0b2e9cb2937e49ddfa5cabe1d577954cd4f5edbe; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I2e93bd7d0356ea8fc603c576c02412f03e8b8823; subject=netdev-dpdk: Do not lock rte_flow query count; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I2886b88d6ba8944b4886375fe8d6358e9aa7ef3b; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
