@@ -97,7 +97,6 @@ static struct conn *new_conn(struct conntrack *ct, struct dp_packet *pkt,
                              uint32_t tp_id);
 static void delete_conn_cmn(struct conn *);
 static void delete_conn(struct conn *);
-static void delete_conn_one(struct conn *conn);
 static enum ct_update_res conn_update(struct conntrack *ct, struct conn *conn,
                                       struct dp_packet *pkt,
                                       struct conn_lookup_ctx *ctx,
@@ -591,27 +590,6 @@ conn_clean(struct conntrack *ct, struct conn *conn)
     conn_unlock(conn);
 }
 
-static void
-conn_clean_one(struct conntrack *ct, struct conn *conn)
-    OVS_EXCLUDED(conn->lock, ct->ct_lock)
-{
-    if (atomic_flag_test_and_set(&conn->reclaimed)) {
-        return;
-    }
-
-    conn_lock(conn);
-    conntrack_lock(ct);
-
-    conn_clean_cmn(ct, conn);
-    if (conn->conn_type == CT_CONN_TYPE_DEFAULT) {
-        atomic_count_dec(&ct->n_conn);
-    }
-    conn_do_delete(conn, delete_conn_one);
-
-    conntrack_unlock(ct);
-    conn_unlock(conn);
-}
-
 /* Destroys the connection tracker 'ct' and frees all the allocated memory.
  * The caller of this function must already have shut down packet input
  * and PMD threads (which would have been quiesced).  */
@@ -624,7 +602,12 @@ conntrack_destroy(struct conntrack *ct)
     latch_destroy(&ct->clean_thread_exit);
 
     CMAP_FOR_EACH (conn, cm_node, &ct->conns) {
-        conn_clean_one(ct, conn);
+        if (conn->conn_type == CT_CONN_TYPE_DEFAULT) {
+            /* Pass NAT conn, they will be cleaned when
+             * their master conn is removed.
+             */
+            conn_clean(ct, conn);
+        }
     }
 
     conntrack_lock(ct);
@@ -2965,16 +2948,6 @@ delete_conn(struct conn *conn)
     free(conn->nat_conn);
     delete_conn_cmn(conn);
 }
-
-/* Only used by conn_clean_one(). */
-static void
-delete_conn_one(struct conn *conn)
-{
-    if (conn->conn_type == CT_CONN_TYPE_DEFAULT) {
-        conn_lock_destroy(conn);
-    }
-    delete_conn_cmn(conn);
-}
 
 /* Convert a conntrack address 'a' into an IP address 'b' based on 'dl_type'.
  *
@@ -3156,8 +3129,12 @@ conntrack_flush(struct conntrack *ct, const uint16_t *zone)
     struct conn *conn;
 
     CMAP_FOR_EACH (conn, cm_node, &ct->conns) {
-        if (!zone || *zone == conn->key.zone) {
-            conn_clean_one(ct, conn);
+        if ((!zone || *zone == conn->key.zone) &&
+            conn->conn_type == CT_CONN_TYPE_DEFAULT) {
+            /* Pass NAT conn, they will be cleaned when
+             * their master conn is removed.
+             */
+            conn_clean(ct, conn);
         }
     }
 
