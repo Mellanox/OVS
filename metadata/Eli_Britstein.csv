@@ -193,3 +193,6 @@ Change-Id=I356146b3954d7339cd778aaf79e9f2c2e6ff7d94; subject=dp-packet: e2e: Ini
 Change-Id=I77242b99d1364527de16b770b7ca75c4eb856512; subject=netdev-offload-dpdk: Fix freeing flow handle in case of miss race; feature=dpdk; upstream_status=NA; general=;
 Change-Id=If0febabad566aa3794a41150bc10b0f17a4cdd84; subject=dpif-netdev: Do not proceed SW processing for error packet recovery; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I99aa711b38d1d55b6bac940d4995e8fafeea2abb; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I7eace20633922666670ac9e9c8db163da00cbc7c; subject=netdev-offload-dpdk: Use has_vlan match attribute; feature=dpdk; upstream_status=sent; general=;
+Change-Id=I8c27dabb94c40c8cee375a3d003c11ccdf67460d; subject=netdev-offload-dpdk: Fix ethernet type for VLANs; feature=dpdk; upstream_status=sent; general=;
+Change-Id=I6948d1ecbdbf0596296eb9dc20bd02b4ccf6f481; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
