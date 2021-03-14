@@ -189,3 +189,7 @@ Change-Id=I8ad6efe0d6fe08eb848eb11637f753037e677903; subject=netdev-offload: Get
 Change-Id=I89f2ec5a18df327980a11a32993b0053a9673bb8; subject=netdev-offload-dpdk: Set number of skipped actions for flow miss; feature=dpdk; upstream_status=ignore; general=;
 Change-Id=I60003bae00d4326ec777d1579029ae5b756929c8; subject=netdev-offload-dpdk: Fix assert on miss flow race condition; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I181d2b4ff7c30534ac2c10307054b59b9ee8e488; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I356146b3954d7339cd778aaf79e9f2c2e6ff7d94; subject=dp-packet: e2e: Init e2e fields for all packets; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I77242b99d1364527de16b770b7ca75c4eb856512; subject=netdev-offload-dpdk: Fix freeing flow handle in case of miss race; feature=dpdk; upstream_status=NA; general=;
+Change-Id=If0febabad566aa3794a41150bc10b0f17a4cdd84; subject=dpif-netdev: Do not proceed SW processing for error packet recovery; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I99aa711b38d1d55b6bac940d4995e8fafeea2abb; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
