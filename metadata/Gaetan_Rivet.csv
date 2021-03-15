@@ -154,3 +154,6 @@ Change-Id=I2886b88d6ba8944b4886375fe8d6358e9aa7ef3b; subject=Update metadata; fe
 Change-Id=I23bfe45a1f1cca8e4ad1ddc600891c5039d951b9; subject=conntrack: Do not clean NAT conn on their own; feature=dpdk; upstream_status=NA; general=;
 Change-Id=If1733367848fb46fe468fc8f17ab25610420c31c; subject=conntrack: Fix NAT conn lookup expiration; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I8f60f3224fe523b31f1c3b0d1aebc99fb0a7fda6; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I41c3f7d091e0da84e4603e57d984116152672b94; subject=cmap: Add set min load function; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I014322769978e708c339ed48dbda6a65308904d2; subject=netdev-offload-dpdk: Do not shrink flow cmap; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Iffc7bfa3f8671b7b18dec936d19e8375a4ed31f4; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
