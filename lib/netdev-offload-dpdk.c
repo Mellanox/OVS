@@ -4312,6 +4312,7 @@ add_tnl_pop_action(struct flow_actions *actions,
     miss_ctx.vport = port;
     miss_ctx.recirc_id = 0;
     memset(&miss_ctx.tnl, 0, sizeof miss_ctx.tnl);
+    miss_ctx.skip_actions = act_vars->pre_ct_cnt;
     if (get_flow_miss_ctx_id(&miss_ctx, &act_resources->flow_miss_ctx_id)) {
         return -1;
     }
@@ -4329,6 +4330,7 @@ add_recirc_action(struct flow_actions *actions,
 
     miss_ctx.vport = act_vars->vport;
     miss_ctx.recirc_id = nl_attr_get_u32(nla);
+    miss_ctx.skip_actions = act_vars->pre_ct_cnt;
     if (act_vars->vport != ODPP_NONE) {
         get_tnl_masked(&miss_ctx.tnl, NULL, act_vars->tnl_key,
                        &act_vars->tnl_mask);
