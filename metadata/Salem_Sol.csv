@@ -66,3 +66,5 @@ Change-Id=Ib4090205b610f305436438023775502ba75b5c12; subject=netdev-offload-dpdk
 Change-Id=I723a99c245f2b9c2f3f7e547dc2ed13e340caaf6; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=Ifb8b70870e0ffbae2d2dac870fffaadb512f82f3; subject=netdev-offload-dpdk: Fix wrong ct actions offload; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I652a3d50de37f265f5fe3027512f126c0e466efe; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I51197311dd3f1b5e216ff2d850ae2cbea7864f33; subject=netdev-offload-dpdk: Fix unintialized miss_ctx field; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I6528de74ecc02162f300752c87dc2ec61363cfaf; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
