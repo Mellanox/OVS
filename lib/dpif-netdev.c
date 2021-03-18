@@ -9693,7 +9693,6 @@ e2e_cache_process_trace_info(struct dp_netdev *dp,
     err = e2e_cache_merge_flows(mt_flows, num_flows, merged_flow,
                                 &merged_actions);
     if (OVS_UNLIKELY(err)) {
-        e2e_cache_offload_ct_mt_flows(dp, mt_flows, num_flows);
         goto free_merged_flow;
     }
 
