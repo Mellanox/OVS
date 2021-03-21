@@ -12454,6 +12454,9 @@ e2e_cache_merge_match(struct e2e_cache_ovs_flow **netdev_flows,
         merge_flow_match(nw_proto, match, merged_match);
         merge_flow_match(tp_src, match, merged_match);
         merge_flow_match(tp_dst, match, merged_match);
+        if (match->flow.vlans[0].tci) {
+            merge_flow_match(vlans[0].tci, match, merged_match);
+        }
     }
 }
 
