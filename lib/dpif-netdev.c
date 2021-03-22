@@ -1423,7 +1423,7 @@ dp_netdev_ct_offload_active(struct ct_flow_offload_item *offload,
         return ret;
     }
 
-    return stats.used >= now ? 0 : EINVAL;
+    return stats.used > prev_now ? 0 : EINVAL;
 }
 
 static int
