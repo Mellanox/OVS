@@ -1829,7 +1829,7 @@ netdev_dpdk_lookup_by_devargs(const char *devargs)
     struct netdev_dpdk *dev;
 
     LIST_FOR_EACH (dev, list_node, &dpdk_list) {
-        if (!strcmp(dev->devargs, devargs)) {
+        if (dev->devargs && !strcmp(dev->devargs, devargs)) {
             return dev;
         }
     }
