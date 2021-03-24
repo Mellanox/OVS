@@ -2023,22 +2023,18 @@ rcu_quiesce:
                 break;
             }
 
+            if (now - start >= CT_SWEEP_TIMEOUT_MS) {
+                min_expiration = MIN(min_expiration, conn_expiration(conn));
+                conn_expire_push_back(ct, conn);
+                goto out;
+            }
+
             rv_active = conn_hw_update(ct, offload_class, conn, exp->tm, now);
 
             if (rv_active == EAGAIN) {
                 /* Impossible to query offload status, try later. */
                 conn_expire_push_back(ct, conn);
-                if (now - start > CT_SWEEP_TIMEOUT_MS) {
-                    /* The hardware might be unavailable for status
-                     * update. Do not repeat RCU quiescing endlessly,
-                     * return to poll block if the sweep timeout is triggered.
-                     */
-                    min_expiration = MIN(now,
-                            MIN(min_expiration, conn_expiration(conn)));
-                    goto out;
-                } else {
-                    goto rcu_quiesce;
-                }
+                goto rcu_quiesce;
             }
 
             expiration = conn_expiration(conn);
