@@ -1161,8 +1161,22 @@ dp_netdev_offload_queue_full(void)
     uint64_t total_add = 0;
     unsigned int tid;
 
-    /* Queue size of 0 disables burst limit. */
-    if (offload_queue_size == 0) {
+    /* Queue size of 0 disables burst limit.
+     *
+     * E2E code depends on MT path executing in conntrack module.
+     * If the queue is full, some offloads info will be missing from
+     * the e2e trace. Do not enforce the queue limit if e2e is enabled.
+     * This workaround should be fixed by making the e2e code independent.
+     *
+     * in conntrack_offload_add_conn()
+     *    +--> conntrack_offload_prepare_add(conn, packet, ct->dp);
+     *         This call adds necessary infos for e2e and will
+     *         be skipped if the queue is full.
+     *
+     *    e2e_cache_trace_add_ct()
+     *    +--> Without the above info, corrupted data are used in the trace.
+     */
+    if (offload_queue_size == 0 || dp_netdev_e2e_cache_enabled) {
         return false;
     }
 
