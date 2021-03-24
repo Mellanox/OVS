@@ -29,6 +29,7 @@
 #include <rte_vdpa.h>
 
 #include "netdev-provider.h"
+#include "openvswitch/shash.h"
 #include "openvswitch/vlog.h"
 #include "dp-packet.h"
 #include "util.h"
@@ -42,7 +43,6 @@ VLOG_DEFINE_THIS_MODULE(netdev_dpdk_vdpa);
 #define NETDEV_DPDK_VDPA_RX_DESC_DEFAULT    512
 #define NETDEV_DPDK_VDPA_PCI_STR_SIZE       sizeof("XXXX:XX:XX.X")
 #define NETDEV_DPDK_VDPA_ARGS_LEN           24
-#define NETDEV_DPDK_VDPA_MAX_VDPA_PORTS     128
 
 enum netdev_dpdk_vdpa_port_type {
     NETDEV_DPDK_VDPA_PORT_TYPE_VM,
@@ -84,16 +84,39 @@ struct netdev_dpdk_vdpa_relay {
         char *vhost_name;
         bool started;
         enum netdev_dpdk_vdpa_mode hw_mode;
+        struct rte_vdpa_device *vdpa_dev;
+        int vid;
+        struct shash_node *map_item;
         );
 };
 
-struct netdev_dpdk_vdpa_port {
-    char ifname[NETDEV_DPDK_VDPA_STATS_MAX_STR_SIZE];
-    int vid;
-    struct rte_vdpa_device *dev;
-};
-static struct netdev_dpdk_vdpa_port vports[NETDEV_DPDK_VDPA_MAX_VDPA_PORTS];
-static int devcnt = 0;
+static struct shash relays_map = SHASH_INITIALIZER(&relays_map);
+static struct ovs_mutex relays_map_lock = OVS_MUTEX_INITIALIZER;
+
+static void
+relays_map_add(struct netdev_dpdk_vdpa_relay *relay)
+{
+    if (relay->map_item) {
+        return;
+    }
+
+    ovs_mutex_lock(&relays_map_lock);
+    relay->map_item = shash_add(&relays_map, relay->vhost_name, relay);
+    ovs_mutex_unlock(&relays_map_lock);
+}
+
+static void
+relays_map_remove(struct netdev_dpdk_vdpa_relay *relay)
+{
+    if (!relay->map_item) {
+        return;
+    }
+
+    ovs_mutex_lock(&relays_map_lock);
+    shash_delete(&relays_map, relay->map_item);
+    relay->map_item = NULL;
+    ovs_mutex_unlock(&relays_map_lock);
+}
 
 static int
 netdev_dpdk_vdpa_port_from_name(const char *name)
@@ -607,9 +630,12 @@ out:
 void *
 netdev_dpdk_vdpa_alloc_relay(void)
 {
-    return rte_zmalloc("ovs_dpdk",
-                       sizeof(struct netdev_dpdk_vdpa_relay),
-                       CACHE_LINE_SIZE);
+    struct netdev_dpdk_vdpa_relay *relay;
+
+    relay = rte_zmalloc("ovs_dpdk", sizeof(struct netdev_dpdk_vdpa_relay),
+                        CACHE_LINE_SIZE);
+    relay->vid = -1;
+    return relay;
 }
 
 int
@@ -640,19 +666,18 @@ static int
 netdev_dpdk_vdpa_new_device(int vid)
 {
     char ifname[NETDEV_DPDK_VDPA_STATS_MAX_STR_SIZE];
-    int i;
+    struct netdev_dpdk_vdpa_relay *relay;
 
     rte_vhost_get_ifname(vid, ifname, sizeof(ifname));
-    for (i = 0; i < NETDEV_DPDK_VDPA_MAX_VDPA_PORTS; i++) {
-        if (strncmp(ifname, vports[i].ifname,
-                    NETDEV_DPDK_VDPA_STATS_MAX_STR_SIZE) == 0) {
-            vports[i].vid = vid;
-            break;
-        }
-    }
-    if (i == NETDEV_DPDK_VDPA_MAX_VDPA_PORTS) {
+    ovs_mutex_lock(&relays_map_lock);
+    relay = shash_find_data(&relays_map, ifname);
+    ovs_mutex_unlock(&relays_map_lock);
+    if (!relay) {
+        VLOG_ERR("cannot find relay for ifname=%s", ifname);
         return -1;
     }
+    relay->vid = vid;
+    VLOG_INFO("create device callback, vid=%d, ifname=%s", vid, ifname);
 
     return 0;
 }
@@ -660,8 +685,20 @@ netdev_dpdk_vdpa_new_device(int vid)
 static void
 netdev_dpdk_vdpa_destroy_device(int vid)
 {
-    VLOG_INFO("destroy device callback, vid %d", vid);
-    return;
+    char ifname[NETDEV_DPDK_VDPA_STATS_MAX_STR_SIZE];
+    struct netdev_dpdk_vdpa_relay *relay;
+
+    rte_vhost_get_ifname(vid, ifname, sizeof(ifname));
+    ovs_mutex_lock(&relays_map_lock);
+    relay = shash_find_data(&relays_map, ifname);
+    ovs_mutex_unlock(&relays_map_lock);
+    if (!relay) {
+        VLOG_ERR("cannot find relay for vid=%d", vid);
+        return;
+    }
+    relay->vid = -1;
+    VLOG_INFO("destroy device callback, vid=%d, ifname=%s", vid,
+              relay->vhost_name);
 }
 
 static const struct vhost_device_ops netdev_dpdk_vdpa_sample_devops = {
@@ -677,9 +714,6 @@ netdev_dpdk_vdpa_config_hw_impl(struct netdev_dpdk_vdpa_relay *relay,
     char vdpa_args[NETDEV_DPDK_VDPA_ARGS_LEN];
     struct rte_vdpa_device *dev;
     int err = 0;
-
-    ovs_strlcpy(vports[devcnt].ifname, vhost_path,
-                NETDEV_DPDK_VDPA_STATS_MAX_STR_SIZE);
 
     ovs_strlcpy(vdpa_args, vf_pci, NETDEV_DPDK_VDPA_PCI_STR_SIZE + 1);
     strcat(vdpa_args, ",class=vdpa");
@@ -697,7 +731,6 @@ netdev_dpdk_vdpa_config_hw_impl(struct netdev_dpdk_vdpa_relay *relay,
                  vf_pci);
         goto sw_mode;
     }
-    vports[devcnt].dev = dev;
 
     err = rte_vhost_driver_register(vhost_path, RTE_VHOST_USER_CLIENT);
     if (err) {
@@ -735,8 +768,11 @@ sw_mode:
     relay->hw_mode = NETDEV_DPDK_VDPA_MODE_SW;
     goto out;
 hw_mode:
+    netdev_dpdk_vdpa_free(relay->vhost_name);
+    relay->vhost_name = xstrdup(vhost_path);
+    relay->vdpa_dev = dev;
+    relays_map_add(relay);
     relay->hw_mode = NETDEV_DPDK_VDPA_MODE_HW;
-    devcnt++;
 out:
     return err;
 }
@@ -898,7 +934,8 @@ netdev_dpdk_hw_vdpa_destruct(struct netdev_dpdk_vdpa_relay *relay)
         VLOG_ERR("Failed to unregister vhost driver for %s", relay->vm_socket);
     }
     relay->hw_mode = NETDEV_DPDK_VDPA_MODE_INIT;
-    netdev_dpdk_vdpa_free(relay->vm_socket);
+    relays_map_remove(relay);
+    netdev_dpdk_vdpa_free_relay_strings(relay);
 }
 
 void
@@ -1133,17 +1170,7 @@ void netdev_dpdk_vdpa_get_hw_stats(struct netdev_dpdk_vdpa_relay *relay,
         return;
     }
 
-    for (i = 0; i < NETDEV_DPDK_VDPA_MAX_VDPA_PORTS; i++) {
-        if (vports[i].dev == vdev) {
-            break;
-        }
-    }
-    if (i == NETDEV_DPDK_VDPA_MAX_VDPA_PORTS) {
-        VLOG_ERR("Failed to find device %s", relay->vf_pci);
-        return;
-    }
-
-    num_q = rte_vhost_get_vring_num(vports[i].vid);
+    num_q = rte_vhost_get_vring_num(relay->vid);
     if (num_q == 0) {
         VLOG_ERR("Failed to get num of actual virtqs for device %s.",
                  relay->vf_pci);
