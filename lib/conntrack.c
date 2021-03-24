@@ -1985,6 +1985,7 @@ ct_sweep(struct conntrack *ct, long long now, size_t limit)
 
     next_rcu_quiesce = now + CT_SWEEP_QUIESCE_INTERVAL_MS;
     for (unsigned i = 0; i < N_CT_TM; i++) {
+        struct conn *end_of_queue = NULL;
 
         if (now >= next_rcu_quiesce) {
 rcu_quiesce:
@@ -2013,6 +2014,14 @@ rcu_quiesce:
                 continue;
             }
             conn = exp->up;
+            if (conn == end_of_queue) {
+                /* If we already re-enqueued this conn during this sweep,
+                 * stop iterating this list and skip to the next.
+                 */
+                min_expiration = MIN(min_expiration, conn_expiration(conn));
+                conn_expire_push_back(ct, conn);
+                break;
+            }
 
             rv_active = conn_hw_update(ct, offload_class, conn, exp->tm, now);
 
@@ -2042,6 +2051,9 @@ rcu_quiesce:
                      * this list should still be iterated.
                      */
                     conn_expire_push_front(ct, conn);
+                    if (end_of_queue == NULL) {
+                        end_of_queue = conn;
+                    }
                 } else {
                     /* This connection is still valid, while no other thread
                      * modified it: it means this list iteration is finished
