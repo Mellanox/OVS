@@ -161,3 +161,5 @@ Change-Id=I812858616eadb6456e77203cc74ec5af958316b3; subject=conntrack: Sweep th
 Change-Id=Iead55ed11a23d4e2895635279657509528a70320; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I24d95a3cf6600b007b4e6dc2009d361f96ca9bb2; subject=conntrack: Fix sweep timeout; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I9fd63d3a4efaa683940937688e912c9bebb3bf83; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ia17f7f150225dffb48941ecbac84b9e3bad879b5; subject=dpif-netdev: Fix hw-offload queue limit with e2e enabled; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I388e56050210f38c36acb81dd7764391eb01c133; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
