@@ -157,3 +157,5 @@ Change-Id=I8f60f3224fe523b31f1c3b0d1aebc99fb0a7fda6; subject=Update metadata; fe
 Change-Id=I41c3f7d091e0da84e4603e57d984116152672b94; subject=cmap: Add set min load function; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I014322769978e708c339ed48dbda6a65308904d2; subject=netdev-offload-dpdk: Do not shrink flow cmap; feature=dpdk; upstream_status=NA; general=;
 Change-Id=Iffc7bfa3f8671b7b18dec936d19e8375a4ed31f4; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I812858616eadb6456e77203cc74ec5af958316b3; subject=conntrack: Sweep the queue only once; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Iead55ed11a23d4e2895635279657509528a70320; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
