@@ -87,6 +87,7 @@ struct netdev_dpdk_vdpa_relay {
         struct rte_vdpa_device *vdpa_dev;
         int vid;
         struct shash_node *map_item;
+        struct ovs_mutex lock;
         );
 };
 
@@ -640,6 +641,7 @@ netdev_dpdk_vdpa_alloc_relay(void)
     relay = rte_zmalloc("ovs_dpdk", sizeof(struct netdev_dpdk_vdpa_relay),
                         CACHE_LINE_SIZE);
     relay->vid = -1;
+    ovs_mutex_init(&relay->lock);
     return relay;
 }
 
@@ -682,6 +684,7 @@ netdev_dpdk_vdpa_new_device(int vid)
         return -1;
     }
     relay->vid = vid;
+    relay->started = true;
     VLOG_INFO("create device callback, vid=%d, ifname=%s", vid, ifname);
 
     return 0;
@@ -701,7 +704,10 @@ netdev_dpdk_vdpa_destroy_device(int vid)
         VLOG_ERR("cannot find relay for vid=%d", vid);
         return;
     }
+    ovs_mutex_lock(&relay->lock);
+    relay->started = false;
     relay->vid = -1;
+    ovs_mutex_unlock(&relay->lock);
     VLOG_INFO("destroy device callback, vid=%d, ifname=%s", vid,
               relay->vhost_name);
 }
@@ -931,6 +937,7 @@ out:
 static void
 netdev_dpdk_hw_vdpa_destruct(struct netdev_dpdk_vdpa_relay *relay)
 {
+    relay->started = false;
     if (rte_vhost_driver_detach_vdpa_device(relay->vm_socket)) {
         VLOG_ERR("Failed to detach vdpa device: %s", relay->vm_socket);
     }
@@ -1224,15 +1231,55 @@ void netdev_dpdk_vdpa_get_hw_stats(struct netdev_dpdk_vdpa_relay *relay,
     cstm_stats->counters[VDPA_CUSTOM_STATS_HW_MODE].value = 1;
 }
 
+static
+void netdev_dpdk_vdpa_get_offline_stats(struct netdev_dpdk_vdpa_relay *relay,
+                                        struct netdev_custom_stats *cstm_stats)
+{
+    enum stats_vals {
+        VDPA_CUSTOM_STATS_HW_MODE,
+        VDPA_CUSTOM_STATS_DISCONNECTED,
+        VDPA_CUSTOM_STATS_TOTAL_SIZE
+    };
+    const char *stats_names[] = {
+        [VDPA_CUSTOM_STATS_HW_MODE] = "HW mode",
+        [VDPA_CUSTOM_STATS_DISCONNECTED] = "Disconnected",
+    };
+
+    cstm_stats->size = VDPA_CUSTOM_STATS_TOTAL_SIZE;
+    cstm_stats->counters = xcalloc(cstm_stats->size,
+                                   sizeof *cstm_stats->counters);
+
+    ovs_strlcpy(cstm_stats->counters[VDPA_CUSTOM_STATS_HW_MODE].name,
+                stats_names[VDPA_CUSTOM_STATS_HW_MODE],
+                NETDEV_CUSTOM_STATS_NAME_SIZE);
+    if (relay->hw_mode == NETDEV_DPDK_VDPA_MODE_HW) {
+        cstm_stats->counters[VDPA_CUSTOM_STATS_HW_MODE].value = 1;
+    } else {
+        cstm_stats->counters[VDPA_CUSTOM_STATS_HW_MODE].value = 0;
+    }
+
+    ovs_strlcpy(cstm_stats->counters[VDPA_CUSTOM_STATS_DISCONNECTED].name,
+                stats_names[VDPA_CUSTOM_STATS_DISCONNECTED],
+                NETDEV_CUSTOM_STATS_NAME_SIZE);
+    cstm_stats->counters[VDPA_CUSTOM_STATS_DISCONNECTED].value = 1;
+}
+
 int
 netdev_dpdk_vdpa_get_custom_stats_impl(struct netdev_dpdk_vdpa_relay *relay,
                                        struct netdev_custom_stats *cstm_stats)
 {
-    if (relay->hw_mode == NETDEV_DPDK_VDPA_MODE_HW) {
+    if (ovs_mutex_trylock(&relay->lock)) {
+        return 0;
+    }
+
+    if (!relay->started) {
+        netdev_dpdk_vdpa_get_offline_stats(relay, cstm_stats);
+    } else if (relay->hw_mode == NETDEV_DPDK_VDPA_MODE_HW) {
         netdev_dpdk_vdpa_get_hw_stats(relay, cstm_stats);
     } else {
         netdev_dpdk_vdpa_get_sw_stats(relay, cstm_stats);
     }
+    ovs_mutex_unlock(&relay->lock);
     return 0;
 }
 
