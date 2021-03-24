@@ -647,7 +647,7 @@ netdev_dpdk_vdpa_rxq_recv_impl(struct netdev_dpdk_vdpa_relay *relay,
     uint32_t fwd_rx = 0;
     uint16_t q;
 
-    if (relay->hw_mode == NETDEV_DPDK_VDPA_MODE_HW) {
+    if (!relay->started || relay->hw_mode == NETDEV_DPDK_VDPA_MODE_HW) {
         return 0;
     }
     /* Apply the multi core distribution policy by receiving only from queues
