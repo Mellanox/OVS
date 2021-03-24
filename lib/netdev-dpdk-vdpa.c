@@ -892,20 +892,25 @@ out:
     return err;
 }
 
+static void
+netdev_dpdk_hw_vdpa_destruct(struct netdev_dpdk_vdpa_relay *relay)
+{
+    if (rte_vhost_driver_detach_vdpa_device(relay->vm_socket)) {
+        VLOG_ERR("Failed to detach vdpa device: %s", relay->vm_socket);
+    }
+
+    if (rte_vhost_driver_unregister(relay->vm_socket)) {
+        VLOG_ERR("Failed to unregister vhost driver for %s", relay->vm_socket);
+    }
+    relay->hw_mode = NETDEV_DPDK_VDPA_MODE_INIT;
+    netdev_dpdk_vdpa_free(relay->vm_socket);
+}
+
 void
 netdev_dpdk_vdpa_destruct_impl(struct netdev_dpdk_vdpa_relay *relay)
 {
     if (relay->hw_mode == NETDEV_DPDK_VDPA_MODE_HW) {
-        if (rte_vhost_driver_detach_vdpa_device(relay->vm_socket)) {
-            VLOG_ERR("Failed to detach vdpa device: %s", relay->vm_socket);
-        }
-
-        if (rte_vhost_driver_unregister(relay->vm_socket)) {
-            VLOG_ERR("Failed to unregister vhost driver for %s",
-                    relay->vm_socket);
-        }
-        relay->hw_mode = NETDEV_DPDK_VDPA_MODE_INIT;
-        netdev_dpdk_vdpa_free(relay->vm_socket);
+        netdev_dpdk_hw_vdpa_destruct(relay);
         return;
     }
 
