@@ -198,3 +198,11 @@ Change-Id=I8c27dabb94c40c8cee375a3d003c11ccdf67460d; subject=netdev-offload-dpdk
 Change-Id=I6948d1ecbdbf0596296eb9dc20bd02b4ccf6f481; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I0397dbfaac4a754bcbc6b9e010b6bd66cd11d650; subject=dpif-netdev: e2e: Don't offload to MT in case merge fails; feature=dpdk; upstream_status=NA; general=;
 Change-Id=I9d6afb9c0b1d2f43f2e9178db03266e97a98a8a7; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I97ce8dd502fd6fcba5723bacd042870badecc0bc; subject=netdev-dpdk-vdpa: Refactor HW relay destuction; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I9adc2e65ee035037c100e3d70c039b1a2013a471; subject=netdev-dpdk-vdpa: Introduce relays map; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I2b9174606570c42a3bb2eb8b3395ac2d14268bbf; subject=netdev-dpdk-vdpa: Query stats only if started; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I8122eec9d6036cb502d3caaa9a10b3d9bfb78a2f; subject=netdev-dpdk-vdpa: Handle forward traffic only if port is started; feature=dpdk; upstream_status=NA; general=;
+Change-Id=Iaee208d1200f1ced56b9af3721d9bc4bf1dd7ab7; subject=netdev-dpdk-vdpa: Remove vdpa device upon destruct; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I5c28b86b1fe7c1559da472b8ab52c7acd1a529a1; subject=netdev-dpdk-vdpa: Rollback memory allocation for error handling; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I40c30cdd3b87f1aca7336461c320c28841887e15; subject=netdev-dpdk: Fix port lookup by devargs; feature=dpdk; upstream_status=NA; general=;
+Change-Id=I30063504e84c2e5b41aced949054574ef80b75f0; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
