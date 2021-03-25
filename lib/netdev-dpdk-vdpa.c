@@ -1170,21 +1170,21 @@ void netdev_dpdk_vdpa_get_hw_stats(struct netdev_dpdk_vdpa_relay *relay,
     i = rte_vdpa_get_stats_names(vdev, vdpa_stats_names, stats_n);
     if (stats_n != i) {
         VLOG_ERR("Failed to get names of device %s.", relay->vf_pci);
-        return;
+        goto err_names;
     }
 
     stats = rte_zmalloc(NULL, sizeof(*stats) * stats_n, 0);
     if (!stats) {
         VLOG_ERR("Failed to allocate memory for stats of device %s.",
                  relay->vf_pci);
-        return;
+        goto err_names;
     }
 
     num_q = rte_vhost_get_vring_num(relay->vid);
     if (num_q == 0) {
         VLOG_ERR("Failed to get num of actual virtqs for device %s.",
                  relay->vf_pci);
-        return;
+        goto err_stats;
     }
 
     cstm_stats->size = 2 * num_q + 1;
@@ -1227,6 +1227,12 @@ void netdev_dpdk_vdpa_get_hw_stats(struct netdev_dpdk_vdpa_relay *relay,
                 stats_names[VDPA_CUSTOM_STATS_HW_MODE],
                 NETDEV_CUSTOM_STATS_NAME_SIZE);
     cstm_stats->counters[VDPA_CUSTOM_STATS_HW_MODE].value = 1;
+    return;
+
+err_stats:
+    rte_free(stats);
+err_names:
+    rte_free(vdpa_stats_names);
 }
 
 static
