@@ -717,31 +717,27 @@ netdev_dpdk_vdpa_config_hw_impl(struct netdev_dpdk_vdpa_relay *relay,
                                 const char *vf_pci,
                                 const char *vhost_path)
 {
-    char vdpa_args[NETDEV_DPDK_VDPA_ARGS_LEN];
     struct rte_vdpa_device *dev;
-    int err = 0;
+    int err;
 
-    ovs_strlcpy(vdpa_args, vf_pci, NETDEV_DPDK_VDPA_PCI_STR_SIZE + 1);
-    strcat(vdpa_args, ",class=vdpa");
-
-    err = rte_dev_probe(vdpa_args);
+    err = rte_eal_hotplug_add("pci", relay->vf_pci, "class=vdpa");
     if (err) {
         VLOG_ERR("Failed to probe for VDPA device %s, working in SW mode",
-                 vdpa_args);
-        goto sw_mode;
+                 relay->vf_pci);
+        goto err_hotplug;
     }
 
     dev = rte_vdpa_find_device_by_name(vf_pci);
     if (!dev) {
         VLOG_ERR("Failed to find vdpa device id for %s, working in SW mode",
                  vf_pci);
-        goto sw_mode;
+        goto err_find;
     }
 
     err = rte_vhost_driver_register(vhost_path, RTE_VHOST_USER_CLIENT);
     if (err) {
         VLOG_ERR("rte_vhost_driver_register failed, working in SW mode");
-        goto sw_mode;
+        goto err_find;
     }
 
     err = rte_vhost_driver_callback_register(vhost_path,
@@ -749,37 +745,43 @@ netdev_dpdk_vdpa_config_hw_impl(struct netdev_dpdk_vdpa_relay *relay,
     if (err) {
         VLOG_ERR("rte_vhost_driver_callback_register failed,"
                  "working in SW mode");
-        goto sw_mode;
+        goto err_cb_reg;
     }
 
     err = rte_vhost_driver_attach_vdpa_device(vhost_path, dev);
     if (err) {
         VLOG_ERR("Failed to attach vdpa device, working in SW mode");
-        goto sw_mode;
+        goto err_cb_reg;
     }
 
     err = rte_vhost_driver_start(vhost_path);
     if (err) {
         VLOG_ERR("Failed to start vhost driver: %s, working in SW mode",
                 vhost_path);
-        goto detach_vdpa;
+        goto err_start;
     }
-    goto hw_mode;
 
-detach_vdpa:
-    if (rte_vhost_driver_detach_vdpa_device(vhost_path)) {
-        VLOG_ERR("Failed to detach vdpa device: %s", relay->vm_socket);
-    }
-sw_mode:
-    relay->hw_mode = NETDEV_DPDK_VDPA_MODE_SW;
-    goto out;
-hw_mode:
     netdev_dpdk_vdpa_free(relay->vhost_name);
     relay->vhost_name = xstrdup(vhost_path);
     relay->vdpa_dev = dev;
     relays_map_add(relay);
     relay->hw_mode = NETDEV_DPDK_VDPA_MODE_HW;
-out:
+
+    return 0;
+
+err_start:
+    if (rte_vhost_driver_detach_vdpa_device(vhost_path)) {
+        VLOG_ERR("Failed to detach vdpa device: %s", relay->vm_socket);
+    }
+err_cb_reg:
+    if (rte_vhost_driver_unregister(relay->vm_socket)) {
+        VLOG_ERR("Failed to unregister vhost driver for %s", relay->vm_socket);
+    }
+err_find:
+    rte_eal_hotplug_remove("pci", relay->vf_pci);
+err_hotplug:
+    relay->hw_mode = NETDEV_DPDK_VDPA_MODE_SW;
+
     return err;
 }
 
@@ -942,6 +944,7 @@ netdev_dpdk_hw_vdpa_destruct(struct netdev_dpdk_vdpa_relay *relay)
     }
     relay->hw_mode = NETDEV_DPDK_VDPA_MODE_INIT;
     relays_map_remove(relay);
+    rte_eal_hotplug_remove("pci", relay->vf_pci);
     netdev_dpdk_vdpa_free_relay_strings(relay);
 }
 
