@@ -5387,16 +5387,39 @@ netdev_offload_dpdk_hw_miss_packet_recover(struct netdev *netdev,
                                            uint32_t flow_miss_ctx_id,
                                            struct dp_packet *packet,
                                            uint8_t *skip_actions,
-                                           struct dpif_sflow_attr *sflow_attr
-                                           OVS_UNUSED)
+                                           struct dpif_sflow_attr *sflow_attr)
 {
     struct flow_miss_ctx flow_miss_ctx;
     struct ct_miss_ctx ct_miss_ctx;
+    struct sflow_ctx sflow_ctx;
     struct netdev *vport_netdev;
     uint32_t ct_ctx_id;
+    uint32_t sflow_id;
 
     if (find_flow_miss_ctx(flow_miss_ctx_id, &flow_miss_ctx)) {
-        return 0;
+        /* Since sFlow does not work with CT, offloaded sampled packets
+         * cannot have mark. If a packet without a mark reaches SW it
+         * is either a sampled packet if a cookie is found or a datapath one.
+         */
+        if (get_packet_reg_field(packet, REG_FIELD_SFLOW_CTX, &sflow_id)) {
+            return 0;
+        }
+        if (find_sflow_ctx(sflow_id, &sflow_ctx)) {
+            VLOG_ERR("sFlow id %d is not found", sflow_id);
+            return 0;
+        }
+        memcpy(sflow_attr->userdata, &sflow_ctx.cookie,
+               sflow_ctx.sflow_attr.userdata_len);
+        if (!is_all_zeros(&sflow_ctx.sflow_tnl, sizeof sflow_ctx.sflow_tnl)) {
+            memcpy(sflow_attr->tunnel, &sflow_ctx.sflow_tnl,
+                   sizeof *sflow_attr->tunnel);
+        } else {
+            sflow_attr->tunnel = NULL;
+        }
+        sflow_attr->sflow = sflow_ctx.sflow_attr.sflow;
+        sflow_attr->sflow_len = sflow_ctx.sflow_attr.sflow_len;
+        sflow_attr->userdata_len = sflow_ctx.sflow_attr.userdata_len;
+        return EIO;
     }
 
     *skip_actions = flow_miss_ctx.skip_actions;
