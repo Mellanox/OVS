@@ -902,6 +902,7 @@ struct dpif_sflow_attr {
 struct dpif_upcall_sflow {
     struct dp_packet packet;    /* packet data */
     uint32_t iifindex;          /* input ifindex */
+    odp_port_t in_port;
     const struct dpif_sflow_attr *sflow_attr;
 };
 

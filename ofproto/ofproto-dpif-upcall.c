@@ -1359,7 +1359,7 @@ sflow_upcall_cb(struct dpif_upcall_sflow *dupcall)
     struct user_action_cookie *cookie;
     struct ofproto_dpif *ofproto;
     struct dpif_sflow *sflow;
-    uint32_t iifindex;
+    odp_port_t in_port;
     struct flow flow;
 
     if (!sflow_attr) {
@@ -1384,10 +1384,13 @@ sflow_upcall_cb(struct dpif_upcall_sflow *dupcall)
     if (sflow_attr->tunnel) {
         memcpy(&flow.tunnel, sflow_attr->tunnel, sizeof flow.tunnel);
     }
-    iifindex = dupcall->iifindex;
+    if (dupcall->iifindex == -1) {
+        in_port = dupcall->in_port;
+    } else {
+        in_port = netdev_ifindex_to_odp_port(dupcall->iifindex);
+    }
     dpif_sflow_received(sflow, &dupcall->packet, &flow,
-                        netdev_ifindex_to_odp_port(iifindex),
-                        cookie, NULL);
+                        in_port, cookie, NULL);
 
     return 0;
 }
