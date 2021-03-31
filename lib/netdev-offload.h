@@ -191,7 +191,6 @@ int netdev_ports_get_n_flows(const char *dpif_type,
                              odp_port_t port_no, uint64_t *n_flows);
 uint32_t netdev_offload_flow_mark_alloc(void);
 void netdev_offload_flow_mark_free(uint32_t mark);
-const struct dpif_sflow_attr *netdev_sflow_attr_get(struct netdev *, uint32_t);
 
 #ifdef  __cplusplus
 }

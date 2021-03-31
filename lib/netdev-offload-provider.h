@@ -102,11 +102,6 @@ struct netdev_flow_api {
      * Return 0 if successful, otherwise returns a positive errno value. */
     int (*init_flow_api)(struct netdev *);
 
-    /* Query sFlow attribute by group ID.
-     *
-     * On success returns a const pointer, on failure returns NULL */
-    const struct dpif_sflow_attr *(*sflow_attr_get)(uint32_t gid);
-
     /* Queries a CT counter object. */
     int (*ct_counter_query)(struct netdev *, uintptr_t, long long, long long,
                             struct dpif_flow_stats *);
