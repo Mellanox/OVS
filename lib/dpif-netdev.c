@@ -10085,13 +10085,18 @@ dp_netdev_hw_flow(const struct dp_netdev_pmd_thread *pmd,
                   struct dp_netdev_flow **flow,
                   uint8_t *skip_actions)
 {
+    struct user_action_cookie sflow_cookie;
+    struct flow_tnl sflow_tunnel_info;
+    struct dpif_sflow_attr sflow_attr = {
+        .userdata = &sflow_cookie,
+        .tunnel = &sflow_tunnel_info };
     struct tx_port *p;
     uint32_t mark;
 
     if (!netdev_is_flow_api_enabled() || *recirc_depth_get() != 0 ||
         !dp_packet_has_flow_mark(packet, &mark)) {
         *flow = NULL;
-        return 0;
+        mark = INVALID_FLOW_MARK;
     }
 
     /* Restore the packet if HW processing was terminated before completion. */
@@ -10099,8 +10104,23 @@ dp_netdev_hw_flow(const struct dp_netdev_pmd_thread *pmd,
     p = pmd_send_port_cache_lookup(pmd, port_no);
     if (OVS_LIKELY(p)) {
         int err = netdev_hw_miss_packet_recover(p->port->netdev, mark, packet,
-                                                skip_actions, NULL);
+                                                skip_actions, &sflow_attr);
 
+        /* Return code EIO for this case indicates succesfully recovered
+         * sFlow packet, handle this packet in the sFlow upcall then drop it
+         * from the datapath.
+         */
+        if (err == EIO) {
+            struct dpif_upcall_sflow dupcall;
+
+            dupcall.iifindex = -1;
+            dupcall.packet = *packet;
+            dupcall.in_port = packet->md.in_port.odp_port;
+            dupcall.sflow_attr = &sflow_attr;
+            sflow_upcall_cb(&dupcall);
+            dp_packet_delete(packet);
+            return -1;
+        }
         if (err != 0 && err != EOPNOTSUPP) {
             return -1;
         }
