@@ -964,6 +964,52 @@ static const char * const e2e_offload_state_names[] = {
     [E2E_OL_STATE_NUM] = "Unknown",
 };
 
+struct merged_match_fields {
+    union flow_in_port in_port; /* Input port.*/
+    struct {
+        ovs_be32 ip_dst;
+        struct in6_addr ipv6_dst;
+        ovs_be32 ip_src;
+        struct in6_addr ipv6_src;
+        ovs_be64 tun_id;
+        ovs_be16 tp_dst;
+        struct {
+            struct eth_addr dl_dst;     /* Ethernet destination address. */
+            struct eth_addr dl_src;     /* Ethernet source address. */
+            uint8_t nw_proto;           /* IP protocol or low 8 bits of ARP
+                                           opcode. */
+        } metadata;
+    } tunnel;
+
+    /* L2. */
+    struct eth_addr dl_dst;     /* Ethernet destination address. */
+    struct eth_addr dl_src;     /* Ethernet source address. */
+    ovs_be16 dl_type;           /* Ethernet frame type. */
+
+    /* VLANs. */
+    union flow_vlan_hdr vlans[1]; /* VLANs */
+
+    /* L3. */
+    ovs_be32 nw_src;            /* IPv4 source address or ARP SPA. */
+    ovs_be32 nw_dst;            /* IPv4 destination address or ARP TPA. */
+    struct in6_addr ipv6_src;   /* IPv6 source address. */
+    struct in6_addr ipv6_dst;   /* IPv6 destination address. */
+    uint8_t nw_frag;            /* FLOW_FRAG_* flags. */
+    uint8_t nw_proto;           /* IP protocol or low 8 bits of ARP opcode. */
+
+    /* L4. */
+    ovs_be16 tp_src;            /* TCP/UDP/SCTP source port/ICMP type. */
+    ovs_be16 tp_dst;            /* TCP/UDP/SCTP destination port/ICMP code. */
+
+    /* MD. */
+    uint16_t ct_zone;           /* Connection tracking zone. */
+};
+
+struct merged_match {
+    struct merged_match_fields spec;
+    struct merged_match_fields mask;
+};
+
 /*
  * A mapping from ufid to flow for e2e cache.
  */
@@ -1027,7 +1073,7 @@ struct e2e_cache_merged_flow {
                                         using the same CT counter. */
     uintptr_t ct_counter_key;
     struct flows_counter_key flows_counter_key;
-    struct match match;
+    struct merged_match merged_match;
     uint32_t flow_mark;
     struct flow2flow_item associated_flows[0];
 };
@@ -1196,6 +1242,46 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev,
                                  struct ofpbuf *buf,
                                  long long now,
                                  long long prev_now);
+
+#define merged_match_to_match_field(dst, src, field) \
+    memcpy(&dst->flow.field, &src->spec.field, sizeof dst->flow.field); \
+    memcpy(&dst->wc.masks.field, &src->mask.field, sizeof dst->wc.masks.field);
+
+static void
+merged_match_to_match(struct match *match,
+                      struct merged_match *merged_match)
+{
+    memset(match, 0, sizeof *match);
+
+    merged_match_to_match_field(match, merged_match, in_port);
+    merged_match_to_match_field(match, merged_match, tunnel.ip_dst);
+    merged_match_to_match_field(match, merged_match, tunnel.ipv6_dst);
+    merged_match_to_match_field(match, merged_match, tunnel.ip_src);
+    merged_match_to_match_field(match, merged_match, tunnel.ipv6_src);
+    merged_match_to_match_field(match, merged_match, tunnel.tun_id);
+    merged_match_to_match_field(match, merged_match, tunnel.tp_dst);
+    merged_match_to_match_field(match, merged_match, tunnel.metadata.dl_dst);
+    merged_match_to_match_field(match, merged_match, tunnel.metadata.dl_src);
+    merged_match_to_match_field(match, merged_match, tunnel.metadata.nw_proto);
+
+    merged_match_to_match_field(match, merged_match, dl_dst);
+    merged_match_to_match_field(match, merged_match, dl_src);
+    merged_match_to_match_field(match, merged_match, dl_type);
+
+    merged_match_to_match_field(match, merged_match, vlans[0].tci);
+
+    merged_match_to_match_field(match, merged_match, nw_src);
+    merged_match_to_match_field(match, merged_match, nw_dst);
+    merged_match_to_match_field(match, merged_match, ipv6_src);
+    merged_match_to_match_field(match, merged_match, ipv6_dst);
+    merged_match_to_match_field(match, merged_match, nw_frag);
+    merged_match_to_match_field(match, merged_match, nw_proto);
+
+    merged_match_to_match_field(match, merged_match, tp_src);
+    merged_match_to_match_field(match, merged_match, tp_dst);
+
+    merged_match_to_match_field(match, merged_match, ct_zone);
+}
 
 static void
 dp_netdev_offload_ct_stats_reset(void)
@@ -8515,18 +8601,20 @@ dpif_netdev_dump_e2e_flows(struct hmap *portno_names,
 {
     struct e2e_cache_merged_flow *merged_flow;
     struct dp_netdev_flow netdev_flow;
+    struct match match;
 
     memset(&netdev_flow, 0, sizeof netdev_flow);
 
     ovs_mutex_lock(&merged_flows_map_mutex);
 
     HMAP_FOR_EACH (merged_flow, node.in_hmap, &merged_flows_map) {
+        merged_match_to_match(&match, &merged_flow->merged_match);
         odp_format_ufid(&merged_flow->ufid, s);
         ds_put_cstr(s, ", ");
-        match_format(&merged_flow->match, port_map, s, OFP_DEFAULT_PRIORITY);
+        match_format(&match, port_map, s, OFP_DEFAULT_PRIORITY);
         *CONST_CAST(ovs_u128 *, &netdev_flow.mega_ufid) = merged_flow->ufid;
         CONST_CAST(struct flow *, &netdev_flow.flow)->in_port =
-            merged_flow->match.flow.in_port;
+            match.flow.in_port;
         ds_put_cstr(s, ", actions:");
         format_odp_actions(s, merged_flow->actions, merged_flow->actions_size,
                            portno_names);
@@ -8744,7 +8832,7 @@ e2e_cache_merged_flow_offload_del(struct e2e_cache_merged_flow *merged_flow)
     memset(&flow, 0, sizeof flow);
     *CONST_CAST(ovs_u128 *, &flow.mega_ufid) = merged_flow->ufid;
     CONST_CAST(struct flow *, &flow.flow)->in_port =
-        merged_flow->match.flow.in_port;
+        merged_flow->merged_match.spec.in_port;
 
     offload_item = xmalloc(sizeof *offload_item +
                            sizeof offload_item->data->flow_offload);
@@ -8816,7 +8904,7 @@ e2e_cache_merged_flow_offload_put(struct dp_netdev *dp,
 
     e2e_stats = &dp_offload_threads[tid].e2e_stats;
 
-    in_port = merged_flow->match.flow.in_port;
+    in_port = merged_flow->merged_match.spec.in_port;
 
     memset(&flow, 0, sizeof flow);
     flow.mark = merged_flow->flow_mark;
@@ -8839,8 +8927,7 @@ e2e_cache_merged_flow_offload_put(struct dp_netdev *dp,
                                  num_elements);
 
     flow_offload = &offload_item->data->flow_offload;
-    memcpy(&flow_offload->match, &merged_flow->match,
-           sizeof merged_flow->match);
+    merged_match_to_match(&flow_offload->match, &merged_flow->merged_match);
     flow_offload->actions = xmalloc(merged_flow->actions_size);
     if (OVS_UNLIKELY(!flow_offload->actions)) {
         err = -1;
@@ -12426,17 +12513,17 @@ e2e_cache_merge_actions(struct e2e_cache_ovs_flow **netdev_flows,
 #define merge_flow_match(field, src, dst)                   \
     if (!is_all_zeros(&src->wc.masks.field,                 \
                       sizeof src->wc.masks.field) &&        \
-        is_all_zeros(&dst->wc.masks.field,                  \
-                     sizeof dst->wc.masks.field)) {         \
-        memcpy(&dst->flow.field, &src->flow.field,          \
+        is_all_zeros(&dst->mask.field,                      \
+                     sizeof dst->mask.field)) {             \
+        memcpy(&dst->spec.field, &src->flow.field,          \
                sizeof src->flow.field);                     \
-        memcpy(&dst->wc.masks.field, &src->wc.masks.field,  \
+        memcpy(&dst->mask.field, &src->wc.masks.field,      \
                sizeof src->wc.masks.field);                 \
     }
 
 static void
 e2e_cache_merge_match(struct e2e_cache_ovs_flow **netdev_flows,
-                      uint16_t num, struct match *merged_match)
+                      uint16_t num, struct merged_match *merged_match)
 {
     struct e2e_cache_ovs_flow *flow;
     struct match match_on_stack;
@@ -12496,15 +12583,17 @@ e2e_cache_merge_flows(struct e2e_cache_ovs_flow **flows,
 {
     unsigned int tid = netdev_offload_thread_id();
     struct e2e_cache_stats *e2e_stats;
+    struct match match;
 
     e2e_stats = &dp_offload_threads[tid].e2e_stats;
     if (!e2e_cache_flows_are_valid(flows, num_flows)) {
         e2e_stats->merge_rej_flows++;
         return -1;
     }
-    e2e_cache_merge_match(flows, num_flows, &merged_flow->match);
-    merged_flow->match.wc.masks.ct_zone = 0;
-    dp_netdev_get_mega_ufid(&merged_flow->match, &merged_flow->ufid);
+    e2e_cache_merge_match(flows, num_flows, &merged_flow->merged_match);
+    merged_flow->merged_match.mask.ct_zone = 0;
+    merged_match_to_match(&match, &merged_flow->merged_match);
+    dp_netdev_get_mega_ufid(&match, &merged_flow->ufid);
     uuid_set_bits_v4((struct uuid *) &merged_flow->ufid, UUID_ATTR_3);
     e2e_cache_merge_actions(flows, num_flows, merged_actions, NULL);
     if (OVS_UNLIKELY(merged_actions->size < sizeof(struct nlattr))) {
@@ -12525,6 +12614,7 @@ ct2ct_merge_flows(struct e2e_cache_ovs_flow **flows,
     unsigned int tid = netdev_offload_thread_id();
     const struct nlattr *last_ct = NULL;
     struct e2e_cache_stats *e2e_stats;
+    struct match match;
 
     ovs_assert(num_flows > 4);
 
@@ -12545,8 +12635,10 @@ ct2ct_merge_flows(struct e2e_cache_ovs_flow **flows,
      * [num_flows - 3]).
      * The mark should be of Flow(N-1) (in [num_flows - 4]).
      */
-    e2e_cache_merge_match(&flows[1], num_flows - 3, &merged_flow->match);
-    dp_netdev_get_mega_ufid(&merged_flow->match, &merged_flow->ufid);
+    e2e_cache_merge_match(&flows[1], num_flows - 3,
+                          &merged_flow->merged_match);
+    merged_match_to_match(&match, &merged_flow->merged_match);
+    dp_netdev_get_mega_ufid(&match, &merged_flow->ufid);
     uuid_set_bits_v4((struct uuid *) &merged_flow->ufid, UUID_ATTR_4);
     e2e_cache_merge_actions(flows, num_flows - 2, merged_actions, &last_ct);
     if (!last_ct) {
