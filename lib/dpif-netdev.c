@@ -12325,60 +12325,6 @@ e2e_cache_merge_actions(struct e2e_cache_ovs_flow **netdev_flows,
     }
 }
 
-static inline void
-e2e_cache_shift_tnl_fields(struct match *merged_match)
-{
-    struct eth_addr dl_src, dl_dst;
-    struct eth_addr src_mask, dst_mask;
-    bool merge_src = false;
-    bool merge_dst = false;
-    ovs_be16 dport, dport_mask;
-    uint8_t proto, proto_mask;
-    union flow_in_port in_port, inport_mask;
-
-    if (!is_all_zeros(&merged_match->wc.masks.dl_src,
-                      sizeof merged_match->wc.masks.dl_src)) {
-         memcpy(&dl_src, &merged_match->flow.dl_src, sizeof dl_src);
-         memcpy(&src_mask, &merged_match->wc.masks.dl_src,
-                sizeof src_mask);
-         merge_src = true;
-    }
-    if (!is_all_zeros(&merged_match->wc.masks.dl_dst,
-                      sizeof merged_match->wc.masks.dl_dst)) {
-         memcpy(&dl_dst, &merged_match->flow.dl_dst, sizeof dl_dst);
-         memcpy(&dst_mask, &merged_match->wc.masks.dl_dst,
-                sizeof dst_mask);
-         merge_dst = true;
-    }
-    dport = merged_match->flow.tp_dst;
-    dport_mask = merged_match->wc.masks.tp_dst;
-    proto = merged_match->flow.nw_proto;
-    proto_mask = merged_match->wc.masks.nw_proto;
-    memcpy(&in_port, &merged_match->flow.in_port, sizeof in_port);
-    memcpy(&inport_mask, &merged_match->wc.masks.in_port, sizeof inport_mask);
-    /* clear match buffer */
-    memset(merged_match, 0, sizeof *merged_match);
-    /* restore tunnel match */
-    if (merge_src) {
-        memcpy(&merged_match->flow.tunnel.metadata.dl_src, &dl_src,
-               sizeof dl_src);
-        memcpy(&merged_match->wc.masks.tunnel.metadata.dl_src,
-               &src_mask, sizeof src_mask);
-    }
-    if (merge_dst) {
-        memcpy(&merged_match->flow.tunnel.metadata.dl_dst, &dl_dst,
-               sizeof dl_dst);
-        memcpy(&merged_match->wc.masks.tunnel.metadata.dl_dst,
-               &dst_mask, sizeof dst_mask);
-    }
-    merged_match->flow.tunnel.tp_dst = dport;
-    merged_match->wc.masks.tunnel.tp_dst = dport_mask;
-    merged_match->flow.tunnel.metadata.nw_proto = proto;
-    merged_match->wc.masks.tunnel.metadata.nw_proto = proto_mask;
-    memcpy(&merged_match->flow.in_port, &in_port, sizeof in_port);
-    memcpy(&merged_match->wc.masks.in_port, &inport_mask, sizeof inport_mask);
-}
-
 #define merge_flow_match(field, src, dst)                   \
     if (!is_all_zeros(&src->wc.masks.field,                 \
                       sizeof src->wc.masks.field) &&        \
@@ -12398,7 +12344,6 @@ e2e_cache_merge_match(struct e2e_cache_ovs_flow **netdev_flows,
     struct match match_on_stack;
     const struct match *match;
     uint16_t i = 0;
-    bool tnl_saved = false;
 
     memset(merged_match, 0, sizeof *merged_match);
 
@@ -12414,11 +12359,6 @@ e2e_cache_merge_match(struct e2e_cache_ovs_flow **netdev_flows,
         } else {
             dp_netdev_fill_ct_match(&match_on_stack, &flow->ct_match[0]);
             match = &match_on_stack;
-        }
-        if (!tnl_saved && !is_all_zeros(&match->wc.masks.tunnel,
-                                        sizeof match->wc.masks.tunnel)) {
-            e2e_cache_shift_tnl_fields(merged_match);
-            tnl_saved = true;
         }
         /* merge in_port */
         merge_flow_match(in_port, match, merged_match);
