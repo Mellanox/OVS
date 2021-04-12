@@ -3400,7 +3400,17 @@ parse_flow_match(struct netdev *netdev,
         act_vars->tnl_mask = match->wc.masks.tunnel;
         act_vars->is_outer_ipv4 = match->wc.masks.tunnel.ip_src ||
                                   match->wc.masks.tunnel.ip_dst;
-        if (match->flow.recirc_id &&
+        /* In case of a tunnel, pre-ct flow decapsulates the tunnel and sets
+         * the tunnel info (matches) in a register. Following tunnel flows
+         * (recirc_id>0) don't match the tunnel outer headers, as they are
+         * already decapsulated, but on the tunnel info register.
+         *
+         * CT2CT is applied after a pre-ct flow, so tunnel match should be done
+         * on the tunnel info register, as recirc_id>0 flows.
+         */
+        if ((match->flow.recirc_id ||
+             (act_vars->is_e2e_cache_flow &&
+              act_resources->flow_id != INVALID_FLOW_MARK)) &&
             parse_tnl_match_recirc(patterns, match, act_resources)) {
             return -1;
         }
