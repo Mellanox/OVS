@@ -118,12 +118,14 @@ struct mpsc_queue {
 void mpsc_queue_init(struct mpsc_queue *queue);
 /* The reader lock must be released prior to destroying the queue. */
 void mpsc_queue_destroy(struct mpsc_queue *queue);
-/* Acquire the reader lock if 1 is returned. */
-int mpsc_queue_acquire(struct mpsc_queue *queue);
-/* Wait until the reader lock is acquired. */
-void mpsc_queue_acquire_wait(struct mpsc_queue *queue);
-/* Release the reader lock. */
-void mpsc_queue_release(struct mpsc_queue *queue);
+
+/* Acquire and release the consumer lock. */
+#define mpsc_queue_acquire(q) do { \
+        ovs_mutex_lock(&(q)->read_lock); \
+    } while (0)
+#define mpsc_queue_release(q) do { \
+        ovs_mutex_unlock(&(q)->read_lock); \
+    } while (0)
 
 enum mpsc_queue_poll_result {
     /* Queue is empty. */

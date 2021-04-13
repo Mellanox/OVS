@@ -3579,10 +3579,7 @@ dp_netdev_flow_offload_main(void *arg)
     int ret;
 
     queue = &ofl_thread->queue;
-    if (!mpsc_queue_acquire(queue)) {
-        VLOG_ERR("failed to register as consumer of the offload queue.\n");
-        return NULL;
-    }
+    mpsc_queue_acquire(queue);
 
     backoff = DP_NETDEV_OFFLOAD_BACKOFF_MIN;
     for (;;) {
@@ -9890,15 +9887,8 @@ dp_netdev_e2e_cache_main(void *arg OVS_UNUSED)
     uint32_t i, num_elements;
     long long int next_rcu;
 
-    if (!mpsc_queue_acquire(&e2e_cache_thread_msg_queues.ufid_queue)) {
-        VLOG_ERR("failed to register as consumer of the ufid queue");
-        return NULL;
-    }
-
-    if (!mpsc_queue_acquire(&e2e_cache_thread_msg_queues.trace_queue)) {
-        VLOG_ERR("failed to register as consumer of the trace queue");
-        return NULL;
-    }
+    mpsc_queue_acquire(&e2e_cache_thread_msg_queues.ufid_queue);
+    mpsc_queue_acquire(&e2e_cache_thread_msg_queues.trace_queue);
 
     next_rcu = time_msec() + E2E_CACHE_QUIESCE_INTERVAL_MS;
     for (;;) {

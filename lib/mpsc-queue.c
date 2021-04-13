@@ -122,27 +122,6 @@ mpsc_queue_destroy(struct mpsc_queue *queue)
     ovs_mutex_destroy(&queue->read_lock);
 }
 
-int
-mpsc_queue_acquire(struct mpsc_queue *queue)
-    OVS_TRY_LOCK(1, queue->read_lock)
-{
-    return !ovs_mutex_trylock(&queue->read_lock);
-}
-
-void
-mpsc_queue_acquire_wait(struct mpsc_queue *queue)
-    OVS_ACQUIRES(queue->read_lock)
-{
-    ovs_mutex_lock(&queue->read_lock);
-}
-
-void
-mpsc_queue_release(struct mpsc_queue *queue)
-    OVS_RELEASES(queue->read_lock)
-{
-    ovs_mutex_unlock(&queue->read_lock);
-}
-
 enum mpsc_queue_poll_result
 mpsc_queue_poll(struct mpsc_queue *queue, struct mpsc_queue_node **node)
     OVS_REQUIRES(queue->read_lock)

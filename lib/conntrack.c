@@ -1962,6 +1962,7 @@ conn_hw_update(struct conntrack *ct,
  * if 'limit' is reached */
 static long long
 ct_sweep(struct conntrack *ct, long long now, size_t limit)
+    OVS_NO_THREAD_SAFETY_ANALYSIS
 {
     struct conntrack_offload_class *offload_class = NULL;
     struct conn *conn_batch[CT_SWEEP_BATCH_SIZE];
@@ -1977,7 +1978,7 @@ ct_sweep(struct conntrack *ct, long long now, size_t limit)
         static bool queue_acquire_once;
         if (!queue_acquire_once) {
             for (unsigned i = 0; i < N_CT_TM; i++) {
-                mpsc_queue_acquire_wait(&ct->exp_lists[i]);
+                mpsc_queue_acquire(&ct->exp_lists[i]);
             }
             queue_acquire_once = true;
         }

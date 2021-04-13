@@ -62,7 +62,7 @@ test_mpsc_queue_insert(void)
 
     memset(elements, 0, sizeof(elements));
     mpsc_queue_init(&queue);
-    ignore(mpsc_queue_acquire(&queue));
+    mpsc_queue_acquire(&queue);
 
     for (i = 0; i < ARRAY_SIZE(elements); i++) {
         mpsc_queue_insert(&queue, &elements[i].node.mpscq);
@@ -96,7 +96,7 @@ test_mpsc_queue_flush_is_fifo(void)
     memset(elements, 0, sizeof(elements));
 
     mpsc_queue_init(&queue);
-    ignore(mpsc_queue_acquire(&queue));
+    mpsc_queue_acquire(&queue);
 
     for (i = 0; i < ARRAY_SIZE(elements); i++) {
         mpsc_queue_insert(&queue, &elements[i].node.mpscq);
@@ -226,7 +226,7 @@ benchmark_mpsc_queue(void)
                                        mpsc_queue_insert_thread, &aux);
     }
 
-    ignore(mpsc_queue_acquire(&queue));
+    mpsc_queue_acquire(&queue);
     xgettimeofday(&start);
 
     counter = 0;
