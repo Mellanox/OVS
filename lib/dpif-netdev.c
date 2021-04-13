@@ -2691,9 +2691,7 @@ do_del_port(struct dp_netdev *dp, struct dp_netdev_port *port)
      * been removed from the port. The port cannot be destroyed before
      * its hardware has been cleaned.
      */
-    ovs_rwlock_unlock(&dp->port_rwlock);
     dp_netdev_offload_flush(dp, port);
-    ovs_rwlock_wrlock(&dp->port_rwlock);
     netdev_uninit_flow_api(port->netdev);
 
     hmap_remove(&dp->ports, &port->node);
@@ -3560,6 +3558,7 @@ dp_netdev_offload_flush_handle(struct dp_offload_thread_item *item)
     }
 
     ovs_barrier_block(flush->barrier);
+    ovs_barrier_block(flush->barrier);
 }
 
 #define DP_NETDEV_OFFLOAD_BACKOFF_MIN 1
@@ -3767,11 +3766,11 @@ e2e_cache_flow_flush(struct netdev *netdev, struct ovs_barrier *barrier,
  */
 static void
 dp_netdev_offload_flush_(struct dp_netdev *dp,
-                         struct dp_netdev_port *port)
+                         struct dp_netdev_port *port,
+                         struct ovs_barrier *barrier)
     OVS_EXCLUDED(dp->port_rwlock)
 {
     static struct ovs_mutex flush_mutex = OVS_MUTEX_INITIALIZER;
-    struct ovs_barrier barrier;
     struct netdev *netdev;
 
     if (!netdev_is_flow_api_enabled()) {
@@ -3779,7 +3778,6 @@ dp_netdev_offload_flush_(struct dp_netdev *dp,
     }
 
     dp_netdev_offload_init();
-
     /* Do not interleave flush barriers. Only one flush
      * order can be 'live' at any single time. It must be unique
      * within each offload thread queue and resolved before
@@ -3789,25 +3787,18 @@ dp_netdev_offload_flush_(struct dp_netdev *dp,
 
     netdev = port ? netdev_ref(port->netdev) : NULL;
 
-    /* Wait on each offload thread, plus this one. */
-    ovs_barrier_init(&barrier,
-                     netdev_offload_thread_nb() + 1 +
-                     dp_netdev_e2e_cache_enabled);
-
     if (dp_netdev_e2e_cache_enabled) {
         /* If e2e is enabled, it must send the flush requests
          * after it has processed its own queue. This means that this
          * thread should not send the flush requests, only e2e can do so.
          * cf. e2e_cache_flow_db_flush().
          */
-        e2e_cache_flow_flush(netdev, &barrier, dp);
+        e2e_cache_flow_flush(netdev, barrier, dp);
     } else {
-        dp_netdev_offload_flush_enqueue(dp, netdev, &barrier);
+        dp_netdev_offload_flush_enqueue(dp, netdev, barrier);
     }
 
-    ovs_barrier_block(&barrier);
-    ovs_barrier_destroy(&barrier);
-
+    ovs_barrier_block(barrier);
     netdev_close(netdev);
 
     ovs_mutex_unlock(&flush_mutex);
@@ -3816,17 +3807,53 @@ dp_netdev_offload_flush_(struct dp_netdev *dp,
 static void
 dp_netdev_offload_flush(struct dp_netdev *dp,
                         struct dp_netdev_port *port)
+    OVS_REQ_WRLOCK(dp->port_rwlock)
 {
-    dp_netdev_offload_flush_(dp, port);
+    struct ovs_barrier barrier;
+
+    if (!netdev_is_flow_api_enabled()) {
+        return;
+    }
+
+    /* Wait on each offload thread, plus this one. */
+    ovs_barrier_init(&barrier,
+                     netdev_offload_thread_nb() + 1 +
+                     dp_netdev_e2e_cache_enabled);
+
+    ovs_rwlock_unlock(&dp->port_rwlock);
+    dp_netdev_offload_flush_(dp, port, &barrier);
+
+    /* Take back the 'port_rwlock' write lock while the offload threads are
+     * still blocked on it, to ensure no other offload is inserted right
+     * between the flush finishes and its caller critical section resumes. */
+    ovs_rwlock_wrlock(&dp->port_rwlock);
+
+    ovs_barrier_block(&barrier);
+    ovs_barrier_destroy(&barrier);
 }
 
 static void
 dp_netdev_offload_barrier(struct dp_netdev *dp)
+    OVS_EXCLUDED(dp->port_rwlock)
 {
+    struct ovs_barrier barrier;
+
+    if (!netdev_is_flow_api_enabled()) {
+        return;
+    }
+
+    /* Wait on each offload thread, plus this one. */
+    ovs_barrier_init(&barrier,
+                     netdev_offload_thread_nb() + 1 +
+                     dp_netdev_e2e_cache_enabled);
+
     /* 'Dummy' flush call, that is only used to sync all offload threads.
      * The 'port_rwlock' is not necessary as no offloads will change.
      */
-    dp_netdev_offload_flush_(dp, NULL);
+    dp_netdev_offload_flush_(dp, NULL, &barrier);
+
+    ovs_barrier_block(&barrier);
+    ovs_barrier_destroy(&barrier);
 }
 
 static void
@@ -9354,6 +9381,7 @@ e2e_cache_flow_db_flush(struct netdev *netdev,
 
     dp_netdev_offload_flush_enqueue(dp, netdev, barrier);
 
+    ovs_barrier_block(barrier);
     ovs_barrier_block(barrier);
 }
 
