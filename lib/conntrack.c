@@ -1968,7 +1968,7 @@ conn_hw_update(struct conntrack *ct,
 
 #define CT_SWEEP_BATCH_SIZE 32
 #define CT_SWEEP_QUIESCE_INTERVAL_MS 10
-#define CT_SWEEP_TIMEOUT_MS 1000
+#define CT_SWEEP_TIMEOUT_MS (1000 - CT_SWEEP_QUIESCE_INTERVAL_MS - 1)
 
 /* Delete the expired connections from 'ctb', up to 'limit'. Returns the
  * earliest expiration time among the remaining connections in 'ctb'.  Returns
