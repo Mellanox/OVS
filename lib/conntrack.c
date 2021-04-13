@@ -601,6 +601,20 @@ conntrack_destroy(struct conntrack *ct)
     pthread_join(ct->clean_thread, NULL);
     latch_destroy(&ct->clean_thread_exit);
 
+    for (unsigned i = 0; i < N_CT_TM; i++) {
+        struct mpsc_queue_node *node;
+
+        mpsc_queue_acquire(&ct->exp_lists[i]);
+        MPSC_QUEUE_FOR_EACH_POP (node, &ct->exp_lists[i]) {
+            struct conn_expire *exp;
+
+            exp = CONTAINER_OF(node, struct conn_expire, node);
+            conn_expire_unref(exp);
+        }
+        mpsc_queue_release(&ct->exp_lists[i]);
+        mpsc_queue_destroy(&ct->exp_lists[i]);
+    }
+
     CMAP_FOR_EACH (conn, cm_node, &ct->conns) {
         if (conn->conn_type == CT_CONN_TYPE_DEFAULT) {
             /* Pass NAT conn, they will be cleaned when
@@ -1962,7 +1976,6 @@ conn_hw_update(struct conntrack *ct,
  * if 'limit' is reached */
 static long long
 ct_sweep(struct conntrack *ct, long long now, size_t limit)
-    OVS_NO_THREAD_SAFETY_ANALYSIS
 {
     struct conntrack_offload_class *offload_class = NULL;
     struct conn *conn_batch[CT_SWEEP_BATCH_SIZE];
@@ -1973,16 +1986,6 @@ ct_sweep(struct conntrack *ct, long long now, size_t limit)
     long long int start = now;
     size_t count = 0;
     int rv_active;
-
-    {
-        static bool queue_acquire_once;
-        if (!queue_acquire_once) {
-            for (unsigned i = 0; i < N_CT_TM; i++) {
-                mpsc_queue_acquire(&ct->exp_lists[i]);
-            }
-            queue_acquire_once = true;
-        }
-    }
 
     next_rcu_quiesce = now + CT_SWEEP_QUIESCE_INTERVAL_MS;
     for (unsigned i = 0; i < N_CT_TM; i++) {
@@ -2123,8 +2126,13 @@ conntrack_clean(struct conntrack *ct, long long now)
 
 static void *
 clean_thread_main(void *f_)
+    OVS_NO_THREAD_SAFETY_ANALYSIS
 {
     struct conntrack *ct = f_;
+
+    for (unsigned i = 0; i < N_CT_TM; i++) {
+        mpsc_queue_acquire(&ct->exp_lists[i]);
+    }
 
     while (!latch_is_set(&ct->clean_thread_exit)) {
         long long next_wake;
@@ -2138,6 +2146,10 @@ clean_thread_main(void *f_)
         }
         latch_wait(&ct->clean_thread_exit);
         poll_block();
+    }
+
+    for (unsigned i = 0; i < N_CT_TM; i++) {
+        mpsc_queue_release(&ct->exp_lists[i]);
     }
 
     return NULL;
