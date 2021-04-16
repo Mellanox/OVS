@@ -290,7 +290,7 @@ conn_expire_unref(struct conn_expire *exp)
 }
 
 static inline void
-conn_expire_push_front(struct conntrack *ct, struct conn *conn)
+conn_expire_push_back(struct conntrack *ct, struct conn *conn)
 {
     if (conn_expire_tryref(conn->exp)) {
         atomic_flag_clear(&conn->exp->reschedule);
@@ -299,13 +299,13 @@ conn_expire_push_front(struct conntrack *ct, struct conn *conn)
 }
 
 static inline void
-conn_expire_push_back(struct conntrack *ct, struct conn *conn)
+conn_expire_push_front(struct conntrack *ct, struct conn *conn)
 {
     if (conn_expire_tryref(conn->exp)) {
         /* Do not change 'reschedule' state, if this expire node is put
          * at the tail of the list, it will be re-examined next sweep.
          */
-        mpsc_queue_push_back(&ct->exp_lists[conn->exp->tm], &conn->exp->node);
+        mpsc_queue_push_front(&ct->exp_lists[conn->exp->tm], &conn->exp->node);
     }
 }
 

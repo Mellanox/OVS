@@ -184,7 +184,7 @@ mpsc_queue_pop(struct mpsc_queue *queue)
 }
 
 void
-mpsc_queue_push_back(struct mpsc_queue *queue, struct mpsc_queue_node *node)
+mpsc_queue_push_front(struct mpsc_queue *queue, struct mpsc_queue_node *node)
     OVS_REQUIRES(queue->read_lock)
 {
     struct mpsc_queue_node *tail;

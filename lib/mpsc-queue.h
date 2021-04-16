@@ -150,9 +150,9 @@ mpsc_queue_poll(struct mpsc_queue *queue, struct mpsc_queue_node **node);
 struct mpsc_queue_node *
 mpsc_queue_pop(struct mpsc_queue *queue);
 
-/* Insert at the back of the queue. Only the consumer can do it. */
-void mpsc_queue_push_back(struct mpsc_queue *queue,
-                          struct mpsc_queue_node *node);
+/* Insert at the front of the queue. Only the consumer can do it. */
+void mpsc_queue_push_front(struct mpsc_queue *queue,
+                           struct mpsc_queue_node *node);
 
 /* Get the current queue tail. */
 struct mpsc_queue_node *mpsc_queue_tail(struct mpsc_queue *queue);

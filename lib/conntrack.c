@@ -2023,13 +2023,13 @@ rcu_quiesce:
                  * stop iterating this list and skip to the next.
                  */
                 min_expiration = MIN(min_expiration, conn_expiration(conn));
-                conn_expire_push_back(ct, conn);
+                conn_expire_push_front(ct, conn);
                 break;
             }
 
             if (now - start >= CT_SWEEP_TIMEOUT_MS) {
                 min_expiration = MIN(min_expiration, conn_expiration(conn));
-                conn_expire_push_back(ct, conn);
+                conn_expire_push_front(ct, conn);
                 goto out;
             }
 
@@ -2037,7 +2037,7 @@ rcu_quiesce:
 
             if (rv_active == EAGAIN) {
                 /* Impossible to query offload status, try later. */
-                conn_expire_push_back(ct, conn);
+                conn_expire_push_front(ct, conn);
                 goto rcu_quiesce;
             }
 
@@ -2050,7 +2050,7 @@ rcu_quiesce:
                      * The conn is not yet expired, still valid, and
                      * this list should still be iterated.
                      */
-                    conn_expire_push_front(ct, conn);
+                    conn_expire_push_back(ct, conn);
                     if (end_of_queue == NULL) {
                         end_of_queue = conn;
                     }
@@ -2060,7 +2060,7 @@ rcu_quiesce:
                      * for now. Put back the connection within the list.
                      */
                     atomic_flag_clear(&conn->exp->reschedule);
-                    conn_expire_push_back(ct, conn);
+                    conn_expire_push_front(ct, conn);
                     min_expiration = MIN(min_expiration, expiration);
                     break;
                 }
