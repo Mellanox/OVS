@@ -3724,7 +3724,7 @@ dp_netdev_offload_poll_queues(struct dp_offload_thread *ofl_thread,
 }
 
 static int e2e_cache_flow_db_put(struct e2e_cache_ufid_msg *ufid_msg);
-static void e2e_cache_flow_db_del(const ovs_u128 *ufid, struct dp_netdev *dp);
+static void e2e_cache_flow_db_del(struct e2e_cache_ufid_msg *ufid_msg);
 static void e2e_cache_ufid_msg_free(struct e2e_cache_ufid_msg *msg);
 static int
 e2e_cache_process_trace_info(struct dp_netdev *dp,
@@ -3770,7 +3770,7 @@ dp_netdev_flow_offload_main(void *arg)
             if (ufid_msg->op == E2E_UFID_MSG_PUT) {
                 e2e_cache_flow_db_put(ufid_msg);
             } else if (ufid_msg->op == E2E_UFID_MSG_DEL) {
-                e2e_cache_flow_db_del(&ufid_msg->ufid, ufid_msg->dp);
+                e2e_cache_flow_db_del(ufid_msg);
             } else {
                 OVS_NOT_REACHED();
             }
@@ -9358,17 +9358,17 @@ e2e_cache_ct_flow_offload_add_mt(struct dp_netdev *dp,
 }
 
 static void
-e2e_cache_flow_db_del(const ovs_u128 *ufid, struct dp_netdev *dp)
+e2e_cache_flow_db_del(struct e2e_cache_ufid_msg *ufid_msg)
 {
     struct ovs_list merged_flows_to_delete =
         OVS_LIST_INITIALIZER(&merged_flows_to_delete);
-    size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
+    size_t hash = hash_bytes(&ufid_msg->ufid, sizeof ufid_msg->ufid, 0);
     struct e2e_cache_ovs_flow *ct_flow, *iter_flow;
     struct e2e_cache_merged_flow *merged_flow;
     uint16_t i;
 
     ovs_mutex_lock(&flows_map_mutex);
-    ct_flow = e2e_cache_flow_db_del_protected(ufid, hash,
+    ct_flow = e2e_cache_flow_db_del_protected(&ufid_msg->ufid, hash,
                                               &merged_flows_to_delete);
     ovs_mutex_unlock(&flows_map_mutex);
 
@@ -9389,7 +9389,7 @@ e2e_cache_flow_db_del(const ovs_u128 *ufid, struct dp_netdev *dp)
          * remove it and update CT stats.
          */
         if (ct_flow->offload_state == E2E_OL_STATE_CT_MT) {
-            e2e_cache_ct_flow_offload_del_mt(dp, ct_flow);
+            e2e_cache_ct_flow_offload_del_mt(ufid_msg->dp, ct_flow);
         }
         e2e_cache_flow_state_set(ct_flow, E2E_OL_STATE_CT_SW);
         if (ct_flow->ct_peer) {
@@ -10005,7 +10005,7 @@ dp_netdev_e2e_cache_main(void *arg OVS_UNUSED)
             if (ufid_msg->op == E2E_UFID_MSG_PUT) {
                 e2e_cache_flow_db_put(ufid_msg);
             } else if (ufid_msg->op == E2E_UFID_MSG_DEL) {
-                e2e_cache_flow_db_del(&ufid_msg->ufid, ufid_msg->dp);
+                e2e_cache_flow_db_del(ufid_msg);
             } else if (ufid_msg->op == E2E_UFID_MSG_FLUSH) {
                 e2e_cache_flow_db_flush(ufid_msg->netdev,
                                         ufid_msg->barrier,
