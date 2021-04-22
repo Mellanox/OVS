@@ -14,5 +14,7 @@ by a colon from the logging \fBlevel\fR to apply.
 Prints the statistics information about DPDK socket \fIsocket\fR.
 If called without arguments, information of all the available sockets will
 be printed.
+.IP "\fBdpdk/get-malloc-stats\fR"
+Prints the statistics information about DPDK malloc.
 .RE
 .
