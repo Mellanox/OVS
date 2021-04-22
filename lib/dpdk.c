@@ -25,6 +25,7 @@
 #include <rte_cpuflags.h>
 #include <rte_errno.h>
 #include <rte_log.h>
+#include <rte_malloc.h>
 #include <rte_memzone.h>
 #include <rte_version.h>
 #include <rte_flow.h>
@@ -357,6 +358,63 @@ dpdk_unixctl_log_set(struct unixctl_conn *conn, int argc, const char *argv[],
     unixctl_command_reply(conn, NULL);
 }
 
+static void
+dpdk_unixctl_get_socket_stats(struct unixctl_conn *conn,
+                              int argc, const char *argv[],
+                              void *aux OVS_UNUSED)
+{
+    struct rte_malloc_socket_stats socket_stats;
+    unsigned int socket_max = rte_socket_count();
+    unsigned int socket_min = 0;
+    unsigned int socket;
+    size_t size;
+    FILE *stream;
+    char *response = NULL;
+
+    if (argc == 2) {
+        socket_min = atoi(argv[1]);
+        socket_max = socket_min + 1;
+    }
+
+    stream = open_memstream(&response, &size);
+    if (!stream) {
+        response = xasprintf("Unable to open memstream: %s.",
+                             ovs_strerror(errno));
+        unixctl_command_reply_error(conn, response);
+        goto out;
+    }
+
+    for (socket = socket_min; socket < socket_max; socket++) {
+        if (rte_malloc_get_socket_stats(socket, &socket_stats)) {
+            response = xasprintf("Unable to get stats for socket %d: %s.",
+                                 socket, ovs_strerror(errno));
+            fclose(stream);
+            unixctl_command_reply_error(conn, response);
+            goto out;
+        }
+        fprintf(stream,
+                "Socket = %d\n"
+                "heap_totalsz_bytes = %lu\n"
+                "heap_freesz_bytes = %lu\n"
+                "greatest_free_size = %lu\n"
+                "free_count = %u\n"
+                "alloc_count = %u\n"
+                "heap_allocsz_bytes = %lu\n", socket,
+                socket_stats.heap_totalsz_bytes,
+                socket_stats.heap_freesz_bytes,
+                socket_stats.greatest_free_size,
+                socket_stats.free_count,
+                socket_stats.alloc_count,
+                socket_stats.heap_allocsz_bytes);
+    }
+
+    fclose(stream);
+
+    unixctl_command_reply(conn, response);
+out:
+    free(response);
+}
+
 static bool
 dpdk_init__(const struct smap *ovs_other_config)
 {
@@ -526,6 +584,8 @@ dpdk_init__(const struct smap *ovs_other_config)
                              dpdk_unixctl_mem_stream, rte_log_dump);
     unixctl_command_register("dpdk/log-set", "{level | pattern:level}", 0,
                              INT_MAX, dpdk_unixctl_log_set, NULL);
+    unixctl_command_register("dpdk/get-socket-stats", "[socket]", 0, INT_MAX,
+                             dpdk_unixctl_get_socket_stats, NULL);
 
     /* We are called from the main thread here */
     RTE_PER_LCORE(_lcore_id) = NON_PMD_CORE_ID;

@@ -10,5 +10,9 @@ list of words separated by spaces: a word can be either a logging \fBlevel\fR
 \fBnotice\fR, \fBinfo\fR or \fBdebug\fR) or a \fBpattern\fR matching DPDK
 components (see \fBdpdk/log-list\fR command on \fBovs\-appctl\fR(8)) separated
 by a colon from the logging \fBlevel\fR to apply.
+.IP "\fBdpdk/get-socket-stats\fR [\fIsocket\fR]"
+Prints the statistics information about DPDK socket \fIsocket\fR.
+If called without arguments, information of all the available sockets will
+be printed.
 .RE
 .

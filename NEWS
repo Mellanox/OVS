@@ -37,6 +37,7 @@ v2.15.0 - 15 Feb 2021
      * Add hardware offload support for CT flows.
      * 'dpdkvdpa' port type.
      * Removed support for vhost-user dequeue zero-copy.
+     * New debug appctl command 'dpdk/get-socket-stats'.
    - Userspace datapath:
      * Add the 'pmd' option to "ovs-appctl dpctl/dump-flows", which
        restricts a flow dump to a single PMD thread if set.
@@ -78,6 +79,7 @@ v2.15.0 - 15 Feb 2021
        in OVS branch 2.18
    - 'ovs-appctl dpctl/dump-conntrack' can now show the offloaded status
      for CT flows per direction.
+
 
 v2.14.0 - 17 Aug 2020
 ---------------------
