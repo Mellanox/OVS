@@ -1,0 +1,3 @@
+sep=;
+Change-Id=I3544e170a3b02e76fb3d37fdb903ae59a5b90249; subject=netdev-offload-tc: Flush rules on all chains before attach ingress block; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=Ibff9aa0c81ebff89c5b60564ce05a259f3886328; subject=ofproto-dpif-upcall: Fix race condition while purging; feature=bp_2_15; upstream_status=in_progress; general=;
