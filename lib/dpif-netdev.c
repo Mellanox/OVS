@@ -554,6 +554,7 @@ struct e2e_cache_ufid_msg {
     struct dp_netdev *dp;
     struct netdev *netdev;
     struct ovs_barrier *barrier;
+    struct ovs_refcount *del_refcnt;
     size_t actions_len;
     union {
         struct match match[0];
@@ -3728,7 +3729,8 @@ static void e2e_cache_flow_db_del(struct e2e_cache_ufid_msg *ufid_msg);
 static void e2e_cache_ufid_msg_free(struct e2e_cache_ufid_msg *msg);
 static int
 e2e_cache_process_trace_info(struct dp_netdev *dp,
-                             const struct e2e_cache_trace_info *trc_info);
+                             const struct e2e_cache_trace_info *trc_info,
+                             unsigned int tid);
 
 static void *
 dp_netdev_flow_offload_main(void *arg)
@@ -3817,7 +3819,7 @@ dp_netdev_flow_offload_main(void *arg)
             num_elements = trace_msg->num_elements;
             for (i = 0; i < num_elements; i++) {
                 e2e_cache_process_trace_info((struct dp_netdev *)trace_msg->dp,
-                                             &trace_msg->data[i]);
+                                             &trace_msg->data[i], tid);
             }
 
             free_cacheline(trace_msg);
@@ -9208,7 +9210,8 @@ e2e_cache_del_merged_flows(struct ovs_list *merged_flows_to_delete)
 
 static struct e2e_cache_ovs_flow *
 e2e_cache_flow_db_del_protected(const ovs_u128 *ufid, uint32_t hash,
-                                struct ovs_list *merged_flows_to_delete)
+                                struct ovs_list *merged_flows_to_delete,
+                                struct ovs_refcount *del_refcnt)
     OVS_REQUIRES(flows_map_mutex)
 {
     struct e2e_cache_ovs_flow *flow;
@@ -9218,9 +9221,12 @@ e2e_cache_flow_db_del_protected(const ovs_u128 *ufid, uint32_t hash,
         return NULL;
     }
     e2e_cache_del_associated_merged_flows(flow, merged_flows_to_delete);
-    hmap_remove(&flows_map, &flow->node);
-    atomic_count_dec(&flows_map_count);
     if (flow->offload_state == E2E_OL_STATE_FLOW) {
+        if (del_refcnt && ovs_refcount_unref(del_refcnt) > 1) {
+            return NULL;
+        }
+        hmap_remove(&flows_map, &flow->node);
+        atomic_count_dec(&flows_map_count);
         ovsrcu_postpone(e2e_cache_flow_free, flow);
         flow = NULL;
     }
@@ -9369,7 +9375,8 @@ e2e_cache_flow_db_del(struct e2e_cache_ufid_msg *ufid_msg)
 
     ovs_mutex_lock(&flows_map_mutex);
     ct_flow = e2e_cache_flow_db_del_protected(&ufid_msg->ufid, hash,
-                                              &merged_flows_to_delete);
+                                              &merged_flows_to_delete,
+                                              ufid_msg->del_refcnt);
     ovs_mutex_unlock(&flows_map_mutex);
 
     /* Update CT stats affected by deletion of the merged flows. */
@@ -9385,17 +9392,31 @@ e2e_cache_flow_db_del(struct e2e_cache_ufid_msg *ufid_msg)
         }
     }
     if (ct_flow) {
-        /* This is a CT MT flow that is deleted. If it is offloaded using MT
-         * remove it and update CT stats.
+        if (ovs_refcount_unref(ufid_msg->del_refcnt) == 1) {
+            ovs_mutex_lock(&flows_map_mutex);
+            hmap_remove(&flows_map, &ct_flow->node);
+            ovs_mutex_unlock(&flows_map_mutex);
+            atomic_count_dec(&flows_map_count);
+            ovsrcu_postpone(e2e_cache_flow_free, ct_flow);
+            if (ufid_msg->del_refcnt) {
+                ovsrcu_postpone(free, ufid_msg->del_refcnt);
+            }
+        }
+        /* Only the thread that merged ct_flow should should change statistics
+         * etc.
          */
-        if (ct_flow->offload_state == E2E_OL_STATE_CT_MT) {
-            e2e_cache_ct_flow_offload_del_mt(ufid_msg->dp, ct_flow);
+        if (ct_flow->merge_tid == netdev_offload_thread_id()) {
+            /* This is a CT MT flow that is deleted. If it is offloaded using
+             * MT remove it and update CT stats.
+             */
+            if (ct_flow->offload_state == E2E_OL_STATE_CT_MT) {
+                e2e_cache_ct_flow_offload_del_mt(ufid_msg->dp, ct_flow);
+            }
+            e2e_cache_flow_state_set(ct_flow, E2E_OL_STATE_CT_SW);
+            if (ct_flow->ct_peer) {
+                ct_flow->ct_peer->ct_peer = NULL;
+            }
         }
-        e2e_cache_flow_state_set(ct_flow, E2E_OL_STATE_CT_SW);
-        if (ct_flow->ct_peer) {
-            ct_flow->ct_peer->ct_peer = NULL;
-        }
-        ovsrcu_postpone(e2e_cache_flow_free, ct_flow);
     }
     e2e_cache_del_merged_flows(&merged_flows_to_delete);
 }
@@ -9454,7 +9475,8 @@ e2e_cache_flow_db_put(struct e2e_cache_ufid_msg *ufid_msg)
 
     flow_prev = e2e_cache_flow_find(ufid, hash);
     if (flow_prev) {
-        e2e_cache_flow_db_del_protected(ufid, hash, &merged_flows_to_delete);
+        e2e_cache_flow_db_del_protected(ufid, hash, &merged_flows_to_delete,
+                                        NULL);
     }
 
     hmap_insert(&flows_map, &flow->node, hash);
@@ -9470,26 +9492,45 @@ static int
 e2e_cache_flow_del(const ovs_u128 *ufid, struct dp_netdev *dp)
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 10);
-    unsigned int tid = netdev_offload_thread_nb();
     struct e2e_cache_ufid_msg *del_msg;
     struct e2e_cache_stats *e2e_stats;
+    struct e2e_cache_ovs_flow *flow;
+    struct ovs_refcount *del_refcnt;
+    unsigned int tid;
+    uint32_t hash;
 
-    e2e_stats = &dp_offload_threads[tid].e2e_stats;
     VLOG_DBG_RL(&rl, "%s: ufid="UUID_FMT, __FUNCTION__,
                 UUID_ARGS((struct uuid *)ufid));
 
-    del_msg = e2e_cache_ufid_msg_alloc(E2E_UFID_MSG_DEL, false, 0);
-    if (OVS_UNLIKELY(!del_msg)) {
-        return -1;
+    ovs_mutex_lock(&flows_map_mutex);
+    hash = hash_bytes(ufid, sizeof *ufid, 0);
+    flow = e2e_cache_flow_find(ufid, hash);
+    ovs_mutex_unlock(&flows_map_mutex);
+    if (!flow) {
+      return -1;
     }
-    del_msg->ufid = *ufid;
-    del_msg->dp = dp;
+    del_refcnt = xmalloc(sizeof *del_refcnt);
+    ovs_refcount_init(del_refcnt);
+    for (tid = 1; tid < netdev_offload_thread_nb(); tid++) {
+        ovs_refcount_ref(del_refcnt);
+    }
+    for (tid = 0; tid < netdev_offload_thread_nb(); tid++) {
+        del_msg = e2e_cache_ufid_msg_alloc(E2E_UFID_MSG_DEL, false, 0);
+        if (OVS_UNLIKELY(!del_msg)) {
+            free(del_refcnt);
+            return -1;
+        }
+        del_msg->ufid = *ufid;
+        del_msg->dp = dp;
+        del_msg->del_refcnt = del_refcnt;
 
-    /* Insert message into queue, e2e_cache_ufid_msg_dequeue()
-     * is used to dequeue it from there.
-     */
-    mpsc_queue_insert(&dp_offload_threads[tid].ufid_queue, &del_msg->node);
-    atomic_count_inc(&e2e_stats->flow_del_msgs);
+        /* Insert message into queue, e2e_cache_ufid_msg_dequeue()
+         * is used to dequeue it from there.
+         */
+        mpsc_queue_insert(&dp_offload_threads[tid].ufid_queue, &del_msg->node);
+        e2e_stats = &dp_offload_threads[tid].e2e_stats;
+        atomic_count_inc(&e2e_stats->flow_del_msgs);
+    }
     return 0;
 }
 
@@ -9498,11 +9539,9 @@ e2e_cache_flow_put(bool is_ct, const ovs_u128 *ufid, const void *match,
                    const struct nlattr *actions, size_t actions_len)
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 10);
-    unsigned int tid = netdev_offload_thread_nb();
     struct e2e_cache_ufid_msg *put_msg;
     struct e2e_cache_stats *e2e_stats;
-
-    e2e_stats = &dp_offload_threads[tid].e2e_stats;
+    unsigned int tid;
 
     VLOG_DBG_RL(&rl, "%s: ufid="UUID_FMT, __FUNCTION__,
                 UUID_ARGS((struct uuid *)ufid));
@@ -9522,7 +9561,9 @@ e2e_cache_flow_put(bool is_ct, const ovs_u128 *ufid, const void *match,
     /* Insert message into queue, e2e_cache_ufid_msg_dequeue()
      * is used to dequeue it from there.
      */
+    tid = netdev_offload_ufid_to_thread_id(*ufid);
     mpsc_queue_insert(&dp_offload_threads[tid].ufid_queue, &put_msg->node);
+    e2e_stats = &dp_offload_threads[tid].e2e_stats;
     atomic_count_inc(&e2e_stats->flow_add_msgs);
     return 0;
 }
@@ -9581,13 +9622,70 @@ e2e_cache_ufid_msg_dequeue(struct dp_offload_thread *ofl_thread)
     return ufid_msg;
 }
 
+static int
+e2e_cache_ufids_to_flows(const ovs_u128 *ufids,
+                         uint16_t num_elements,
+                         struct e2e_cache_ovs_flow *flows[]);
 static unsigned int
 netdev_offload_trace_to_thread_id(ovs_u128 *ufids,
                                   uint16_t num_elements)
 {
-    (void)ufids;
-    (void)num_elements;
-    return netdev_offload_thread_nb();
+    struct e2e_cache_ovs_flow *mt_flows[E2E_CACHE_MAX_TRACE];
+    uint32_t ufid_hash;
+    unsigned int tid;
+    uint16_t i;
+
+    if (netdev_offload_thread_nb() == 1) {
+        return 0;
+    }
+
+    ovs_mutex_lock(&flows_map_mutex);
+    e2e_cache_ufids_to_flows(ufids, num_elements, mt_flows);
+    /* If a previous trace already determined the tid to handle, send it to
+     * the same one.
+     */
+    tid = INVALID_OFFLOAD_THREAD_NB;
+    for (i = 0; i < num_elements; i++) {
+        if (!mt_flows[i]) {
+            ovs_mutex_unlock(&flows_map_mutex);
+            return INVALID_OFFLOAD_THREAD_NB;
+        }
+    }
+    for (i = 0; i < num_elements; i++) {
+        /* Skip megaflows. */
+        if (i % 3 == 0) {
+            continue;
+        }
+        if (mt_flows[i]->merge_tid != INVALID_OFFLOAD_THREAD_NB) {
+            tid = mt_flows[i]->merge_tid;
+            break;
+        }
+    }
+
+    if (tid == INVALID_OFFLOAD_THREAD_NB) {
+        ufid_hash = 1;
+        for (i = 0; i < num_elements; i++) {
+            /* Skip ct peers. */
+            if (i % 3 == 2) {
+                continue;
+            }
+            ufid_hash = hash_words64(
+                (const uint64_t [2]){ ufids[i].u64.lo,
+                                      ufids[i].u64.hi }, 2, ufid_hash);
+        }
+        tid = ufid_hash % netdev_offload_thread_nb();
+    }
+
+    /* Set the selected tid to CTs. */
+    for (i = 0; i < num_elements; i++) {
+        /* Skip megaflows. */
+        if (i % 3 == 0) {
+            continue;
+        }
+        mt_flows[i]->merge_tid = tid;
+    }
+    ovs_mutex_unlock(&flows_map_mutex);
+    return tid;
 }
 
 static void
@@ -9685,7 +9783,9 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
         }
 
         tid = netdev_offload_trace_to_thread_id(e2e_trace, e2e_trace_size);
-        ovs_assert (tid != INVALID_OFFLOAD_THREAD_NB);
+        if (tid == INVALID_OFFLOAD_THREAD_NB) {
+            continue;
+        }
 
         if (dp_netdev_e2e_cache_trace_q_size &&
             cur_q_size[tid] >= dp_netdev_e2e_cache_trace_q_size) {
@@ -9809,7 +9909,8 @@ e2e_cache_purge_ct_flows_from_mt(struct dp_netdev *dp,
 
 static int
 e2e_cache_process_trace_info(struct dp_netdev *dp,
-                             const struct e2e_cache_trace_info *trc_info)
+                             const struct e2e_cache_trace_info *trc_info,
+                             unsigned int tid)
 {
     struct e2e_cache_merged_flow *merged_flow;
     struct nlattr *actions;
@@ -9838,7 +9939,7 @@ e2e_cache_process_trace_info(struct dp_netdev *dp,
     if (OVS_UNLIKELY(!merged_flow)) {
         return -1;
     }
-    merged_flow->tid = netdev_offload_thread_id();
+    merged_flow->tid = tid;
     ovs_list_init(&merged_flow->flow_counter_list);
     ovs_list_init(&merged_flow->ct_counter_list);
     for (i = 0; i < num_flows; i++) {
@@ -10025,7 +10126,7 @@ dp_netdev_e2e_cache_main(void *arg OVS_UNUSED)
         num_elements = trace_msg->num_elements;
         for (i = 0; i < num_elements; i++) {
             e2e_cache_process_trace_info((struct dp_netdev *)trace_msg->dp,
-                                         &trace_msg->data[i]);
+                                         &trace_msg->data[i], tid);
         }
 
         free_cacheline(trace_msg);
