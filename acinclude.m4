@@ -480,6 +480,10 @@ AC_DEFUN([OVS_CHECK_DPDK], [
     # forced by DPDK only breaks our feature detection mechanism and leads to
     # build failures: https://github.com/openvswitch/ovs-issues/issues/201
     DPDK_INCLUDE=$(echo "$DPDK_INCLUDE" | sed 's/-mno-avx512f//g')
+    GCC_VER_GTE83="$(echo `gcc -dumpversion | cut -f1-2 -d.` \>= 8.3 | bc)"
+    if [[ "$GCC_VER_GTE83" == "1" ]];then
+        CFLAGS=$(echo "$CFLAGS" | sed 's/-O2/-O3/g')
+    fi
     OVS_CFLAGS="$OVS_CFLAGS $DPDK_INCLUDE"
     OVS_ENABLE_OPTION([-mssse3])
 
