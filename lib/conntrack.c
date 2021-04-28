@@ -1229,6 +1229,7 @@ conn_not_found(struct conntrack *ct, struct dp_packet *pkt,
         conntrack_lock(ct);
         cmap_insert(&ct->conns, &nc->cm_node, ctx->hash);
         conntrack_unlock(ct);
+        conn_expire_push_back(ct, nc);
         atomic_count_inc(&ct->n_conn);
         ctx->conn = nc; /* For completeness. */
 
@@ -1251,7 +1252,7 @@ conn_not_found(struct conntrack *ct, struct dp_packet *pkt,
      * can limit DoS impact. */
 nat_res_exhaustion:
     free(nat_conn);
-    conn_do_delete(nc, delete_conn_cmn);
+    delete_conn_cmn(nc);
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 5);
     VLOG_WARN_RL(&rl, "Unable to NAT due to tuple space exhaustion - "
                  "if DoS attack, use firewalling and/or zone partitioning.");

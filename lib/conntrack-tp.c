@@ -303,5 +303,4 @@ conn_init_expiration(struct conntrack *ct, struct conn *conn,
 
     conn_expire_init(conn);
     conn_schedule_expiration(conn, tm, now, val);
-    conn_expire_push_back(ct, conn);
 }
