@@ -2325,7 +2325,8 @@ netdev_tc_flow_get(struct netdev *netdev,
                    const ovs_u128 *ufid,
                    struct dpif_flow_stats *stats,
                    struct dpif_flow_attrs *attrs,
-                   struct ofpbuf *buf)
+                   struct ofpbuf *buf,
+                   long long now OVS_UNUSED)
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 20);
     struct tc_flower flower;

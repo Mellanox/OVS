@@ -283,14 +283,15 @@ int
 netdev_flow_get(struct netdev *netdev, struct match *match,
                 struct nlattr **actions, const ovs_u128 *ufid,
                 struct dpif_flow_stats *stats,
-                struct dpif_flow_attrs *attrs, struct ofpbuf *buf)
+                struct dpif_flow_attrs *attrs, struct ofpbuf *buf,
+                long long now)
 {
     const struct netdev_flow_api *flow_api =
         ovsrcu_get(const struct netdev_flow_api *, &netdev->flow_api);
 
     return (flow_api && flow_api->flow_get)
            ? flow_api->flow_get(netdev, match, actions, ufid,
-                                stats, attrs, buf)
+                                stats, attrs, buf, now)
            : EOPNOTSUPP;
 }
 
@@ -735,12 +736,13 @@ netdev_ports_flow_get(const char *dpif_type, struct match *match,
                       struct dpif_flow_attrs *attrs, struct ofpbuf *buf)
 {
     struct port_to_netdev_data *data;
+    long long now = time_msec();
 
     ovs_rwlock_rdlock(&netdev_hmap_rwlock);
     HMAP_FOR_EACH (data, portno_node, &port_to_netdev) {
         if (netdev_get_dpif_type(data->netdev) == dpif_type
             && !netdev_flow_get(data->netdev, match, actions,
-                                ufid, stats, attrs, buf)) {
+                                ufid, stats, attrs, buf, now)) {
             ovs_rwlock_unlock(&netdev_hmap_rwlock);
             return 0;
         }

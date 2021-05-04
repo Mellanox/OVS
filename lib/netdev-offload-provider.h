@@ -74,7 +74,8 @@ struct netdev_flow_api {
      * Return 0 if successful, otherwise returns a positive errno value. */
     int (*flow_get)(struct netdev *, struct match *, struct nlattr **actions,
                     const ovs_u128 *ufid, struct dpif_flow_stats *,
-                    struct dpif_flow_attrs *, struct ofpbuf *wbuffer);
+                    struct dpif_flow_attrs *, struct ofpbuf *wbuffer,
+                    long long now);
 
     /* Delete a flow specified by ufid from netdev.
      * 'stats' is populated according to the rules set out in the description

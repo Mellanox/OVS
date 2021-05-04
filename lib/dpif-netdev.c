@@ -4643,7 +4643,7 @@ dpif_netdev_get_flow_offload_status(const struct dp_netdev *dp,
      *      for flow deletion case, since there will be no other attempt.  */
     if (!ovs_rwlock_tryrdlock(&dp->port_rwlock)) {
         ret = netdev_flow_get(netdev, &match, &actions,
-                              &netdev_flow->mega_ufid, stats, attrs, &buf);
+                              &netdev_flow->mega_ufid, stats, attrs, &buf, now);
         /* Storing statistics and attributes from the last request for
          * later use on mutex contention. */
         dp_netdev_flow_set_last_stats_attrs(netdev_flow, stats, attrs, ret);
@@ -4699,8 +4699,8 @@ get_dpif_flow_status(const struct dp_netdev *dp,
     stats->tcp_flags = flags;
 
     if (!dpif_netdev_get_flow_offload_status(dp, netdev_flow,
-                                             &offload_stats, &offload_attrs, 0,
-                                             0)) {
+                                             &offload_stats, &offload_attrs,
+                                             time_msec(), 0)) {
         stats->n_packets += offload_stats.n_packets;
         stats->n_bytes += offload_stats.n_bytes;
         stats->used = MAX(stats->used, offload_stats.used);
@@ -10039,7 +10039,7 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev,
                          associated_flows[associated_flow_item->index]);
         /* Query the counter. */
         ret = netdev_flow_get(netdev, match, actions, &merged_flow->ufid,
-                              &merged_stats, &merged_attr, buf);
+                              &merged_stats, &merged_attr, buf, now);
         if (ret) {
             VLOG_ERR_RL(&rl, "Failed to get merged flow ufid "UUID_FMT,
                         UUID_ARGS((struct uuid *) &merged_flow->ufid));
@@ -10072,7 +10072,7 @@ e2e_cache_get_merged_flows_stats(struct netdev *netdev,
                                        flow_counter_list);
             /* Query the counter. */
             ret = netdev_flow_get(netdev, match, actions, &merged_flow->ufid,
-                                  &merged_stats, &merged_attr, buf);
+                                  &merged_stats, &merged_attr, buf, now);
             if (ret) {
                 VLOG_ERR_RL(&rl, "Failed to get merged flow ufid "UUID_FMT,
                             UUID_ARGS((struct uuid *) &merged_flow->ufid));
