@@ -201,6 +201,8 @@ void netdev_offload_flow_mark_free(uint32_t mark);
 void netdev_regsiter_nl_sflow_upcall_cb(struct netdev *netdev,
                                         dpif_netlink_sflow_upcall_callback *cb);
 
+extern bool netdev_offload_ct_on_ct_nat;
+
 #ifdef  __cplusplus
 }
 #endif

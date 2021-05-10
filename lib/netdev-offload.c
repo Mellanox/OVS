@@ -64,6 +64,8 @@ static struct seq_pool *mark_pool = NULL;
 static bool e2e_cache_enabled = false;
 static uint32_t e2e_cache_size = 0;
 
+bool netdev_offload_ct_on_ct_nat = false;
+
 #define DEFAULT_OFFLOAD_THREAD_NB 1
 
 static unsigned int offload_thread_nb = DEFAULT_OFFLOAD_THREAD_NB;
@@ -1031,6 +1033,19 @@ netdev_set_flow_api_enabled(const struct smap *ovs_other_config)
                 VLOG_INFO("E2E cache size is %"PRIu32, e2e_cache_size);
             }
             ovsthread_once_done(&once_e2e);
+        }
+    }
+
+    {
+        bool prev_conf = netdev_offload_ct_on_ct_nat;
+
+        netdev_offload_ct_on_ct_nat = smap_get_bool(ovs_other_config,
+                                                    "ct-action-on-nat-conns",
+                                                    false);
+
+        if (prev_conf != netdev_offload_ct_on_ct_nat) {
+            VLOG_INFO("offloads CT on NAT connections: %s",
+                      netdev_offload_ct_on_ct_nat ? "enabled" : "disabled");
         }
     }
 }

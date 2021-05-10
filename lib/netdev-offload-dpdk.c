@@ -4786,44 +4786,117 @@ create_ct_conn(struct netdev *netdev,
     struct flow_actions nat_actions = { .actions = NULL, .cnt = 0 };
     struct flow_actions ct_actions = { .actions = NULL, .cnt = 0 };
     int ret = -1;
+    int pos = 0;
+    bool is_ct;
 
-    if (!act_resources->ct_nat_table_id &&
-        get_table_id(0, act_vars->vport, 0, TABLE_TYPE_CT_NAT, false,
-                     &act_resources->ct_nat_table_id)) {
-        return -1;
-    }
+    fi->rte_flow[0] = fi->rte_flow[1] = NULL;
+    fi->has_count[0] = fi->has_count[1] = false;
+
     split_ct_conn_actions(actions, &ct_actions, &nat_actions,
                           act_resources->ctid);
-    fi->has_count[0] = true;
-    ret = create_offload_flow(netdev, act_resources->ct_nat_table_id, items,
-                              nat_actions.actions, error,
-                              act_resources, act_vars, fi, 1);
-    if (ret) {
-        goto out;
+    is_ct = ct_actions.cnt == nat_actions.cnt;
+
+    if (netdev_offload_ct_on_ct_nat || !is_ct) {
+        if (!act_resources->ct_nat_table_id &&
+            get_table_id(0, act_vars->vport, 0, TABLE_TYPE_CT_NAT, false,
+                         &act_resources->ct_nat_table_id)) {
+            return -1;
+        }
+        fi->has_count[pos] = true;
+        ret = create_offload_flow(netdev, act_resources->ct_nat_table_id,
+                                  items, nat_actions.actions, error,
+                                  act_resources, act_vars, fi, pos);
+        if (ret) {
+            goto out;
+        }
+        pos++;
     }
 
-    if (!act_resources->self_table_id &&
-        get_table_id(0, act_vars->vport, 0, TABLE_TYPE_CT, false,
-                     &act_resources->self_table_id)) {
-        ret = -1;
-        goto ct_err;
+    if (netdev_offload_ct_on_ct_nat || is_ct) {
+        if (!act_resources->self_table_id &&
+            get_table_id(0, act_vars->vport, 0, TABLE_TYPE_CT, false,
+                         &act_resources->self_table_id)) {
+            ret = -1;
+            goto ct_err;
+        }
+        fi->has_count[pos] = true;
+        ret = create_offload_flow(netdev, act_resources->self_table_id, items,
+                                  ct_actions.actions, error, act_resources,
+                                  act_vars, fi, pos);
     }
-    fi->has_count[1] = true;
-    ret = create_offload_flow(netdev, act_resources->self_table_id, items,
-                              ct_actions.actions, error, act_resources,
-                              act_vars, fi, 0);
-    if (ret) {
-        goto ct_err;
-    }
-    goto out;
 
 ct_err:
-    netdev_offload_dpdk_destroy_flow(netdev, fi->rte_flow[1],
-                                     fi->creation_tid, NULL);
+    if (ret != 0) {
+        if (fi->rte_flow[0] != NULL) {
+            netdev_offload_dpdk_destroy_flow(netdev, fi->rte_flow[0],
+                                             fi->creation_tid, NULL);
+        }
+    }
 out:
     free_flow_actions(&ct_actions, false);
     free_flow_actions(&nat_actions, false);
     return ret;
+}
+
+static int
+add_ct_nat_miss(struct netdev *netdev,
+                const char *devargs,
+                uint32_t table_id,
+                struct act_vars *act_vars)
+{
+    struct rte_flow_item miss_items[] = {
+        { .type = RTE_FLOW_ITEM_TYPE_ETH, },
+        { .type = RTE_FLOW_ITEM_TYPE_END, } };
+    struct rte_flow_action_jump miss_jump;
+    const struct rte_flow_action miss_actions[] = {
+        { .type = RTE_FLOW_ACTION_TYPE_JUMP, .conf = &miss_jump },
+        { .type = RTE_FLOW_ACTION_TYPE_END, } };
+    struct act_resources act_resources = { .flow_id = INVALID_FLOW_MARK };
+    struct flows_handle flows = { .items = NULL, .cnt = 0 };
+    struct flow_item flow_item = { .devargs = devargs };
+    struct ufid_to_rte_flow_data *rte_flow_data;
+    struct rte_flow_attr attr = {
+        .transfer = 1,
+        .ingress = 1,
+        .group = table_id,
+        .priority = 1,
+    };
+    struct rte_flow_error error;
+    uint32_t ct_table_id;
+    ovs_u128 ufid;
+    int ret;
+
+    if (table_id_ufid(devargs, false, table_id, &ufid)) {
+        return -1;
+    }
+    rte_flow_data = ufid_to_rte_flow_data_find(netdev, &ufid, false);
+    if (rte_flow_data) {
+        return 0;
+    }
+
+    if (get_table_id(0, act_vars->vport, 0, TABLE_TYPE_CT, false,
+                     &ct_table_id)) {
+        return -1;
+    }
+    miss_jump.group = ct_table_id;
+
+    ret = create_rte_flow(netdev, &attr, miss_items, miss_actions,
+                          &error, &flow_item, 0, act_vars);
+    if (ret) {
+        return -1;
+    }
+
+    VLOG_DBG_RL(&rl, "%s: installed flow %p by ufid "UUID_FMT"\n",
+                netdev_get_name(netdev), flow_item.rte_flow[0],
+                UUID_ARGS((struct uuid *) &ufid));
+    add_flow_item(&flows, &flow_item);
+    if (!ufid_to_rte_flow_associate(&ufid, netdev, &flows, true,
+                                    &act_resources, false)) {
+        netdev_offload_dpdk_destroy_flow(netdev, flow_item.rte_flow[0],
+                                         netdev_offload_thread_id(), &ufid);
+        free_flow_handle(&flows, false);
+    }
+    return 0;
 }
 
 static void
@@ -4890,6 +4963,17 @@ create_pre_post_ct(struct netdev *netdev,
     if (!act_resources->ct_table_id &&
         get_table_id(0, act_vars->vport, 0, tbl_type, false,
                      &act_resources->ct_table_id)) {
+        ret = -1;
+        goto pre_ct_err;
+    }
+    /* Add a miss-rule from CT-NAT to CT table for natted connections
+     * without NAT actions (e.g. 'ct(nat)'). Without NAT actions, they
+     * will be offloaded in the CT table by default, unless
+     * 'ct-action-on-nat-conns' is enabled.
+     */
+    if (tbl_type == TABLE_TYPE_CT_NAT &&
+        add_ct_nat_miss(netdev, netdev_dpdk_get_port_devargs(netdev),
+                        act_resources->ct_table_id, act_vars)) {
         ret = -1;
         goto pre_ct_err;
     }
