@@ -5441,9 +5441,7 @@ netdev_dpdk_get_port_id(struct netdev *netdev)
     }
 
     dev = netdev_dpdk_cast(netdev);
-    ovs_mutex_lock(&dev->mutex);
     ret = dev->port_id;
-    ovs_mutex_unlock(&dev->mutex);
 out:
     return ret;
 }
@@ -5459,9 +5457,7 @@ netdev_dpdk_is_uplink_port(struct netdev *netdev)
     }
 
     dev = netdev_dpdk_cast(netdev);
-    ovs_mutex_lock(&dev->mutex);
     ret = dev->is_uplink_port;
-    ovs_mutex_unlock(&dev->mutex);
 out:
     return ret;
 }
@@ -5477,9 +5473,7 @@ netdev_dpdk_get_port_devargs(struct netdev *netdev)
     }
 
     dev = netdev_dpdk_cast(netdev);
-    ovs_mutex_lock(&dev->mutex);
     devargs = dev->devargs;
-    ovs_mutex_unlock(&dev->mutex);
 out:
     return devargs;
 }
@@ -5497,10 +5491,8 @@ netdev_dpdk_get_netdev_by_devargs(const char *devargs)
         goto out;
     }
 
-    ovs_mutex_lock(&dev->mutex);
     netdev = &dev->up;
     netdev_ref(netdev);
-    ovs_mutex_unlock(&dev->mutex);
 
 out:
     ovs_mutex_unlock(&dpdk_mutex);
@@ -5536,10 +5528,8 @@ netdev_dpdk_get_netdev_by_domain_id(uint16_t domain_id)
     if (!dev) {
         goto out;
     }
-    ovs_mutex_lock(&dev->mutex);
     netdev = &dev->up;
     netdev_ref(netdev);
-    ovs_mutex_unlock(&dev->mutex);
 
 out:
     ovs_mutex_unlock(&dpdk_mutex);
@@ -5565,12 +5555,10 @@ netdev_dpdk_flow_api_supported(struct netdev *netdev)
     }
 
     dev = netdev_dpdk_cast(netdev);
-    ovs_mutex_lock(&dev->mutex);
     if (dev->type == DPDK_DEV_ETH) {
         /* TODO: Check if we able to offload some minimal flow. */
         ret = true;
     }
-    ovs_mutex_unlock(&dev->mutex);
 out:
     return ret;
 }
