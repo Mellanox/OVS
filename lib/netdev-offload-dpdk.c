@@ -5183,6 +5183,48 @@ parse_flow_actions(struct netdev *netdev,
     return 0;
 }
 
+struct tnl_flow_create_aux {
+    struct netdev *vport;
+    const struct rte_flow_item *items;
+    const struct rte_flow_action *actions;
+    const ovs_u128 *ufid;
+    struct act_resources *act_resources;
+    struct act_vars *act_vars;
+    struct flows_handle *flows;
+};
+
+static bool
+flow_create_for_each_uplink(struct netdev *netdev,
+                            odp_port_t odp_port OVS_UNUSED,
+                            void *arg)
+{
+    struct flow_item flow_item = { .devargs = NULL };
+    struct tnl_flow_create_aux *aux = arg;
+    struct rte_flow_error error;
+    int ret;
+
+    if (!netdev_dpdk_is_uplink_port(netdev)) {
+        /* False == continue; */
+        return false;
+    }
+
+    ret = netdev_offload_dpdk_flow_create(netdev, aux->items, aux->actions,
+                                          &error, aux->act_resources,
+                                          aux->act_vars, &flow_item);
+    if (ret != 0) {
+        return false;
+    }
+
+    flow_item.devargs = netdev_dpdk_get_port_devargs(netdev);
+    VLOG_DBG_RL(&rl, "%s: installed flow %p/%p by ufid "UUID_FMT,
+                netdev_get_name(aux->vport), flow_item.rte_flow[0],
+                flow_item.rte_flow[1],
+                UUID_ARGS((struct uuid *)aux->ufid));
+    add_flow_item(aux->flows, &flow_item);
+
+    return false;
+}
+
 static int
 netdev_offload_dpdk_create_tnl_flows(struct netdev *netdev,
                                      const struct rte_flow_item *items,
@@ -5192,43 +5234,16 @@ netdev_offload_dpdk_create_tnl_flows(struct netdev *netdev,
                                      struct act_vars *act_vars,
                                      struct flows_handle *flows)
 {
-    struct flow_item flow_item = { .devargs = NULL };
-    struct netdev_flow_dump **netdev_dumps;
-    struct rte_flow_error error;
-    int num_ports = 0;
-    int ret;
-    int i;
+    struct tnl_flow_create_aux tnl = {
+        .vport = netdev, .items = items, .actions = actions,
+        .ufid = ufid, .act_resources = act_resources, .act_vars = act_vars,
+        .flows = flows,
+    };
 
-    netdev_dumps = netdev_ports_flow_dump_create(netdev->dpif_type,
-                                                 &num_ports, false);
-    for (i = 0; i < num_ports; i++) {
-        if (!netdev_dpdk_is_uplink_port(netdev_dumps[i]->netdev)) {
-            continue;
-        }
-        ret = netdev_offload_dpdk_flow_create(netdev_dumps[i]->netdev, items,
-                                              actions, &error, act_resources,
-                                              act_vars, &flow_item);
-        if (ret) {
-            continue;
-        }
-        flow_item.devargs =
-            netdev_dpdk_get_port_devargs(netdev_dumps[i]->netdev);
-        VLOG_DBG_RL(&rl, "%s: installed flow %p/%p by ufid "UUID_FMT,
-                    netdev_get_name(netdev), flow_item.rte_flow[0],
-                    flow_item.rte_flow[1],
-                    UUID_ARGS((struct uuid *)ufid));
-        add_flow_item(flows, &flow_item);
-    }
-    for (i = 0; i < num_ports; i++) {
-        int err = netdev_flow_dump_destroy(netdev_dumps[i]);
+    netdev_ports_traverse(netdev->dpif_type,
+                          flow_create_for_each_uplink, &tnl);
 
-        if (err != 0 && err != EOPNOTSUPP) {
-            VLOG_ERR("failed dumping netdev: %s", ovs_strerror(err));
-        }
-    }
-
-    ret = flows->cnt > 0 ? 0 : -1;
-    return ret;
+    return flows->cnt > 0 ? 0 : -1;
 }
 
 static int
@@ -5736,28 +5751,6 @@ netdev_offload_dpdk_hw_offload_stats_get(struct netdev *netdev,
 }
 
 static int
-netdev_offload_dpdk_flow_dump_create(struct netdev *netdev,
-                                     struct netdev_flow_dump **dump_out,
-                                     bool terse OVS_UNUSED)
-{
-    struct netdev_flow_dump *dump;
-
-    dump = xzalloc(sizeof *dump);
-    dump->netdev = netdev_ref(netdev);
-
-    *dump_out = dump;
-    return 0;
-}
-
-static int
-netdev_offload_dpdk_flow_dump_destroy(struct netdev_flow_dump *dump)
-{
-    netdev_close(dump->netdev);
-    free(dump);
-    return 0;
-}
-
-static int
 netdev_offload_dpdk_ct_counter_query(struct netdev *netdev OVS_UNUSED,
                                      uintptr_t counter_key,
                                      long long now,
@@ -5819,7 +5812,5 @@ const struct netdev_flow_api netdev_offload_dpdk = {
     .flow_flush = netdev_offload_dpdk_flow_flush,
     .hw_miss_packet_recover = netdev_offload_dpdk_hw_miss_packet_recover,
     .hw_offload_stats_get = netdev_offload_dpdk_hw_offload_stats_get,
-    .flow_dump_create = netdev_offload_dpdk_flow_dump_create,
-    .flow_dump_destroy = netdev_offload_dpdk_flow_dump_destroy,
     .ct_counter_query = netdev_offload_dpdk_ct_counter_query,
 };
