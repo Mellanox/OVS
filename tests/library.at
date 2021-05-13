@@ -258,3 +258,7 @@ AT_SETUP([stopwatch module])
 AT_CHECK([ovstest test-stopwatch], [0], [......
 ], [ignore])
 AT_CLEANUP
+
+AT_SETUP([salloc])
+AT_CHECK([ovstest test-salloc], [0], [])
+AT_CLEANUP

@@ -476,6 +476,7 @@ tests_ovstest_SOURCES = \
 	tests/test-sha1.c \
 	tests/test-skiplist.c \
 	tests/test-stp.c \
+	tests/test-salloc.c \
 	tests/test-unixctl.c \
 	tests/test-util.c \
 	tests/test-uuid.c \

@@ -344,6 +344,8 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/tnl-ports.h \
 	lib/netdev-native-tnl.c \
 	lib/netdev-native-tnl.h \
+	lib/salloc.c \
+	lib/salloc.h \
 	lib/token-bucket.c \
 	lib/tun-metadata.c \
 	lib/tun-metadata.h \
