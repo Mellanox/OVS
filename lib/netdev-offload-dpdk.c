@@ -1763,10 +1763,20 @@ static struct context_metadata counter_id_md = {
 static int
 get_ct_counter_id(uintptr_t ctid_key, uint32_t *ct_id)
 {
+    static struct ovsthread_once init_once = OVSTHREAD_ONCE_INITIALIZER;
     struct flows_counter_key counter_id_key = { .ptr_key = ctid_key, };
     struct context_data ct_id_ctx = {
         .data = &counter_id_key,
     };
+
+    if (ovsthread_once_start(&init_once)) {
+        /* Disable shrinking on CT counter CMAPs.
+         * Otherwise they might re-expand afterward, adding latency
+         * jitter. */
+        cmap_set_min_load(&counter_id_md.d2i_map, 0.0);
+        cmap_set_min_load(&counter_id_md.i2d_map, 0.0);
+        ovsthread_once_done(&init_once);
+    }
 
     return get_context_data_id_by_data(&counter_id_md, &ct_id_ctx, NULL,
                                        ct_id);
