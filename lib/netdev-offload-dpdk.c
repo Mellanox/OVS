@@ -29,6 +29,7 @@
 #include "openvswitch/vlog.h"
 #include "packets.h"
 #include "uuid.h"
+#include "salloc.h"
 #include "seq-pool.h"
 #include "odp-util.h"
 #include "ovs-atomic.h"
@@ -49,6 +50,68 @@ static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(600, 600);
  *
  * For current implementation all above restrictions could be fulfilled by
  * taking the datapath 'port_rwlock' in lib/dpif-netdev.c.  */
+
+struct per_thread {
+PADDED_MEMBERS(CACHE_LINE_SIZE,
+    char scratch[10000];
+    struct salloc *s;
+);
+};
+
+static struct per_thread per_threads[MAX_OFFLOAD_THREAD_NB];
+
+static void
+per_thread_init(void)
+{
+    struct per_thread *pt = &per_threads[netdev_offload_thread_id()];
+
+    if (pt->s == NULL) {
+        pt->s = salloc_init(pt->scratch, sizeof pt->scratch);
+    }
+    salloc_reset(pt->s);
+}
+
+static void *
+per_thread_xmalloc(size_t n)
+{
+    struct per_thread *pt = &per_threads[netdev_offload_thread_id()];
+
+    return xsalloc(pt->s, n);
+}
+
+static void *
+per_thread_xzalloc(size_t n)
+{
+    struct per_thread *pt = &per_threads[netdev_offload_thread_id()];
+
+    return xszalloc(pt->s, n);
+}
+
+static void *
+per_thread_xcalloc(size_t n, size_t sz)
+{
+    struct per_thread *pt = &per_threads[netdev_offload_thread_id()];
+
+    return xscalloc(pt->s, n, sz);
+}
+
+static void *
+per_thread_xrealloc(void *p, size_t n)
+{
+    struct per_thread *pt = &per_threads[netdev_offload_thread_id()];
+
+    return xsrealloc(pt->s, p, n);
+}
+
+static void
+per_thread_free(void *p)
+{
+    struct per_thread *pt = &per_threads[netdev_offload_thread_id()];
+
+    /* The only freeing done in the scratch allocator is when resetting it.
+     * However, realloc has a chance to shrink, so still attempt it. */
+    srealloc(pt->s, p, 0);
+}
 
 struct act_resources {
     uint32_t next_table_id;
@@ -2838,12 +2901,13 @@ add_flow_pattern(struct flow_patterns *patterns, enum rte_flow_item_type type,
 
     if (cnt == 0) {
         patterns->current_max = 8;
-        patterns->items = xcalloc(patterns->current_max,
-                                  sizeof *patterns->items);
+        patterns->items = per_thread_xcalloc(patterns->current_max,
+                                             sizeof *patterns->items);
     } else if (cnt == patterns->current_max) {
         patterns->current_max *= 2;
-        patterns->items = xrealloc(patterns->items, patterns->current_max *
-                                   sizeof *patterns->items);
+        patterns->items = per_thread_xrealloc(patterns->items,
+                                              patterns->current_max *
+                                              sizeof *patterns->items);
     }
 
     patterns->items[cnt].type = type;
@@ -2861,12 +2925,13 @@ add_flow_action(struct flow_actions *actions, enum rte_flow_action_type type,
 
     if (cnt == 0) {
         actions->current_max = 8;
-        actions->actions = xcalloc(actions->current_max,
-                                   sizeof *actions->actions);
+        actions->actions = per_thread_xcalloc(actions->current_max,
+                                              sizeof *actions->actions);
     } else if (cnt == actions->current_max) {
         actions->current_max *= 2;
-        actions->actions = xrealloc(actions->actions, actions->current_max *
-                                    sizeof *actions->actions);
+        actions->actions = per_thread_xrealloc(actions->actions,
+                                               actions->current_max *
+                                               sizeof *actions->actions);
     }
 
     actions->actions[cnt].type = type;
@@ -2882,16 +2947,16 @@ free_flow_patterns(struct flow_patterns *patterns)
 
     for (i = 0; i < patterns->cnt; i++) {
         if (patterns->items[i].spec) {
-            free(CONST_CAST(void *, patterns->items[i].spec));
+            per_thread_free(CONST_CAST(void *, patterns->items[i].spec));
         }
         if (patterns->items[i].mask) {
-            free(CONST_CAST(void *, patterns->items[i].mask));
+            per_thread_free(CONST_CAST(void *, patterns->items[i].mask));
         }
         if (patterns->items[i].last) {
-            free(CONST_CAST(void *, patterns->items[i].last));
+            per_thread_free(CONST_CAST(void *, patterns->items[i].last));
         }
     }
-    free(patterns->items);
+    per_thread_free(patterns->items);
     patterns->items = NULL;
     patterns->cnt = 0;
 }
@@ -2903,10 +2968,10 @@ free_flow_actions(struct flow_actions *actions, bool free_confs)
 
     for (i = 0; free_confs && i < actions->cnt; i++) {
         if (actions->actions[i].conf) {
-            free(CONST_CAST(void *, actions->actions[i].conf));
+            per_thread_free(CONST_CAST(void *, actions->actions[i].conf));
         }
     }
-    free(actions->actions);
+    per_thread_free(actions->actions);
     actions->actions = NULL;
     actions->cnt = 0;
 }
@@ -2956,8 +3021,8 @@ parse_tnl_ip_match(struct flow_patterns *patterns,
     if (match->wc.masks.tunnel.ip_src || match->wc.masks.tunnel.ip_dst) {
         struct rte_flow_item_ipv4 *spec, *mask;
 
-        spec = xzalloc(sizeof *spec);
-        mask = xzalloc(sizeof *mask);
+        spec = per_thread_xzalloc(sizeof *spec);
+        mask = per_thread_xzalloc(sizeof *mask);
 
         spec->hdr.type_of_service = match->flow.tunnel.ip_tos;
         spec->hdr.time_to_live    = match->flow.tunnel.ip_ttl;
@@ -2984,8 +3049,8 @@ parse_tnl_ip_match(struct flow_patterns *patterns,
         /* IP v6 */
         struct rte_flow_item_ipv6 *spec, *mask;
 
-        spec = xzalloc(sizeof *spec);
-        mask = xzalloc(sizeof *mask);
+        spec = per_thread_xzalloc(sizeof *spec);
+        mask = per_thread_xzalloc(sizeof *mask);
 
         spec->hdr.proto = proto;
         spec->hdr.hop_limits = match->flow.tunnel.ip_ttl;
@@ -3030,8 +3095,8 @@ parse_tnl_udp_match(struct flow_patterns *patterns,
 
     consumed_masks = &match->wc.masks;
 
-    spec = xzalloc(sizeof *spec);
-    mask = xzalloc(sizeof *mask);
+    spec = per_thread_xzalloc(sizeof *spec);
+    mask = per_thread_xzalloc(sizeof *mask);
 
     spec->hdr.src_port = match->flow.tunnel.tp_src;
     spec->hdr.dst_port = match->flow.tunnel.tp_dst;
@@ -3061,8 +3126,8 @@ parse_vxlan_match(struct flow_patterns *patterns,
 
     consumed_masks = &match->wc.masks;
     /* VXLAN */
-    vx_spec = xzalloc(sizeof *vx_spec);
-    vx_mask = xzalloc(sizeof *vx_mask);
+    vx_spec = per_thread_xzalloc(sizeof *vx_spec);
+    vx_mask = per_thread_xzalloc(sizeof *vx_mask);
 
     put_unaligned_be32((ovs_be32 *)vx_spec->vni,
                        htonl(ntohll(match->flow.tunnel.tun_id) << 8));
@@ -3107,8 +3172,8 @@ parse_geneve_opt_match(struct flow *consumed_masks,
                       sizeof *match->wc.masks.tunnel.metadata.opts.gnv) &&
         match->flow.tunnel.metadata.present.len) {
         while (len) {
-            gnv_opts = xzalloc(sizeof *gnv_opts);
-            gnv_opts_mask = xzalloc(sizeof *gnv_opts_mask);
+            gnv_opts = per_thread_xzalloc(sizeof *gnv_opts);
+            gnv_opts_mask = per_thread_xzalloc(sizeof *gnv_opts_mask);
             memcpy(&gnv_opts->opts[idx].option_class,
                    &curr_opt_spec.opt_class, sizeof curr_opt_spec.opt_class);
             memcpy(&gnv_opts_mask->opts_mask[idx].option_class,
@@ -3177,8 +3242,8 @@ parse_geneve_match(struct flow_patterns *patterns,
 
     consumed_masks = &match->wc.masks;
     /* GENEVE */
-    gnv_spec = xzalloc(sizeof *gnv_spec);
-    gnv_mask = xzalloc(sizeof *gnv_mask);
+    gnv_spec = per_thread_xzalloc(sizeof *gnv_spec);
+    gnv_mask = per_thread_xzalloc(sizeof *gnv_mask);
 
     put_unaligned_be32((ovs_be32 *)gnv_spec->vni,
                        htonl(ntohll(match->flow.tunnel.tun_id) << 8));
@@ -3283,11 +3348,11 @@ add_pattern_match_reg_field(struct flow_patterns *patterns,
     reg_mask = (mask & reg_field->mask) << reg_field->offset;
     switch (reg_field->type) {
     case REG_TYPE_TAG:
-        tag_spec = xzalloc(sizeof *tag_spec);
+        tag_spec = per_thread_xzalloc(sizeof *tag_spec);
         tag_spec->index = reg_field->index;
         tag_spec->data = reg_spec;
 
-        tag_mask = xzalloc(sizeof *tag_mask);
+        tag_mask = per_thread_xzalloc(sizeof *tag_mask);
         tag_mask->index = 0xFF;
         tag_mask->data = reg_mask;
 
@@ -3295,10 +3360,10 @@ add_pattern_match_reg_field(struct flow_patterns *patterns,
                          NULL);
         break;
     case REG_TYPE_META:
-        meta_spec = xzalloc(sizeof *meta_spec);
+        meta_spec = per_thread_xzalloc(sizeof *meta_spec);
         meta_spec->data = reg_spec;
 
-        meta_mask = xzalloc(sizeof *meta_mask);
+        meta_mask = per_thread_xzalloc(sizeof *meta_mask);
         meta_mask->data = reg_mask;
 
         add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_META, meta_spec,
@@ -3337,14 +3402,14 @@ add_action_set_reg_field(struct flow_actions *actions,
     reg_mask = (mask & reg_field->mask) << reg_field->offset;
     switch (reg_field->type) {
     case REG_TYPE_TAG:
-        set_tag = xzalloc(sizeof *set_tag);
+        set_tag = per_thread_xzalloc(sizeof *set_tag);
         set_tag->index = reg_field->index;
         set_tag->data = reg_spec;
         set_tag->mask = reg_mask;
         add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_TAG, set_tag);
         break;
     case REG_TYPE_META:
-        set_meta = xzalloc(sizeof *set_meta);
+        set_meta = per_thread_xzalloc(sizeof *set_meta);
         set_meta->data = reg_spec;
         set_meta->mask = reg_mask;
         add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SET_META, set_meta);
@@ -3443,8 +3508,8 @@ parse_flow_match(struct netdev *netdev,
         !eth_addr_is_zero(match->wc.masks.dl_dst)) {
         struct rte_flow_item_eth *spec, *mask;
 
-        spec = xzalloc(sizeof *spec);
-        mask = xzalloc(sizeof *mask);
+        spec = per_thread_xzalloc(sizeof *spec);
+        mask = per_thread_xzalloc(sizeof *mask);
 
         memcpy(&spec->dst, &match->flow.dl_dst, sizeof spec->dst);
         memcpy(&spec->src, &match->flow.dl_src, sizeof spec->src);
@@ -3470,8 +3535,8 @@ parse_flow_match(struct netdev *netdev,
     if (match->wc.masks.vlans[0].tci && match->flow.vlans[0].tci) {
         struct rte_flow_item_vlan *spec, *mask;
 
-        spec = xzalloc(sizeof *spec);
-        mask = xzalloc(sizeof *mask);
+        spec = per_thread_xzalloc(sizeof *spec);
+        mask = per_thread_xzalloc(sizeof *mask);
 
         spec->tci = match->flow.vlans[0].tci & ~htons(VLAN_CFI);
         mask->tci = match->wc.masks.vlans[0].tci & ~htons(VLAN_CFI);
@@ -3497,8 +3562,8 @@ parse_flow_match(struct netdev *netdev,
     if (match->flow.dl_type == htons(ETH_TYPE_IP)) {
         struct rte_flow_item_ipv4 *spec, *mask, *last = NULL;
 
-        spec = xzalloc(sizeof *spec);
-        mask = xzalloc(sizeof *mask);
+        spec = per_thread_xzalloc(sizeof *spec);
+        mask = per_thread_xzalloc(sizeof *mask);
 
         spec->hdr.type_of_service = match->flow.nw_tos;
         spec->hdr.time_to_live    = match->flow.nw_ttl;
@@ -3532,7 +3597,7 @@ parse_flow_match(struct netdev *netdev,
                                                       RTE_IPV4_HDR_MF_FLAG);
                 } else {
                     /* frag=later */
-                    last = xzalloc(sizeof *last);
+                    last = per_thread_xzalloc(sizeof *last);
                     spec->hdr.fragment_offset = htons(1 << RTE_IPV4_HDR_FO_SHIFT);
                     mask->hdr.fragment_offset = htons(RTE_IPV4_HDR_OFFSET_MASK);
                     last->hdr.fragment_offset = htons(RTE_IPV4_HDR_OFFSET_MASK);
@@ -3556,8 +3621,8 @@ parse_flow_match(struct netdev *netdev,
     if (match->flow.dl_type == htons(ETH_TYPE_IPV6)) {
         struct rte_flow_item_ipv6 *spec, *mask;
 
-        spec = xzalloc(sizeof *spec);
-        mask = xzalloc(sizeof *mask);
+        spec = per_thread_xzalloc(sizeof *spec);
+        mask = per_thread_xzalloc(sizeof *mask);
 
         spec->hdr.proto = match->flow.nw_proto;
         spec->hdr.hop_limits = match->flow.nw_ttl;
@@ -3590,8 +3655,8 @@ parse_flow_match(struct netdev *netdev,
             struct rte_flow_item_ipv6_frag_ext *frag_spec, *frag_mask,
                 *frag_last = NULL;
 
-            frag_spec = xzalloc(sizeof *frag_spec);
-            frag_mask = xzalloc(sizeof *frag_mask);
+            frag_spec = per_thread_xzalloc(sizeof *frag_spec);
+            frag_mask = per_thread_xzalloc(sizeof *frag_mask);
 
             if (match->wc.masks.nw_frag & FLOW_NW_FRAG_LATER) {
                 if (!(match->flow.nw_frag & FLOW_NW_FRAG_LATER)) {
@@ -3606,7 +3671,7 @@ parse_flow_match(struct netdev *netdev,
                     mask->hdr.proto = 0;
                 } else {
                     /* frag=later */
-                    frag_last = xzalloc(sizeof *frag_last);
+                    frag_last = per_thread_xzalloc(sizeof *frag_last);
                     frag_spec->hdr.frag_data = htons(1 << RTE_IPV6_EHDR_FO_SHIFT);
                     frag_mask->hdr.frag_data = htons(RTE_IPV6_EHDR_FO_MASK);
                     frag_last->hdr.frag_data = htons(RTE_IPV6_EHDR_FO_MASK);
@@ -3647,8 +3712,8 @@ parse_flow_match(struct netdev *netdev,
     if (proto == IPPROTO_TCP) {
         struct rte_flow_item_tcp *spec, *mask;
 
-        spec = xzalloc(sizeof *spec);
-        mask = xzalloc(sizeof *mask);
+        spec = per_thread_xzalloc(sizeof *spec);
+        mask = per_thread_xzalloc(sizeof *mask);
 
         spec->hdr.src_port  = match->flow.tp_src;
         spec->hdr.dst_port  = match->flow.tp_dst;
@@ -3668,8 +3733,8 @@ parse_flow_match(struct netdev *netdev,
     } else if (proto == IPPROTO_UDP) {
         struct rte_flow_item_udp *spec, *mask;
 
-        spec = xzalloc(sizeof *spec);
-        mask = xzalloc(sizeof *mask);
+        spec = per_thread_xzalloc(sizeof *spec);
+        mask = per_thread_xzalloc(sizeof *mask);
 
         spec->hdr.src_port = match->flow.tp_src;
         spec->hdr.dst_port = match->flow.tp_dst;
@@ -3684,8 +3749,8 @@ parse_flow_match(struct netdev *netdev,
     } else if (proto == IPPROTO_SCTP) {
         struct rte_flow_item_sctp *spec, *mask;
 
-        spec = xzalloc(sizeof *spec);
-        mask = xzalloc(sizeof *mask);
+        spec = per_thread_xzalloc(sizeof *spec);
+        mask = per_thread_xzalloc(sizeof *mask);
 
         spec->hdr.src_port = match->flow.tp_src;
         spec->hdr.dst_port = match->flow.tp_dst;
@@ -3700,8 +3765,8 @@ parse_flow_match(struct netdev *netdev,
     } else if (proto == IPPROTO_ICMP) {
         struct rte_flow_item_icmp *spec, *mask;
 
-        spec = xzalloc(sizeof *spec);
-        mask = xzalloc(sizeof *mask);
+        spec = per_thread_xzalloc(sizeof *spec);
+        mask = per_thread_xzalloc(sizeof *mask);
 
         spec->hdr.icmp_type = (uint8_t) ntohs(match->flow.tp_src);
         spec->hdr.icmp_code = (uint8_t) ntohs(match->flow.tp_dst);
@@ -3789,13 +3854,14 @@ add_flow_mark_rss_actions(struct flow_actions *actions,
     BUILD_ASSERT_DECL(offsetof(struct action_rss_data, conf) == 0);
     int i;
 
-    mark = xzalloc(sizeof *mark);
+    mark = per_thread_xzalloc(sizeof *mark);
 
     mark->id = flow_mark;
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_MARK, mark);
 
-    rss_data = xmalloc(sizeof *rss_data +
-                       netdev_n_rxq(netdev) * sizeof rss_data->queue[0]);
+    rss_data = per_thread_xmalloc(sizeof *rss_data +
+                                  netdev_n_rxq(netdev) *
+                                  sizeof rss_data->queue[0]);
     *rss_data = (struct action_rss_data) {
         .conf = (struct rte_flow_action_rss) {
             .func = RTE_ETH_HASH_FUNCTION_DEFAULT,
@@ -3856,7 +3922,7 @@ add_empty_sample_action(int ratio,
     } *sample_data;
     BUILD_ASSERT_DECL(offsetof(struct sample_data, sample) == 0);
 
-    sample_data = xzalloc(sizeof *sample_data);
+    sample_data = per_thread_xzalloc(sizeof *sample_data);
     sample_data->end_action.type = RTE_FLOW_ACTION_TYPE_END;
     sample_data->sample.actions = &sample_data->end_action;
     sample_data->sample.ratio = ratio;
@@ -3963,14 +4029,14 @@ add_count_action(struct flow_actions *actions,
                  struct act_vars *act_vars,
                  struct act_resources *act_resources)
 {
-    struct rte_flow_action_count *count = xzalloc(sizeof *count);
+    struct rte_flow_action_count *count = per_thread_xzalloc(sizeof *count);
 
     /* e2e flows don't use mark. ct2ct do. we can share only e2e, not ct2ct. */
     if (act_vars->is_e2e_cache_flow &&
         act_resources->flow_id == INVALID_FLOW_MARK &&
         !netdev_is_flow_counter_key_zero(&act_vars->flows_counter_key)) {
         if (get_flows_counter_id(&act_vars->flows_counter_key, &count->id)) {
-            free(count);
+            per_thread_free(count);
             return -1;
         }
         count->shared = 1;
@@ -3992,7 +4058,7 @@ add_port_id_action(struct flow_actions *actions,
 {
     struct rte_flow_action_port_id *port_id;
 
-    port_id = xzalloc(sizeof *port_id);
+    port_id = per_thread_xzalloc(sizeof *port_id);
     port_id->id = outdev_id;
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_PORT_ID, port_id);
 }
@@ -4064,7 +4130,7 @@ add_set_flow_action__(struct flow_actions *actions,
         }
     }
 
-    spec = xzalloc(size);
+    spec = per_thread_xzalloc(size);
     memcpy(spec, value, size);
     add_flow_action(actions, attr, spec);
 
@@ -4212,7 +4278,7 @@ add_vxlan_encap_action(struct flow_actions *actions,
     int field;
 
     if (!vxlan_items) {
-        vxlan_data = xzalloc(sizeof *vxlan_data);
+        vxlan_data = per_thread_xzalloc(sizeof *vxlan_data);
         vxlan_items = vxlan_data->items;
         vxlan_data->conf.definition = vxlan_items;
     }
@@ -4276,7 +4342,7 @@ add_vxlan_encap_action(struct flow_actions *actions,
     return 0;
 err:
     if (vxlan_data) {
-        free(vxlan_data);
+        per_thread_free(vxlan_data);
     }
     return -1;
 }
@@ -4289,16 +4355,16 @@ parse_vlan_push_action(struct flow_actions *actions,
     struct rte_flow_action_of_set_vlan_pcp *rte_vlan_pcp;
     struct rte_flow_action_of_set_vlan_vid *rte_vlan_vid;
 
-    rte_push_vlan = xzalloc(sizeof *rte_push_vlan);
+    rte_push_vlan = per_thread_xzalloc(sizeof *rte_push_vlan);
     rte_push_vlan->ethertype = vlan_push->vlan_tpid;
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_OF_PUSH_VLAN, rte_push_vlan);
 
-    rte_vlan_pcp = xzalloc(sizeof *rte_vlan_pcp);
+    rte_vlan_pcp = per_thread_xzalloc(sizeof *rte_vlan_pcp);
     rte_vlan_pcp->vlan_pcp = vlan_tci_to_pcp(vlan_push->vlan_tci);
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_OF_SET_VLAN_PCP,
                     rte_vlan_pcp);
 
-    rte_vlan_vid = xzalloc(sizeof *rte_vlan_vid);
+    rte_vlan_vid = per_thread_xzalloc(sizeof *rte_vlan_vid);
     rte_vlan_vid->vlan_vid = htons(vlan_tci_to_vid(vlan_push->vlan_tci));
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_OF_SET_VLAN_VID,
                     rte_vlan_vid);
@@ -4331,7 +4397,7 @@ parse_clone_actions(struct netdev *netdev,
                 continue;
             }
             if (!raw_encap) {
-                actions_raw_encap = xzalloc(sizeof *actions_raw_encap);
+                actions_raw_encap = per_thread_xzalloc(sizeof *raw_encap);
                 raw_encap = actions_raw_encap;
             }
 
@@ -4388,7 +4454,7 @@ add_mirror_action(struct netdev *netdev,
     bool is_vxlan, is_raw;
     int port_id;
 
-    sample_conf = xzalloc(sizeof *sample_conf);
+    sample_conf = per_thread_xzalloc(sizeof *sample_conf);
     sample_itr = sample_conf->sample_actions;
     is_vxlan = false;
     is_raw = false;
@@ -4433,14 +4499,14 @@ add_mirror_action(struct netdev *netdev,
                     sample_conf);
     return 0;
 err:
-    free(sample_conf);
+    per_thread_free(sample_conf);
     return -1;
 }
 
 static struct rte_flow_action_jump *
 add_jump_action(struct flow_actions *actions, uint32_t group)
 {
-    struct rte_flow_action_jump *jump = xzalloc (sizeof *jump);
+    struct rte_flow_action_jump *jump = per_thread_xzalloc(sizeof *jump);
 
     jump->group = group;
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_JUMP, jump);
@@ -4593,7 +4659,7 @@ add_geneve_decap_action(struct flow_actions *actions,
 {
     struct rte_flow_action_raw_decap *conf;
 
-    conf = xmalloc(sizeof (struct rte_flow_action_raw_decap));
+    conf = per_thread_xmalloc(sizeof (struct rte_flow_action_raw_decap));
     /* MLX5 PMD supports only one option of size 32 bits
      * which is the minimum size of options (if exists)
      * in case a flow exists with an option decapsulate 32 bits
@@ -4736,7 +4802,8 @@ parse_ct_actions(struct flow_actions *actions,
             add_action_set_reg_field(actions, REG_FIELD_CT_CTX,
                                      act_resources->ct_miss_ctx_id, 0xFFFFFFFF);
             if (act_resources->flow_id != INVALID_FLOW_MARK) {
-                struct rte_flow_action_mark *mark = xzalloc(sizeof *mark);
+                struct rte_flow_action_mark *mark =
+                    per_thread_xzalloc(sizeof *mark);
 
                 mark->id = act_resources->flow_id;
                 add_flow_action(actions, RTE_FLOW_ACTION_TYPE_MARK, mark);
@@ -5487,6 +5554,8 @@ netdev_offload_dpdk_flow_put(struct netdev *netdev, struct match *match,
             return ret;
         }
     }
+
+    per_thread_init();
 
     rte_flow_data = netdev_offload_dpdk_add_flow(netdev, match, actions,
                                                  actions_len, ufid, info);
