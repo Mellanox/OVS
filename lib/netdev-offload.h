@@ -106,6 +106,7 @@ struct offload_info {
                                   * to delete the original flow. */
     /* Indicates if flow is for e2e cache*/
     bool is_e2e_cache_flow;
+    bool is_ct_conn;
 
     uintptr_t ct_counter_key;
     struct flows_counter_key flows_counter_key;
