@@ -5614,6 +5614,8 @@ netdev_offload_dpdk_flow_del(struct netdev *netdev OVS_UNUSED,
 {
     struct ufid_to_rte_flow_data *rte_flow_data;
 
+    do_context_delayed_release();
+
     rte_flow_data = ufid_to_rte_flow_data_find(netdev, ufid, true);
     if (!rte_flow_data) {
         VLOG_WARN("ufid "UUID_FMT" is not associated with an rte flow",
