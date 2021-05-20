@@ -44,7 +44,7 @@ int
 netdev_dpdk_vdpa_config_impl(struct netdev_dpdk_vdpa_relay *relay,
                              uint16_t port_id,
                              const char *vm_socket,
-                             const char *vf_pci,
+                             const char *vf_devargs,
                              int max_queues,
                              bool hw_mode);
 void

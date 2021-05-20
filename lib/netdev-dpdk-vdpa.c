@@ -26,6 +26,7 @@
 #include <rte_atomic.h>
 #include <rte_byteorder.h>
 #include <rte_malloc.h>
+#include <rte_pci.h>
 #include <rte_vdpa.h>
 
 #include "netdev-provider.h"
@@ -79,7 +80,7 @@ struct netdev_dpdk_vdpa_relay {
         int port_id_vf;
         uint16_t vf_mtu;
         int n_rxq;
-        char *vf_pci;
+        char *vf_devargs;
         char *vm_socket;
         char *vhost_name;
         bool started;
@@ -175,7 +176,7 @@ static void
 netdev_dpdk_vdpa_free_relay_strings(struct netdev_dpdk_vdpa_relay *relay)
 {
     netdev_dpdk_vdpa_free(relay->vm_socket);
-    netdev_dpdk_vdpa_free(relay->vf_pci);
+    netdev_dpdk_vdpa_free(relay->vf_devargs);
     netdev_dpdk_vdpa_free(relay->vhost_name);
 }
 
@@ -713,24 +714,31 @@ static const struct vhost_device_ops netdev_dpdk_vdpa_sample_devops = {
 };
 
 static int
-netdev_dpdk_vdpa_config_hw_impl(struct netdev_dpdk_vdpa_relay *relay,
-                                const char *vf_pci,
-                                const char *vhost_path)
+netdev_dpdk_vdpa_config_hw_impl(struct netdev_dpdk_vdpa_relay *relay)
 {
+    struct rte_pci_addr pci_addr;
     struct rte_vdpa_device *dev;
+    const char *vf_devargs;
+    const char *vhost_path;
+    bool is_pci;
     int err;
 
-    err = rte_eal_hotplug_add("pci", relay->vf_pci, "class=vdpa");
+    vf_devargs = relay->vf_devargs;
+    vhost_path = relay->vm_socket;
+
+    is_pci = !rte_pci_addr_parse(vf_devargs, &pci_addr);
+    err = rte_eal_hotplug_add(is_pci ? "pci" : "auxiliary", vf_devargs,
+                              "class=vdpa");
     if (err) {
         VLOG_ERR("Failed to probe for VDPA device %s, working in SW mode",
-                 relay->vf_pci);
+                 vf_devargs);
         goto err_hotplug;
     }
 
-    dev = rte_vdpa_find_device_by_name(vf_pci);
+    dev = rte_vdpa_find_device_by_name(vf_devargs);
     if (!dev) {
         VLOG_ERR("Failed to find vdpa device id for %s, working in SW mode",
-                 vf_pci);
+                 vf_devargs);
         goto err_find;
     }
 
@@ -778,7 +786,11 @@ err_cb_reg:
         VLOG_ERR("Failed to unregister vhost driver for %s", relay->vm_socket);
     }
 err_find:
-    rte_eal_hotplug_remove("pci", relay->vf_pci);
+    /* We cannot use rte_dev_remove here, because we need the vdpa_dev to get
+     * the rte_device *. Here, we may not have it, so use the bus we plugged
+     * on.
+     */
+    rte_eal_hotplug_remove(is_pci ? "pci" : "auxiliary", vf_devargs);
 err_hotplug:
     relay->hw_mode = NETDEV_DPDK_VDPA_MODE_SW;
 
@@ -789,7 +801,7 @@ int
 netdev_dpdk_vdpa_config_impl(struct netdev_dpdk_vdpa_relay *relay,
                              uint16_t port_id,
                              const char *vm_socket,
-                             const char *vf_pci,
+                             const char *vf_devargs,
                              int max_queues,
                              bool hw_mode)
 {
@@ -803,9 +815,9 @@ netdev_dpdk_vdpa_config_impl(struct netdev_dpdk_vdpa_relay *relay,
     }
     else {
         relay->vm_socket = xstrdup(vm_socket);
-        relay->vf_pci = xstrdup(vf_pci);
+        relay->vf_devargs = xstrdup(vf_devargs);
         if (hw_mode) {
-            err = netdev_dpdk_vdpa_config_hw_impl(relay, vf_pci, vm_socket);
+            err = netdev_dpdk_vdpa_config_hw_impl(relay);
             if (relay->hw_mode == NETDEV_DPDK_VDPA_MODE_HW) {
                 goto out;
             }
@@ -837,14 +849,14 @@ netdev_dpdk_vdpa_config_impl(struct netdev_dpdk_vdpa_relay *relay,
     }
 
     /* create vf:*/
-    err = rte_eal_hotplug_add("pci", relay->vf_pci, "");
+    err = rte_eal_hotplug_add("pci", relay->vf_devargs, "");
     if (err) {
-        VLOG_ERR("rte_eal_hotplug_add failed for pci %s", relay->vf_pci);
+        VLOG_ERR("rte_eal_hotplug_add failed for pci %s", relay->vf_devargs);
         goto err_clear_vdev;
     }
-    relay->port_id_vf = netdev_dpdk_vdpa_port_from_name(relay->vf_pci);
+    relay->port_id_vf = netdev_dpdk_vdpa_port_from_name(relay->vf_devargs);
     if (relay->port_id_vf < 0) {
-        VLOG_ERR("No port id was found for vf %s", relay->vf_pci);
+        VLOG_ERR("No port id was found for vf %s", relay->vf_devargs);
         err = ENODEV;
         goto err_clear_vf;
     }
@@ -871,7 +883,7 @@ netdev_dpdk_vdpa_config_impl(struct netdev_dpdk_vdpa_relay *relay,
     goto out_clear;
 
 err_clear_vf:
-    rte_eal_hotplug_remove("pci", relay->vf_pci);
+    rte_eal_hotplug_remove("pci", relay->vf_devargs);
 err_clear_vdev:
     rte_eal_hotplug_remove("vdev", relay->vhost_name);
 err_clear_relay:
@@ -924,7 +936,7 @@ vf_close:
     rte_eth_dev_stop(relay->port_id_vf);
     rte_eth_dev_close(relay->port_id_vf);
 clear_relay:
-    rte_eal_hotplug_remove("pci", relay->vf_pci);
+    rte_eal_hotplug_remove("pci", relay->vf_devargs);
     rte_eal_hotplug_remove("vdev", relay->vhost_name);
     netdev_dpdk_vdpa_clear_relay(relay);
 out:
@@ -934,6 +946,8 @@ out:
 static void
 netdev_dpdk_hw_vdpa_destruct(struct netdev_dpdk_vdpa_relay *relay)
 {
+    struct rte_device *rte_dev;
+
     relay->started = false;
     if (rte_vhost_driver_detach_vdpa_device(relay->vm_socket)) {
         VLOG_ERR("Failed to detach vdpa device: %s", relay->vm_socket);
@@ -944,7 +958,8 @@ netdev_dpdk_hw_vdpa_destruct(struct netdev_dpdk_vdpa_relay *relay)
     }
     relay->hw_mode = NETDEV_DPDK_VDPA_MODE_INIT;
     relays_map_remove(relay);
-    rte_eal_hotplug_remove("pci", relay->vf_pci);
+    rte_dev = rte_vdpa_get_rte_device(relay->vdpa_dev);
+    rte_dev_remove(rte_dev);
     netdev_dpdk_vdpa_free_relay_strings(relay);
 }
 
@@ -967,7 +982,7 @@ destruct_vf:
         goto out;
     }
     netdev_dpdk_vdpa_close_dev(relay, relay->port_id_vf);
-    rte_eal_hotplug_remove("pci", relay->vf_pci);
+    rte_eal_hotplug_remove("pci", relay->vf_devargs);
 
 out:
     netdev_dpdk_vdpa_clear_relay(relay);
@@ -1141,7 +1156,7 @@ void netdev_dpdk_vdpa_get_hw_stats(struct netdev_dpdk_vdpa_relay *relay,
         [VDPA_CUSTOM_STATS_PACKETS] = "Packets",
         [VDPA_CUSTOM_STATS_ERRORS] = "Errors"
     };
-    struct rte_vdpa_device *vdev = rte_vdpa_find_device_by_name(relay->vf_pci);
+    struct rte_vdpa_device *vdev = relay->vdpa_dev;
     struct rte_vdpa_stat_name *vdpa_stats_names;
     char name[NETDEV_CUSTOM_STATS_NAME_SIZE];
     uint16_t q, num_q, i, counter, index;
@@ -1149,13 +1164,14 @@ void netdev_dpdk_vdpa_get_hw_stats(struct netdev_dpdk_vdpa_relay *relay,
     int stats_n;
 
     if (!vdev) {
-        VLOG_ERR("Failed to find vdpa device id for %s", relay->vf_pci);
+        VLOG_ERR("Failed to find vdpa device id for %s", relay->vf_devargs);
         return;
     }
 
     stats_n = rte_vdpa_get_stats_names(vdev, NULL, 0);
     if (stats_n <= 0) {
-        VLOG_ERR("Failed to get names number of device %s.", relay->vf_pci);
+        VLOG_ERR("Failed to get names number of device %s.",
+                 relay->vf_devargs);
         return;
     }
 
@@ -1163,27 +1179,27 @@ void netdev_dpdk_vdpa_get_hw_stats(struct netdev_dpdk_vdpa_relay *relay,
                                    0);
     if (!vdpa_stats_names) {
         VLOG_ERR("Failed to allocate memory for stats names of device %s.",
-                 relay->vf_pci);
+                 relay->vf_devargs);
         return;
     }
 
     i = rte_vdpa_get_stats_names(vdev, vdpa_stats_names, stats_n);
     if (stats_n != i) {
-        VLOG_ERR("Failed to get names of device %s.", relay->vf_pci);
+        VLOG_ERR("Failed to get names of device %s.", relay->vf_devargs);
         goto err_names;
     }
 
     stats = rte_zmalloc(NULL, sizeof(*stats) * stats_n, 0);
     if (!stats) {
         VLOG_ERR("Failed to allocate memory for stats of device %s.",
-                 relay->vf_pci);
+                 relay->vf_devargs);
         goto err_names;
     }
 
     num_q = rte_vhost_get_vring_num(relay->vid);
     if (num_q == 0) {
         VLOG_ERR("Failed to get num of actual virtqs for device %s.",
-                 relay->vf_pci);
+                 relay->vf_devargs);
         goto err_stats;
     }
 
@@ -1194,7 +1210,7 @@ void netdev_dpdk_vdpa_get_hw_stats(struct netdev_dpdk_vdpa_relay *relay,
     for (q = 0; q < num_q; q++) {
         if (rte_vdpa_get_stats(vdev, q, stats, stats_n) <= 0) {
             VLOG_ERR("Failed to get vdpa queue statistics for device %s "
-                     "queue %d.", relay->vf_pci, q);
+                     "queue %d.", relay->vf_devargs, q);
             break;
         }
 
