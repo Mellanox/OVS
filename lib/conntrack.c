@@ -47,6 +47,10 @@ VLOG_DEFINE_THIS_MODULE(conntrack);
 COVERAGE_DEFINE(conntrack_full);
 COVERAGE_DEFINE(conntrack_long_cleanup);
 COVERAGE_DEFINE(conntrack_l4csum_err);
+COVERAGE_DEFINE(conntrack_clean_10s_latency);
+COVERAGE_DEFINE(conntrack_clean_5s_latency);
+COVERAGE_DEFINE(conntrack_clean_2s_latency);
+COVERAGE_DEFINE(conntrack_clean_1s_latency);
 
 static bool ct_e2e_cache_enabled = false;
 
@@ -1915,7 +1919,8 @@ set_label(struct dp_packet *pkt, struct conn *conn,
 
 static void
 conn_batch_clean(struct conntrack *ct,
-                 struct conn **conns, size_t *batch_count)
+                 struct conn **conns, size_t *batch_count,
+                 long long int now)
 {
     size_t i;
 
@@ -1924,6 +1929,18 @@ conn_batch_clean(struct conntrack *ct,
     }
 
     for (i = 0; i < *batch_count; i++) {
+        long long int latency = now - conn_expiration(conns[i]);
+
+        if (latency >= 10000) {
+            COVERAGE_INC(conntrack_clean_10s_latency);
+        } else if (latency >= 5000) {
+            COVERAGE_INC(conntrack_clean_5s_latency);
+        } else if (latency >= 2000) {
+            COVERAGE_INC(conntrack_clean_2s_latency);
+        } else if (latency >= 1000) {
+            COVERAGE_INC(conntrack_clean_1s_latency);
+        }
+
         conn_clean(ct, conns[i]);
     }
 
@@ -2002,7 +2019,7 @@ ct_sweep(struct conntrack *ct, long long now, size_t limit)
         if (now >= next_rcu_quiesce) {
 rcu_quiesce:
             /* Do not delay further releasing batched conns if any. */
-            conn_batch_clean(ct, conn_batch, &batch_count);
+            conn_batch_clean(ct, conn_batch, &batch_count, now);
             ovsrcu_quiesce();
             now = time_msec();
             next_rcu_quiesce = now + CT_SWEEP_QUIESCE_INTERVAL_MS;
@@ -2072,7 +2089,7 @@ rcu_quiesce:
             } else {
                 conn_batch[batch_count++] = conn;
                 if (batch_count == ARRAY_SIZE(conn_batch)) {
-                    conn_batch_clean(ct, conn_batch, &batch_count);
+                    conn_batch_clean(ct, conn_batch, &batch_count, now);
                 }
                 count++;
                 if (count >= limit) {
@@ -2091,7 +2108,7 @@ rcu_quiesce:
     }
 
 out:
-    conn_batch_clean(ct, conn_batch, &batch_count);
+    conn_batch_clean(ct, conn_batch, &batch_count, now);
     if (count > 0) {
         VLOG_DBG("conntrack cleanup %"PRIuSIZE" entries in %lld msec", count,
                  time_msec() - start);
