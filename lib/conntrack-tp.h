@@ -17,7 +17,7 @@
 #ifndef CONNTRACK_TP_H
 #define CONNTRACK_TP_H 1
 
-#define CT_DPIF_NETDEV_TP_MIN 30
+#define CT_DPIF_NETDEV_TP_MIN_MS (30000) /* 30 seconds. */
 enum ct_timeout;
 void timeout_policy_init(struct conntrack *ct);
 int timeout_policy_update(struct conntrack *ct, struct timeout_policy *tp);
