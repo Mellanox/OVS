@@ -1970,6 +1970,7 @@ conn_hw_update(struct conntrack *ct,
             }
         }
     }
+    atomic_flag_test_and_set(&conn->exp.reschedule);
     conn->prev_query = now;
     return ret;
 }
@@ -2145,7 +2146,7 @@ clean_thread_main(void *f_)
         next_wake = conntrack_clean(ct, now);
 
         if (next_wake > now) {
-            poll_timer_wait_until(MAX(next_wake, now + CT_CLEAN_INTERVAL));
+            poll_timer_wait_until(MIN(next_wake, now + CT_CLEAN_INTERVAL));
         } else {
             poll_immediate_wake();
         }
