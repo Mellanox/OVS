@@ -1233,7 +1233,6 @@ conn_not_found(struct conntrack *ct, struct dp_packet *pkt,
         atomic_count_inc(&ct->n_conn);
         ctx->conn = nc; /* For completeness. */
 
-        zl = zone_limit_lookup_or_default(ct, ctx->key.zone);
         if (zl) {
             nc->admit_zone = zl->czl.zone;
             nc->zone_limit_seq = zl->czl.zone_limit_seq;
