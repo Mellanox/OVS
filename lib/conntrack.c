@@ -2141,9 +2141,8 @@ clean_thread_main(void *f_)
     }
 
     while (!latch_is_set(&ct->clean_thread_exit)) {
-        long long next_wake;
+        long long next_wake = conntrack_clean(ct, time_msec());
         long long now = time_msec();
-        next_wake = conntrack_clean(ct, now);
 
         if (next_wake > now) {
             poll_timer_wait_until(MIN(next_wake, now + CT_CLEAN_INTERVAL));
