@@ -216,6 +216,13 @@ do_start_forwarding () {
         fi
         [ "$OVS_USER" != "" ] && set "$@" --user "$OVS_USER"
         [ "$OVS_VSWITCHD_OPTIONS" != "" ] &&set "$@" $OVS_VSWITCHD_OPTIONS
+        if [ -f /etc/openvswitch/PRE_ALLOC_OFFLOAD_TABLES ]; then
+            if test X"$OVS_VSWITCHD_OFFLOAD_LOG_SIZE" != X; then
+                TABLE_SIZE=$(echo "2^$OVS_VSWITCHD_OFFLOAD_LOG_SIZE" | bc)
+                export TEMP_TESTING_MAX_TABLE_LOG_SIZE=$OVS_VSWITCHD_OFFLOAD_LOG_SIZE
+                action "Using pre-allocated offload tables of size $TABLE_SIZE"
+            fi
+        fi
 
         start_daemon "$OVS_VSWITCHD_PRIORITY" "$OVS_VSWITCHD_WRAPPER" "$@" ||
             return 1
@@ -338,6 +345,7 @@ set_defaults () {
     OVS_VSWITCHD_WRAPPER=
     OVSDB_SERVER_OPTIONS=
     OVS_VSWITCHD_OPTIONS=
+    OVS_VSWITCHD_OFFLOAD_LOG_SIZE=20
 
     DB_FILE=$dbdir/conf.db
     DB_SOCK=$rundir/db.sock
