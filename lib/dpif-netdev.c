@@ -8969,6 +8969,8 @@ e2e_cache_associate_merged_flow(struct e2e_cache_merged_flow *merged_flow,
 {
     uint16_t i, j;
 
+    ovs_mutex_lock(&flows_map_mutex);
+
     for (j = 0, i = 0; j < num_flows; j++) {
         if (flows[j]->offload_state != E2E_OL_STATE_FLOW && j > 0 &&
             flows[j - 1]->offload_state != E2E_OL_STATE_FLOW) {
@@ -8981,6 +8983,8 @@ e2e_cache_associate_merged_flow(struct e2e_cache_merged_flow *merged_flow,
         i++;
     }
     merged_flow->associated_flows_len = i;
+
+    ovs_mutex_unlock(&flows_map_mutex);
 }
 
 static void
