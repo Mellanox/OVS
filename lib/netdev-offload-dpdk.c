@@ -1519,7 +1519,7 @@ disassociate_flow_id(uint32_t flow_id)
 
 struct shared_age_ctx_data {
     uint16_t domain_id;
-    struct rte_flow_shared_action *shared_action;
+    struct rte_flow_action_handle *action_hdl;
 };
 
 static struct ds *
@@ -1528,9 +1528,9 @@ dump_shared_age_ctx(struct ds *s, void *data)
     struct shared_age_ctx_data *shared_age_ctx_data =
         (struct shared_age_ctx_data *) data;
 
-    ds_put_format(s, "domain_id=%"PRIu16", shared_action=%p",
+    ds_put_format(s, "domain_id=%"PRIu16", action_hdl=%p",
                   shared_age_ctx_data->domain_id,
-                  shared_age_ctx_data->shared_action);
+                  shared_age_ctx_data->action_hdl);
     return s;
 }
 
@@ -1595,9 +1595,9 @@ shared_age_id_alloc(void *arg)
         return 0;
     }
 
-    shared_age_ctx_data.shared_action =
-        netdev_dpdk_rte_flow_shared_action_create(netdev, &action, &error);
-    if (!shared_age_ctx_data.shared_action) {
+    shared_age_ctx_data.action_hdl =
+        netdev_dpdk_indirect_action_create(netdev, &action, &error);
+    if (!shared_age_ctx_data.action_hdl) {
         goto deallocate_id;
     }
     shared_age_ctx_data.domain_id = netdev_dpdk_get_domain_id_by_netdev(netdev);
@@ -1609,8 +1609,9 @@ shared_age_id_alloc(void *arg)
     return shared_age_id;
 
 associate_err:
-    netdev_dpdk_rte_flow_shared_action_destroy
-        (netdev, shared_age_ctx_data.shared_action, &error);
+    netdev_dpdk_indirect_action_destroy(netdev,
+                                        shared_age_ctx_data.action_hdl,
+                                        &error);
 deallocate_id:
     seq_pool_free_id(shared_age_id_pool, tid, shared_age_id);
     return 0;
@@ -1638,9 +1639,9 @@ shared_age_id_free(const void *arg OVS_UNUSED, uint32_t shared_age_id)
     if (!netdev) {
         return;
     }
-    netdev_dpdk_rte_flow_shared_action_destroy(netdev,
-                                               shared_age_ctx_data.shared_action,
-                                               &error);
+    netdev_dpdk_indirect_action_destroy(netdev,
+                                        shared_age_ctx_data.action_hdl,
+                                        &error);
     netdev_close(netdev);
     disassociate_id_data(&shared_age_ctx_md, shared_age_id);
 }
@@ -1660,7 +1661,7 @@ static int
 get_shared_age_id(struct netdev *netdev,
                   uintptr_t app_counter_key,
                   uint32_t *shared_age_id,
-                  struct rte_flow_shared_action **shared_action)
+                  struct rte_flow_action_handle **action_hdl)
 {
     struct shared_age_ctx_data shared_age_ctx_data;
     struct context_data shared_age_id_ctx = {
@@ -1691,7 +1692,7 @@ get_shared_age_id(struct netdev *netdev,
         goto out;
     }
 
-    *shared_action = shared_age_ctx_data.shared_action;
+    *action_hdl = shared_age_ctx_data.action_hdl;
 out:
     if (ret) {
         put_context_data_by_id(&shared_age_id_md, NULL, *shared_age_id);
@@ -2473,8 +2474,8 @@ dump_flow_action(struct ds *s, struct ds *s_extra,
                           meta->mask);
         }
         ds_put_cstr(s, "/ ");
-    } else if (actions->type == RTE_FLOW_ACTION_TYPE_SHARED) {
-        ds_put_format(s, "SHARED %p ", actions->conf);
+    } else if (actions->type == RTE_FLOW_ACTION_TYPE_INDIRECT) {
+        ds_put_format(s, "INDIRECT %p ", actions->conf);
     } else if (actions->type == RTE_FLOW_ACTION_TYPE_RAW_DECAP) {
         const struct rte_flow_action_raw_decap *raw_decap = actions->conf;
 
@@ -2696,7 +2697,7 @@ create_offload_flow(struct netdev *netdev,
                     struct flow_item *fi,
                     int pos)
 {
-    struct rte_flow_action *shared_action_ptr;
+    struct rte_flow_action *indirect_action;
     struct rte_flow_attr attr = {
         .transfer = 1,
         .ingress = 1,
@@ -2769,13 +2770,13 @@ create_offload_flow(struct netdev *netdev,
         act_vars->jump->group = fi->next_e2e_table_id ? fi->next_e2e_table_id
                                                       : next_table_id;
     }
-    shared_action_ptr = find_action(actions, RTE_FLOW_ACTION_TYPE_SHARED);
-    if (shared_action_ptr) {
-        struct rte_flow_shared_action *shared_action = NULL;
+    indirect_action = find_action(actions, RTE_FLOW_ACTION_TYPE_INDIRECT);
+    if (indirect_action) {
+        struct rte_flow_action_handle *action_hdl = NULL;
         uint32_t ct_shared_age_id;
 
         if (get_shared_age_id(netdev, act_vars->ct_counter_key,
-                              &ct_shared_age_id, &shared_action)) {
+                              &ct_shared_age_id, &action_hdl)) {
             goto err;
         }
         if (!act_resources->ct_shared_age_id) {
@@ -2783,12 +2784,12 @@ create_offload_flow(struct netdev *netdev,
         } else {
             put_shared_age_id(ct_shared_age_id);
         }
-        shared_action_ptr->conf = shared_action;
+        indirect_action->conf = action_hdl;
     }
     ret = create_rte_flow(netdev, &attr, items, actions,
                           error, fi, pos, act_vars);
-    if (shared_action_ptr) {
-        shared_action_ptr->conf = NULL;
+    if (indirect_action) {
+        indirect_action->conf = NULL;
     }
     if (ret) {
         goto err;
@@ -3970,7 +3971,7 @@ add_count_action(struct flow_actions *actions,
     /* e2e flows don't use mark. ct2ct do. we can share only e2e, not ct2ct. */
     if (act_vars->is_e2e_cache_flow && act_vars->ct_counter_key &&
         act_resources->flow_id == INVALID_FLOW_MARK) {
-        add_flow_action(actions, RTE_FLOW_ACTION_TYPE_SHARED, NULL);
+        add_flow_action(actions, RTE_FLOW_ACTION_TYPE_INDIRECT, NULL);
     }
     return 0;
 }
@@ -5710,9 +5711,9 @@ netdev_offload_dpdk_ct_counter_query(struct netdev *netdev OVS_UNUSED,
         ret = -1;
         goto err;
     }
-    ret = netdev_dpdk_rte_flow_shared_action_query
-        (shared_age_netdev, shared_age_ctx_data.shared_action, &query_age,
-         &error);
+    ret = netdev_dpdk_indirect_action_query(shared_age_netdev,
+                                            shared_age_ctx_data.action_hdl,
+                                            &query_age, &error);
     if (!ret && query_age.sec_since_last_hit_valid &&
         (query_age.sec_since_last_hit * 1000) <= (now - prev_now)) {
         stats->used = now;

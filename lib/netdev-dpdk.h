@@ -33,7 +33,7 @@ struct rte_flow_attr;
 struct rte_flow_item;
 struct rte_flow_action;
 struct rte_flow_query_count;
-struct rte_flow_shared_action;
+struct rte_flow_action_handle;
 
 void netdev_dpdk_register(void);
 void free_dpdk_buf(struct dp_packet *);
@@ -55,19 +55,19 @@ netdev_dpdk_rte_flow_query_count(struct netdev *netdev,
                                  struct rte_flow *rte_flow,
                                  struct rte_flow_query_count *query,
                                  struct rte_flow_error *error);
-struct rte_flow_shared_action *
-netdev_dpdk_rte_flow_shared_action_create(struct netdev *,
-                                          const struct rte_flow_action *,
-                                          struct rte_flow_error *);
+struct rte_flow_action_handle *
+netdev_dpdk_indirect_action_create(struct netdev *,
+                                   const struct rte_flow_action *,
+                                   struct rte_flow_error *);
 int
-netdev_dpdk_rte_flow_shared_action_destroy(struct netdev *,
-                                           struct rte_flow_shared_action *,
-                                           struct rte_flow_error *);
+netdev_dpdk_indirect_action_destroy(struct netdev *,
+                                    struct rte_flow_action_handle *,
+                                    struct rte_flow_error *);
 int
-netdev_dpdk_rte_flow_shared_action_query(struct netdev *,
-                                         struct rte_flow_shared_action *,
-                                         void *,
-                                         struct rte_flow_error *);
+netdev_dpdk_indirect_action_query(struct netdev *,
+                                  struct rte_flow_action_handle *,
+                                  void *,
+                                  struct rte_flow_error *);
 int
 netdev_dpdk_get_port_id(struct netdev *netdev);
 bool
