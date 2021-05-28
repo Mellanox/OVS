@@ -522,6 +522,7 @@ get_context_data_id_by_data(struct context_metadata *md,
 {
     struct context_data *data_cur;
     size_t dhash, ihash;
+    uint32_t alloc_id;
     struct ds s;
 
     ds_init(&s);
@@ -547,6 +548,10 @@ get_context_data_id_by_data(struct context_metadata *md,
         }
     }
 
+    alloc_id = md->id_alloc(arg);
+    if (alloc_id == 0) {
+        goto err_id_alloc;
+    }
     data_cur = xzalloc(sizeof *data_cur);
     if (!data_cur) {
         goto err;
@@ -557,10 +562,7 @@ get_context_data_id_by_data(struct context_metadata *md,
     }
     memcpy(data_cur->data, data_req->data, md->data_size);
     ovs_refcount_init(&data_cur->refcount);
-    data_cur->id = md->id_alloc(arg);
-    if (data_cur->id == 0) {
-        goto err_id_alloc;
-    }
+    data_cur->id = alloc_id;
     ovs_mutex_lock(&md->maps_lock);
     data_cur->d2i_hash = dhash;
     cmap_insert(&md->d2i_map, &data_cur->d2i_node, dhash);
@@ -577,13 +579,12 @@ get_context_data_id_by_data(struct context_metadata *md,
     ds_destroy(&s);
     return 0;
 
-err_id_alloc:
-    free(data_cur->data);
 err_data_alloc:
     free(data_cur);
 err:
     VLOG_ERR_RL(&rl, "%s: %s: error. '%s'", __func__, md->name,
                 ds_cstr(md->dump_context_data(&s, data_req->data)));
+err_id_alloc:
     ds_destroy(&s);
     return -1;
 }
