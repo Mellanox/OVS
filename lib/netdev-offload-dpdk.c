@@ -1650,7 +1650,6 @@ dump_shared_age_id(struct ds *s, void *data)
 
 #define MIN_SHARED_AGE_ID     1
 #define MAX_SHARED_AGE_ID     (UINT32_MAX - 2)
-#define ERR_SHARED_AGE_ID     (UINT32_MAX - 1)
 
 static struct seq_pool *shared_age_id_pool = NULL;
 
@@ -1673,12 +1672,18 @@ shared_age_id_alloc(void *arg)
     struct netdev *netdev;
 
     netdev = (struct netdev *) arg;
-    if (!netdev) {
+    /* A NULL ID maybe be received from ct_counter_query. This should not
+     * create an ID.
+     * For vports, we offload on all PFs, so we might try to offload this on
+     * the "wrong" PF, which is not of the relevant VF REP, then we would have
+     * used a shared action between different switch domain, which is not
+     * allowed.
+     * To handle it, we will create the ID only for VF REPs, where we know
+     * the domain ID, and for uplinks we will find the one created by the VF
+     * REP.
+     */
+    if (netdev == NULL || netdev_dpdk_is_uplink_port(netdev)) {
         return 0;
-    }
-
-    if (netdev_dpdk_is_uplink_port(netdev)) {
-        return ERR_SHARED_AGE_ID;
     }
 
     if (ovsthread_once_start(&shared_age_id_init)) {
@@ -1720,10 +1725,6 @@ shared_age_id_free(const void *arg OVS_UNUSED, uint32_t shared_age_id)
     unsigned int tid = netdev_offload_thread_id();
     struct rte_flow_error error;
     struct netdev *netdev;
-
-    if (shared_age_id == ERR_SHARED_AGE_ID) {
-        return;
-    }
 
     seq_pool_free_id(shared_age_id_pool, tid, shared_age_id);
     if (get_context_data_by_id(&shared_age_ctx_md, shared_age_id,
@@ -1769,11 +1770,6 @@ get_shared_age_id(struct netdev *netdev,
     if (get_context_data_id_by_data(&shared_age_id_md, &shared_age_id_ctx,
                                     netdev, shared_age_id)) {
         return -1;
-    }
-
-    if (*shared_age_id == ERR_SHARED_AGE_ID) {
-        ret = -1;
-        goto out;
     }
 
     ret = get_context_data_by_id(&shared_age_ctx_md, *shared_age_id,
@@ -5888,8 +5884,9 @@ netdev_offload_dpdk_ct_counter_query(struct netdev *netdev OVS_UNUSED,
     memset(stats, 0, sizeof *stats);
     if (get_context_data_id_by_data(&shared_age_id_md, &shared_age_id_ctx,
                                     NULL, &shared_age_id)) {
-        VLOG_ERR_RL(&rl, "Could not get shared age id for "
-                    "counter_key=0x%"PRIxPTR, counter_key);
+        /* Getting a context from shared_age_id_md might fail normally. No
+         * need to log an error.
+         */
         return -1;
     }
     ret = get_context_data_by_id(&shared_age_ctx_md, shared_age_id,
