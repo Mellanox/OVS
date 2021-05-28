@@ -583,7 +583,7 @@ err_data_alloc:
     free(data_cur);
 err:
     VLOG_ERR_RL(&rl, "%s: %s: error. '%s'", __func__, md->name,
-                ds_cstr(md->dump_context_data(&s, data_cur->data)));
+                ds_cstr(md->dump_context_data(&s, data_req->data)));
     ds_destroy(&s);
     return -1;
 }
