@@ -9623,10 +9623,6 @@ netdev_offload_trace_to_thread_id(ovs_u128 *ufids,
     unsigned int tid;
     uint16_t i;
 
-    if (netdev_offload_thread_nb() == 1) {
-        return 0;
-    }
-
     ovs_mutex_lock(&flows_map_mutex);
     e2e_cache_ufids_to_flows(ufids, num_elements, mt_flows);
     /* If a previous trace already determined the tid to handle, send it to
