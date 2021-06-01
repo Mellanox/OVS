@@ -9719,7 +9719,7 @@ e2e_cache_dispatch_trace_message(struct dp_netdev *dp,
          * tnl_pop flow is offloaded, we will get only the virtual port path.
          */
         if (packet->e2e_trace_flags & E2E_CACHE_TRACE_FLAG_TNL_POP) {
-            tid = netdev_offload_trace_to_thread_id(e2e_trace, 1);
+            tid = netdev_offload_ufid_to_thread_id(e2e_trace[0]);
             if (tid == INVALID_OFFLOAD_THREAD_NB) {
                 continue;
             }
