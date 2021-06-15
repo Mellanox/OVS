@@ -114,7 +114,7 @@ static void *
 per_thread_xrealloc(void *old_p, size_t old_size, size_t new_size)
 {
     struct per_thread *pt = &per_threads[netdev_offload_thread_id()];
-    void *new_p;
+    void *new_p = NULL;
 
     if (salloc_contains(pt->s, old_p)) {
         new_p = srealloc(pt->s, old_p, new_size);
