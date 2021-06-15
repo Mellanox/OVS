@@ -75,32 +75,60 @@ static void *
 per_thread_xmalloc(size_t n)
 {
     struct per_thread *pt = &per_threads[netdev_offload_thread_id()];
+    void *p = salloc(pt->s, n);
 
-    return xsalloc(pt->s, n);
+    if (p == NULL) {
+        p = xmalloc(n);
+    }
+
+    return p;
 }
 
 static void *
 per_thread_xzalloc(size_t n)
 {
     struct per_thread *pt = &per_threads[netdev_offload_thread_id()];
+    void *p = szalloc(pt->s, n);
 
-    return xszalloc(pt->s, n);
+    if (p == NULL) {
+        p = xzalloc(n);
+    }
+
+    return p;
 }
 
 static void *
 per_thread_xcalloc(size_t n, size_t sz)
 {
     struct per_thread *pt = &per_threads[netdev_offload_thread_id()];
+    void *p = scalloc(pt->s, n, sz);
 
-    return xscalloc(pt->s, n, sz);
+    if (p == NULL) {
+        p = xcalloc(n, sz);
+    }
+
+    return p;
 }
 
 static void *
-per_thread_xrealloc(void *p, size_t n)
+per_thread_xrealloc(void *old_p, size_t old_size, size_t new_size)
 {
     struct per_thread *pt = &per_threads[netdev_offload_thread_id()];
+    void *new_p;
 
-    return xsrealloc(pt->s, p, n);
+    if (salloc_contains(pt->s, old_p)) {
+        new_p = srealloc(pt->s, old_p, new_size);
+        if (new_p == NULL) {
+            new_p = xmalloc(new_size);
+            if (new_p) {
+                memcpy(new_p, old_p, old_size);
+            }
+        }
+    } else {
+        new_p = xrealloc(old_p, new_size);
+    }
+
+    return new_p;
 }
 
 static void
@@ -108,9 +136,13 @@ per_thread_free(void *p)
 {
     struct per_thread *pt = &per_threads[netdev_offload_thread_id()];
 
-    /* The only freeing done in the scratch allocator is when resetting it.
-     * However, realloc has a chance to shrink, so still attempt it. */
-    srealloc(pt->s, p, 0);
+    if (salloc_contains(pt->s, p)) {
+        /* The only freeing done in the scratch allocator is when resetting it.
+         * However, realloc has a chance to shrink, so still attempt it. */
+        srealloc(pt->s, p, 0);
+    } else {
+        free(p);
+    }
 }
 
 struct act_resources {
@@ -2906,6 +2938,8 @@ add_flow_pattern(struct flow_patterns *patterns, enum rte_flow_item_type type,
     } else if (cnt == patterns->current_max) {
         patterns->current_max *= 2;
         patterns->items = per_thread_xrealloc(patterns->items,
+                                              patterns->current_max / 2 *
+                                              sizeof *patterns->items,
                                               patterns->current_max *
                                               sizeof *patterns->items);
     }
@@ -2930,6 +2964,8 @@ add_flow_action(struct flow_actions *actions, enum rte_flow_action_type type,
     } else if (cnt == actions->current_max) {
         actions->current_max *= 2;
         actions->actions = per_thread_xrealloc(actions->actions,
+                                               actions->current_max / 2 *
+                                               sizeof *actions->actions,
                                                actions->current_max *
                                                sizeof *actions->actions);
     }
