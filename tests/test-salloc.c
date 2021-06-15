@@ -40,6 +40,7 @@ test_salloc_basic(void)
     ovs_assert(salloc(s, 0) == NULL);
     for (i = 0; i < ARRAY_SIZE(ptrs); i++) {
         ptrs[i] = xsalloc(s, 1);
+        ovs_assert(salloc_contains(s, ptrs[i]));
         ovs_assert(ALIGNED_PTR(ptrs[i]) == ptrs[i]);
         ovs_assert(ptrs[i] >= &scratch[0]);
         ovs_assert(ptrs[i] < &scratch[sizeof scratch]);

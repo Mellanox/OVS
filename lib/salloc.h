@@ -73,6 +73,14 @@ void *szalloc(struct salloc *s, size_t n);
 void *scalloc(struct salloc *s, size_t n, size_t sz);
 void *srealloc(struct salloc *s, void *p, size_t n);
 
+static inline bool
+salloc_contains(struct salloc *s, void *p_)
+{
+    char *p = p_;
+
+    return (p >= &s->mem[0] && p < &s->mem[s->sz]);
+}
+
 static inline void
 out_of_scratch_memory(struct salloc *s, size_t n)
 {
