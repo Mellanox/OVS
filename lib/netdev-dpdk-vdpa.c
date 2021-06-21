@@ -1286,9 +1286,12 @@ void netdev_dpdk_vdpa_get_offline_stats(struct netdev_dpdk_vdpa_relay *relay,
 
 int
 netdev_dpdk_vdpa_get_custom_stats_impl(struct netdev_dpdk_vdpa_relay *relay,
-                                       struct netdev_custom_stats *cstm_stats)
+                                       struct netdev_custom_stats *cstm_stats,
+                                       struct ovs_mutex *dev_mutex)
 {
+    ovs_mutex_lock(dev_mutex);
     if (ovs_mutex_trylock(&relay->lock)) {
+        ovs_mutex_unlock(dev_mutex);
         return 0;
     }
 
@@ -1300,6 +1303,8 @@ netdev_dpdk_vdpa_get_custom_stats_impl(struct netdev_dpdk_vdpa_relay *relay,
         netdev_dpdk_vdpa_get_sw_stats(relay, cstm_stats);
     }
     ovs_mutex_unlock(&relay->lock);
+    ovs_mutex_unlock(dev_mutex);
+
     return 0;
 }
 

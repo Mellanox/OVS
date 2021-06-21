@@ -21,6 +21,7 @@
 
 struct netdev_dpdk_vdpa_relay;
 struct rte_mempool;
+struct ovs_mutex;
 
 /*
  * Functions that implement the relay forwarding for the netdev dpdkvdpa
@@ -51,6 +52,7 @@ void
 netdev_dpdk_vdpa_destruct_impl(struct netdev_dpdk_vdpa_relay *relay);
 int
 netdev_dpdk_vdpa_get_custom_stats_impl(struct netdev_dpdk_vdpa_relay *relay,
-                                     struct netdev_custom_stats *cstm_stats);
+                                       struct netdev_custom_stats *cstm_stats,
+                                       struct ovs_mutex *dev_mutex);
 
 #endif /* netdev-dpdk-vdpa.h */

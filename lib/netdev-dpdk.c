@@ -3477,16 +3477,13 @@ netdev_dpdk_vdpa_get_custom_stats(const struct netdev *netdev,
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
     int err = 0;
 
-    ovs_mutex_lock(&dev->mutex);
-
-    err = netdev_dpdk_vdpa_get_custom_stats_impl(dev->relay,
-                                                 custom_stats);
+    err = netdev_dpdk_vdpa_get_custom_stats_impl(dev->relay, custom_stats,
+                                                 &dev->mutex);
     if (err) {
         VLOG_ERR("netdev_dpdk_vdpa_get_custom_stats_impl failed."
                  "Port %s\n", netdev->name);
     }
 
-    ovs_mutex_unlock(&dev->mutex);
     return err;
 }
 
