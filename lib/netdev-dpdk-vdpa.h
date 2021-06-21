@@ -53,6 +53,9 @@ netdev_dpdk_vdpa_destruct_impl(struct netdev_dpdk_vdpa_relay *relay);
 int
 netdev_dpdk_vdpa_get_custom_stats_impl(struct netdev_dpdk_vdpa_relay *relay,
                                        struct netdev_custom_stats *cstm_stats,
-                                       struct ovs_mutex *dev_mutex);
+                                       struct ovs_mutex *dev_mutex,
+                                       const struct netdev *netdev,
+                                       int (*cb)(const struct netdev *,
+                                                 struct netdev_custom_stats *));
 
 #endif /* netdev-dpdk-vdpa.h */

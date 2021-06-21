@@ -3477,8 +3477,9 @@ netdev_dpdk_vdpa_get_custom_stats(const struct netdev *netdev,
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
     int err = 0;
 
-    err = netdev_dpdk_vdpa_get_custom_stats_impl(dev->relay, custom_stats,
-                                                 &dev->mutex);
+    err = netdev_dpdk_vdpa_get_custom_stats_impl
+        (dev->relay, custom_stats, &dev->mutex, netdev,
+         dev->netdev_rep ? netdev_dpdk_get_custom_stats : NULL);
     if (err) {
         VLOG_ERR("netdev_dpdk_vdpa_get_custom_stats_impl failed."
                  "Port %s\n", netdev->name);

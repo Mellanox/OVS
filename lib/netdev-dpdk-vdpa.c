@@ -1287,10 +1287,20 @@ void netdev_dpdk_vdpa_get_offline_stats(struct netdev_dpdk_vdpa_relay *relay,
 int
 netdev_dpdk_vdpa_get_custom_stats_impl(struct netdev_dpdk_vdpa_relay *relay,
                                        struct netdev_custom_stats *cstm_stats,
-                                       struct ovs_mutex *dev_mutex)
+                                       struct ovs_mutex *dev_mutex,
+                                       const struct netdev *netdev,
+                                       int (*cb)(const struct netdev *,
+                                                 struct netdev_custom_stats *))
 {
+    struct netdev_custom_stats rep_cstm_stats;
+    struct netdev_custom_counter *add_counter;
+    uint16_t i;
+
     ovs_mutex_lock(dev_mutex);
     if (ovs_mutex_trylock(&relay->lock)) {
+        if (cb) {
+            cb(netdev, cstm_stats);
+        }
         ovs_mutex_unlock(dev_mutex);
         return 0;
     }
@@ -1305,6 +1315,22 @@ netdev_dpdk_vdpa_get_custom_stats_impl(struct netdev_dpdk_vdpa_relay *relay,
     ovs_mutex_unlock(&relay->lock);
     ovs_mutex_unlock(dev_mutex);
 
+    if (cb) {
+        memset(&rep_cstm_stats, 0, sizeof rep_cstm_stats);
+        cb(netdev, &rep_cstm_stats);
+        cstm_stats->counters =
+            xrealloc(cstm_stats->counters,
+                     (cstm_stats->size + rep_cstm_stats.size) *
+                     sizeof *cstm_stats->counters);
+        add_counter = &cstm_stats->counters[cstm_stats->size];
+        cstm_stats->size += rep_cstm_stats.size;
+        for (i = 0; i < rep_cstm_stats.size; i++, add_counter++) {
+            add_counter->value = rep_cstm_stats.counters[i].value;
+            ovs_strlcpy(add_counter->name, rep_cstm_stats.counters[i].name,
+                        NETDEV_CUSTOM_STATS_NAME_SIZE);
+        }
+        netdev_free_custom_stats_counters(&rep_cstm_stats);
+    }
     return 0;
 }
 
