@@ -209,3 +209,6 @@ Change-Id=I920ddfe54d97a1692e6f3a4d1ef60706d4df9431; subject=dpif-netdev: e2e: F
 Change-Id=I2d7c51c3db374f0b81d05fce2183df74586fe181; subject=acinclude: Set -O3 for gcc versions >= 8.3; feature=bp_2.15; upstream_status=in_progress; general=;
 Change-Id=Ieff271be53b558526852d12bc8950ab9221500d5; subject=dpif-netdev: Do not flush PMD offloads on reload.; feature=bug_fixes; upstream_status=accepted; general=;
 Change-Id=I89f0c98f616c71c65576433928655acd7a7e8ea8; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ic671ce60263c12822afc1dbbba4381181c271d95; subject=netdev-dpdk-vdpa: Move dev lock to vdpa custom stats impl; feature=ovs_dpdk_vdpa; upstream_status=NA; general=;
+Change-Id=I3426ed36e248be7ca967c82bbcc037f6706c6811; subject=netdev-dpdk-vdpa: Add custom stats if representor is configured; feature=ovs_dpdk_vdpa; upstream_status=NA; general=;
+Change-Id=Iacab2d65cfff1af95ed25082ece8bc7ab0cd1f40; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
