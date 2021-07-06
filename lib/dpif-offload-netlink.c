@@ -219,3 +219,9 @@ const struct dpif_offload_class dpif_offload_netlink_class = {
     .sflow_recv_wait = dpif_offload_netlink_sflow_recv_wait,
     .sflow_recv = dpif_offload_netlink_sflow_recv,
 };
+
+bool
+dpif_offload_netlink_psample_supported(void)
+{
+    return psample_sock != NULL;
+}

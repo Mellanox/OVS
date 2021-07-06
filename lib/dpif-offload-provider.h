@@ -89,4 +89,6 @@ void dpif_offload_sflow_recv_wait(const struct dpif *dpif);
 int dpif_offload_sflow_recv(const struct dpif *dpif,
                             struct dpif_offload_sflow *sflow);
 
+bool dpif_offload_netlink_psample_supported(void);
+
 #endif /* DPIF_OFFLOAD_PROVIDER_H */

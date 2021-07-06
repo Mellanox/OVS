@@ -8,6 +8,7 @@ v2.15.1 - 01 Jul 2021
    - DPDK:
      * OVS validated with DPDK 20.11.1. It is recommended to use this version
        until further releases.
+   - Add sFlow offload support for kernel (netlink) datapath.
 
 
 v2.15.0 - 15 Feb 2021
