@@ -12,3 +12,5 @@ Change-Id=Ifce3f34a2ba37fd33edb57cf70b890fa0c15576f; subject=Update metadata; fe
 Change-Id=I7675ff3f4e585ae1b039b00a9de4a8439280926c; subject=metadata: Add ovs_dpdk_frags as a metadata feature; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I8764ca747d37428a872cd569af4643baf1d69189; subject=Update metadata - 2.15-frags; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I5dd48cf973436862478ec0af305f84d4f2f80fdb; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I609f6a7083597795f26a18f634e1caf66bf61fdf; subject=metadata: Add ovs_dpdk_vdpa as a metadata feature; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ic368b4bc40297b6f0ed8a3faca8c32b575e24a34; subject=Update metadata 2.15-vdpa; feature=ofed_scripts; upstream_status=ignore; general=;

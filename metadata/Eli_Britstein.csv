@@ -55,3 +55,4 @@ Change-Id=I0b3fc0d54d7bff214036a537bfca1beb8403eb10; subject=netdev-offload-dpdk
 Change-Id=I6afa5d9d28c2fc5f9d195f62f296dc6725892e91; subject=netdev-offload: Delayed release of mark IDs; feature=bp_2_15; upstream_status=in_progress; general=;
 Change-Id=I95196ee8b898b73d5c65bd7c0497a14db23232ac; subject=dpctl: Add offload queue lengths statistics; feature=bp_2_15; upstream_status=in_progress; general=;
 Change-Id=I328da02192c63182f07c5eebcfce2005910f6b8b; subject=dpctl: Add CT insertion/deletion rates statistics; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I6c951435c9b88aadeabc374fd152587d37c60ee8; subject=acinclude: Add -l:librte_bus_vdev.a to LIBS; feature=ovs_dpdk_vdpa; upstream_status=in_progress; general=;
