@@ -50,3 +50,8 @@ Change-Id=I50476ed0dcc6ec7d6e615284a656a5cb2f3c1bf6; subject=netdev-offload-dpdk
 Change-Id=Ic8b7c3563732cc9fdfb4dbc49159603aeaf24744; subject=netdev-offload-dpdk: Support IPv4 fragmentation types; feature=ovs_dpdk_frags; upstream_status=in_progress; general=;
 Change-Id=I206b64855bfdd913d0f492c9d6317744ad8e31c6; subject=netdev-offload-dpdk: Support IPv6 fragmentation types; feature=ovs_dpdk_frags; upstream_status=in_progress; general=;
 Change-Id=I6e4b8dd492e75e01c4f932a870091a426b185262; subject=netdev-offload-dpdk: Don't ignore frags as they are handled; feature=ovs_dpdk_frags; upstream_status=in_progress; general=;
+Change-Id=I37d04b3a3c6ba7b5969f2a6d5e33f72d4a3101e8; subject=netdev-offload-dpdk: Refactor context release to a helper function; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I0b3fc0d54d7bff214036a537bfca1beb8403eb10; subject=netdev-offload-dpdk: Delayed context release; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I6afa5d9d28c2fc5f9d195f62f296dc6725892e91; subject=netdev-offload: Delayed release of mark IDs; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I95196ee8b898b73d5c65bd7c0497a14db23232ac; subject=dpctl: Add offload queue lengths statistics; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I328da02192c63182f07c5eebcfce2005910f6b8b; subject=dpctl: Add CT insertion/deletion rates statistics; feature=bp_2_15; upstream_status=in_progress; general=;
