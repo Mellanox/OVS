@@ -1,0 +1,2 @@
+sep=;
+Change-Id=I44c8fdf5342482e4c57cee7323d0d66837812bed; subject=daemon-unix: Support OVS-DPDK HW offloads for non-root user; feature=bp_2_15; upstream_status=in_progress; general=;
