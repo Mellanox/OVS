@@ -6,3 +6,6 @@ Change-Id=Idbbd7546c95441d0ed5c09381ff496736c0deae0; subject=Update metadata - 2
 Change-Id=Iea3d463b633e7ec0cfd2a3053cce17add1f86f6b; subject=metadata: Add ovs_dpdk_ct as a metadata feature; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I457f1227840c1e9b979db862cf0f0cd6604d362a; subject=Update metadata - 2.15-ct; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I3e12213a3afb7a523cc385c5415ed24732087e2b; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ie819959bfbe5e0cd585a9d78eab37810e77d3932; subject=netdev-offload-dpdk: Introduce CT zone mapping; feature=ovs_dpdk_ct; upstream_status=in_progress; general=;
+Change-Id=I8e8cd63cee56547c27ef557cdfa77397a6cd7597; subject=netdev-offload-dpdk: Introduce ct_label mapping; feature=ovs_dpdk_ct; upstream_status=in_progress; general=;
+Change-Id=Ifce3f34a2ba37fd33edb57cf70b890fa0c15576f; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
