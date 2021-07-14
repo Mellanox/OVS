@@ -47,8 +47,10 @@ struct dpif {
 struct dpif_ipf_status;
 struct ipf_dump_ctx;
 
-void dpif_init(struct dpif *, const struct dpif_class *, const char *name,
-               uint8_t netflow_engine_type, uint8_t netflow_engine_id);
+void dpif_init(struct dpif *, const struct dpif_class *,
+               const struct dpif_offload_class *offload_class,
+               const char *name, uint8_t netflow_engine_type,
+               uint8_t netflow_engine_id);
 void dpif_uninit(struct dpif *dpif, bool close);
 
 static inline void dpif_assert_class(const struct dpif *dpif,

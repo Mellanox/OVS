@@ -398,8 +398,8 @@ open_dpif(const struct dpif_netlink_dp *dp, struct dpif **dpifp)
     dpif->port_notifier = NULL;
     fat_rwlock_init(&dpif->upcall_lock);
 
-    dpif_init(&dpif->dpif, &dpif_netlink_class, dp->name,
-              dp->dp_ifindex, dp->dp_ifindex);
+    dpif_init(&dpif->dpif, &dpif_netlink_class, &dpif_offload_netlink_class,
+              dp->name, dp->dp_ifindex, dp->dp_ifindex);
 
     dpif->dp_ifindex = dp->dp_ifindex;
     dpif->user_features = dp->user_features;

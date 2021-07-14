@@ -332,6 +332,7 @@ do_open(const char *name, const char *type, bool create, struct dpif **dpifp)
     struct dpif *dpif = NULL;
     int error;
     struct registered_dpif_class *registered_class;
+    struct registered_dpif_offload_class *registered_offload_class;
 
     dp_initialize();
 
@@ -341,6 +342,17 @@ do_open(const char *name, const char *type, bool create, struct dpif **dpifp)
         VLOG_WARN("could not create datapath %s of unknown type %s", name,
                   type);
         error = EAFNOSUPPORT;
+        goto exit;
+    }
+
+    dp_offload_initialize();
+
+    registered_offload_class = dp_offload_class_lookup(type);
+    if (!registered_offload_class) {
+        VLOG_WARN("Could not create offload datapath %s of unknown type %s",
+                  name, type);
+        error = EAFNOSUPPORT;
+        dp_class_unref(registered_class);
         goto exit;
     }
 
@@ -372,6 +384,7 @@ do_open(const char *name, const char *type, bool create, struct dpif **dpifp)
             }
         }
     } else {
+        dp_offload_class_unref(registered_offload_class);
         dp_class_unref(registered_class);
     }
 
@@ -447,6 +460,7 @@ dpif_close(struct dpif *dpif)
     if (dpif) {
         struct registered_dpif_class *rc;
 
+        dpif_offload_close(dpif);
         rc = shash_find_data(&dpif_classes, dpif->dpif_class->type);
 
         if (rc->refcount == 1) {
@@ -1697,10 +1711,11 @@ dpif_queue_to_priority(const struct dpif *dpif, uint32_t queue_id,
 
 void
 dpif_init(struct dpif *dpif, const struct dpif_class *dpif_class,
-          const char *name,
+          const struct dpif_offload_class *offload_class, const char *name,
           uint8_t netflow_engine_type, uint8_t netflow_engine_id)
 {
     dpif->dpif_class = dpif_class;
+    dpif->offload_class = offload_class;
     dpif->base_name = xstrdup(name);
     dpif->full_name = xasprintf("%s@%s", dpif_class->type, name);
     dpif->netflow_engine_type = netflow_engine_type;
