@@ -3,3 +3,4 @@ name=bug_fixes; type=fixes; upstream_status=ignore;
 name=bp_2_15; type=features; upstream_status=in_progress;
 name=ovs_dpdk_vxlan; type=features; upstream_status=in_progress;
 name=ovs_dpdk_ct; type=features; upstream_status=in_progress;
+name=ovs_dpdk_frags; type=features; upstream_status=in_progress;
