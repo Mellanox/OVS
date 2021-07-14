@@ -26,3 +26,6 @@ Change-Id=I0d722e061953310d2cccffa3e6abc5143963c781; subject=netdev-offload-dpdk
 Change-Id=I79f7c793e1b3e47eee85d073efc325c92a0195c1; subject=netdev-offload-dpdk: Offload CT established connection; feature=ovs_dpdk_ct; upstream_status=in_progress; general=;
 Change-Id=I83b4a6da9f4dba695f349ead6493de14b7a5a1e6; subject=conntrack: Keep DP handler in conntrack; feature=ovs_dpdk_ct; upstream_status=in_progress; general=;
 Change-Id=I967c3e134ba1a104b3dca126570f3f43259a68b7; subject=conntrack-tp: Introduce conn_protected_update_expiration; feature=ovs_dpdk_ct; upstream_status=in_progress; general=;
+Change-Id=Iad97f3c9fb5d476feec9a2513274534e8b9cd30d; subject=dpif-netdev: Fix flow modification after failure; feature=bug_fixes; upstream_status=ignore; general=;
+Change-Id=I1929265ca4cccd5dc895408c00ea9f84663d1ba9; subject=netdev-linux: don't print no ifindex log; feature=bug_fixes; upstream_status=ignore; general=;
+Change-Id=I3a2dbac0c3c37aba19a96c652f71710c8148edd0; subject=netdev-offload-dpdk: Don't offload TTL rewrite; feature=bug_fixes; upstream_status=ignore; general=;
