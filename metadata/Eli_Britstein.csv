@@ -1,0 +1,9 @@
+sep=;
+Change-Id=Ic57059f327d14ad152e8298405ecf0cc583d806f; subject=netdev-offload-dpdk: Change log rate limit numbers; feature=ovs_dpdk_vxlan; upstream_status=in_progress; general=;
+Change-Id=I1201f2375664f2bfd71431dd50039157917edd5c; subject=netdev-offload-dpdk: Introduce map APIs for table id and miss context; feature=ovs_dpdk_vxlan; upstream_status=in_progress; general=;
+Change-Id=Ieed1bf9f01188fdd67dedf8f072126742fff4d39; subject=netdev-offload-dpdk: Implement HW miss packet recover for vport; feature=ovs_dpdk_vxlan; upstream_status=in_progress; general=;
+Change-Id=I7e2acba16a0b18721c7602837ba89ece4e4b4528; subject=netdev-offload-dpdk: Support tunnel pop action; feature=ovs_dpdk_vxlan; upstream_status=in_progress; general=;
+Change-Id=I5a37f2ace552b1f7c546defe275e074f9e0a6a6f; subject=netdev-offload-dpdk: Implement flow dump create/destroy APIs; feature=ovs_dpdk_vxlan; upstream_status=in_progress; general=;
+Change-Id=I8a1965a885bd831aa5e8ab9355fe987f65fa2327; subject=netdev-dpdk: Getter function for dpdk devargs API; feature=ovs_dpdk_vxlan; upstream_status=in_progress; general=;
+Change-Id=Ib553220ea6114e4f4b9284e695488037b60db970; subject=netdev-dpdk: Introduce get netdev by devargs function; feature=ovs_dpdk_vxlan; upstream_status=in_progress; general=;
+Change-Id=I9bb8c0dd4cfd4fbbe5bafa9233468ccb3d88810d; subject=netdev-dpdk-offload: Add vxlan pattern matching function; feature=ovs_dpdk_vxlan; upstream_status=in_progress; general=;

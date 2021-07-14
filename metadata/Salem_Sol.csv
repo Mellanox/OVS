@@ -1,3 +1,5 @@
 sep=;
 Change-Id=I70fad73f985038c459016dcb09a97a738ef4298e; subject=metadata: Add bp_2_15 as a metadata feature; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I4a1a8e94ff755f3b228dab77f5f07e38d21c8734; subject=Update metadata - 2.15-bp; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ic5b98ad52f40a65a30f201c6d6eade53034f189c; subject=metadata: Add ovs_dpdk_vxlan as a metadata feature; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Idbbd7546c95441d0ed5c09381ff496736c0deae0; subject=Update metadata - 2.15-vxlan; feature=ofed_scripts; upstream_status=ignore; general=;
