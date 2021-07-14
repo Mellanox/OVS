@@ -14,3 +14,4 @@ Change-Id=I8764ca747d37428a872cd569af4643baf1d69189; subject=Update metadata - 2
 Change-Id=I5dd48cf973436862478ec0af305f84d4f2f80fdb; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I609f6a7083597795f26a18f634e1caf66bf61fdf; subject=metadata: Add ovs_dpdk_vdpa as a metadata feature; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=Ic368b4bc40297b6f0ed8a3faca8c32b575e24a34; subject=Update metadata 2.15-vdpa; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=If1f5308fbc2282b32b48f2da1b9b53519ab3eec4; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
