@@ -127,3 +127,4 @@ Change-Id=I048b7bd1acdcfea1464d805d0e03922bd215e687; subject=netdev-dpdk: Introd
 Change-Id=I40d0940add98c411346529257b4837e1f379a876; subject=netdev-offload-dpdk: Use domain_id instead of devargs for shared IDs; feature=e2e_cache; upstream_status=ignore; general=;
 Change-Id=I58f469e61145fdebb868fc0a60b48880429a4bdd; subject=netdev-offload-dpdk: Fix context release for associated items; feature=e2e_cache; upstream_status=ignore; general=;
 Change-Id=Ie959a6a5ed6cf2a46143cb804d35ef6c9cc74024; subject=conntrack: e2e: Fix CT deletion for e2e; feature=e2e_cache; upstream_status=ignore; general=;
+Change-Id=Ifd15e0221537c72e1d2206e6bc6560b4ef5bd3bb; subject=dpif-netdev: Fix offloads of modified flows; feature=bp_2_15; upstream_status=ignore; general=;

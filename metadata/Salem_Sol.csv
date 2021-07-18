@@ -31,3 +31,6 @@ Change-Id=I4d5f733eb66074dca502f2867f773fda686ef731; subject=dpif-netdev: e2e: M
 Change-Id=Ibc7fe32317a16d82f48c0b1eb80f0425b0028e14; subject=dpif-netdev: e2e: Remove unused e2e cache statistic counters.; feature=e2e_cache; upstream_status=ignore; general=;
 Change-Id=I90ab5f24ed13e5e322e3c5dd52ce95018c7fdf5d; subject=dpif-netdev: e2e: Fix e2e cache merged flows dump; feature=e2e_cache; upstream_status=ignore; general=;
 Change-Id=Ibf712c0bf15c199f5260819d632c33ae0cfd5267; subject=Update metadata - 2.15-e2e; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I8310ca539d3a649e70a37aac1f5ce8519e7272ca; subject=netdev-offload: Fix flow mark allocation if e2e-cache enabled; feature=bp_2_15; upstream_status=ignore; general=;
+Change-Id=I6957cb6c6586308319b723b6ec2c7d907f199ce3; subject=dpif-netdev: Add check mark to avoid ovs-vswitchd crash.; feature=bp_2_15; upstream_status=ignore; general=;
+Change-Id=I09228ab53bb4e25aa87d1ad7cbc71816068357bc; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
