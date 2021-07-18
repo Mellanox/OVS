@@ -16,3 +16,18 @@ Change-Id=I609f6a7083597795f26a18f634e1caf66bf61fdf; subject=metadata: Add ovs_d
 Change-Id=Ic368b4bc40297b6f0ed8a3faca8c32b575e24a34; subject=Update metadata 2.15-vdpa; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=If1f5308fbc2282b32b48f2da1b9b53519ab3eec4; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I88d5bb1405fdd1a71f7f1d0883e722cdb7c4ae69; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I97b1f71182154a9001c9ff47d81386b61f7aed34; subject=dpif-netdev: Fix DB insertions; feature=e2e_cache; upstream_status=ignore; general=;
+Change-Id=I81fffb5587862781527e934603c34b14febde6a1; subject=dpif-netdev: e2e: Use merged flow pointer when removing from DB; feature=e2e_cache; upstream_status=ignore; general=;
+Change-Id=Id5133ed74113a32c21ba9dc204e82c68653c95f8; subject=dpif-netdev: e2e: Prevent double free of merged flow; feature=e2e_cache; upstream_status=ignore; general=;
+Change-Id=I15601997f472e24720685ab1d9ed952ec9c59f8e; subject=dpif: e2e: introduce a new API to dump the cache statistics; feature=e2e_cache; upstream_status=ignore; general=;
+Change-Id=Icc0fe86fce3ff5ab013e619a114d081246221706; subject=dpctl: e2e: introduce a new command to dump the cache statistics; feature=e2e_cache; upstream_status=ignore; general=;
+Change-Id=Ief33402c1756775fac96ca6a254b97daa70de165; subject=dpif-netdev: e2e: implement e2e cache dump statistics; feature=e2e_cache; upstream_status=ignore; general=;
+Change-Id=I2f139f166fd8187c90246413c48049270d143e51; subject=dpif: e2e: introduce a new API to dump the cache flows; feature=e2e_cache; upstream_status=ignore; general=;
+Change-Id=If583f7f08bae58f72004c5f5e177d83876f9323e; subject=dpctl: e2e: Add new command to dump e2e cache flows; feature=e2e_cache; upstream_status=ignore; general=;
+Change-Id=I41652caf013d25520e43c3a81b005199c131eadf; subject=dpif-netdev: e2e: Implement e2e cache dump flows; feature=e2e_cache; upstream_status=ignore; general=;
+Change-Id=I36bd5133c26fe65e3896068b20707a05f7e145a4; subject=dpif-netdev: e2e: Change e2e statistics to atomic_count type; feature=e2e_cache; upstream_status=ignore; general=;
+Change-Id=I586774cb4f29ead7c0d9f64b824b8942852944f0; subject=dpif-netdev: e2e: Fix e2e statistic that are wrongly counted; feature=e2e_cache; upstream_status=ignore; general=;
+Change-Id=I4d5f733eb66074dca502f2867f773fda686ef731; subject=dpif-netdev: e2e: Modify e2e cache statistics; feature=e2e_cache; upstream_status=ignore; general=;
+Change-Id=Ibc7fe32317a16d82f48c0b1eb80f0425b0028e14; subject=dpif-netdev: e2e: Remove unused e2e cache statistic counters.; feature=e2e_cache; upstream_status=ignore; general=;
+Change-Id=I90ab5f24ed13e5e322e3c5dd52ce95018c7fdf5d; subject=dpif-netdev: e2e: Fix e2e cache merged flows dump; feature=e2e_cache; upstream_status=ignore; general=;
+Change-Id=Ibf712c0bf15c199f5260819d632c33ae0cfd5267; subject=Update metadata - 2.15-e2e; feature=ofed_scripts; upstream_status=ignore; general=;
