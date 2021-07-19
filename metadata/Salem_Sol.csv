@@ -66,3 +66,18 @@ Change-Id=Ic4774e27ebfb39c67c0468054c3bbe7ebbecc716; subject=netdev-offload-dpdk
 Change-Id=Idc7f1315dae75a351bb6062df29a7815b1a154a5; subject=Update metadata - 2.15-mirroring; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=Ieeba4c0c3d3716e17f1e95c6459ff9ed72266896; subject=dpif-netdev: e2e: Merge vlan matching; feature=e2e_cache; upstream_status=in_progress; general=;
 Change-Id=I61a9758a6b77d8e150df0c832cc03427711828ed; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ifc5c3708f24152749c159456335c6da2ee673a6c; subject=Revert "netdev-offload-tc: Add offload support for sFlow"; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=I34901cb9d0211e37fcee9eb0071af50140190d4f; subject=Revert "netdev-offload-tc: Introduce group ID management API"; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=I21d374fde9bc794bb2464f9b3058796808d90703; subject=Revert "ofproto: Add psample receive handler"; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=I1d8baaddc790f08e2259fd3f5b977aadc4e5985f; subject=Revert "dpif-netlink: Implement psample offload API"; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=Id63606b2ffa13398a9e437338e49fcb040514428; subject=Revert "dpif: Introduce psample offload API"; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=Id53b819a172b88e33035ced00513281b8f9e101b; subject=Revert "netdev-offload: Introduce sFlow attributes query by group ID API"; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=I2e87655eacc2a1f3fe95fc0bc89d29c971974ee8; subject=Revert "dpif-netlink: Create psample netlink socket"; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=I820c11fc84cb9ce7d72c502975c34004c2433504; subject=dpif-netdev: Implement register sFlow upcall callback API; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=I331772d3c14f30b38ea1803fb125327ed9506b8b; subject=netdev-offload: Add sflow_attr argument to packet recover API; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=I03f6e324d212fd2cf1c53ecd9d14556b1b18c6ac; subject=netdev-offload-dpdk: Introduce sflow id mapping; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=I2edd1fd82c972d1f59976b63470ff21a38b2f163; subject=netdev-offload-dpdk: Recover sFlow cookie; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=Ia63c165b60131e25536c7062f7969054f6d06386; subject=ofproto: Introduce odp port field to struct dpif_upcall_sflow; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=I887ed8763d03689ba05f5b745418f056abf30e73; subject=dpif-netdev: Handle sFlow packets; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=I086cf06d6bf1ce8de34a8990d19f8441039dee11; subject=netdev-offload-dpdk: Add support for sFlow; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=I05ab481bdcb96eac6f3f0675aeb238701ff5fc11; subject=Update metadata - 2.15-sflow; feature=ofed_scripts; upstream_status=ignore; general=;

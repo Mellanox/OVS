@@ -10,3 +10,12 @@ Change-Id=Id3c1fa4a1f3595ab5f4088b304e0ee4475bdbe39; subject=netdev-offload-tc: 
 Change-Id=I97ec021aac116dfc1d25f720ba2ef21b4c0958f1; subject=metadata: Update MD; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I7b925445b86d905aea908fcdc91ca81c99ba5e57; subject=compat: Add psample and tc sample action defines for older kernels; feature=bp_2_15; upstream_status=in_progress; general=;
 Change-Id=Ie59440f47257e94a00329df9ece4b280c39e486b; subject=metadata: Update MD; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I94904e3d98079aeadf9e5334c3448fc2ecd48959; subject=dpif: Introduce register sFlow upcall callback API; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=Ic4ee60befedbfe4534a954172ee9fbb67c55a53d; subject=ofproto: Add upcall callback to process sFlow packet; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=I09a6ed4f6405042d72939eae63cf77ed1799b6a2; subject=netdev-offload: Introduce register sFlow upcall callback API; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=Ibbdac14c9d5183f5f42dcd6cef91aa54c08bc489; subject=netdev-offload-tc: Implement register sFlow upcall callback API; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=Icda79b70133386a88cf4057d3604767de49fd781; subject=dpif-netlink: Implement register sFlow upcall callback API; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=I403dacc02f9475a09c029559ebc65742d5cc9956; subject=netdev-offload-tc: Introduce group ID management API; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=Ida663e3c1dca8fcdf022088020b9cd3ce9e928d0; subject=netdev-offload-tc: Create psample netlink socket; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=I1b9649d5dd53950ac9c06aaf5565b7bdb0571739; subject=netdev-offload-tc: Add psample receive handler; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=Idcd2a3d58d4d80bfe1a1c0bf29744cc64f5aa0bd; subject=netdev-offload-tc: Add offload support for sFlow; feature=sflow; upstream_status=in_progress; general=;
