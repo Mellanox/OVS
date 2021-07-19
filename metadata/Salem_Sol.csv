@@ -64,3 +64,5 @@ Change-Id=I54ec711089700c71ce3527f4598755d1a586b068; subject=netdev-offload-dpdk
 Change-Id=I68b032742e139e4e204e9b746a395dcecc2c1ef2; subject=netdev-offload-dpdk: Propogate remote mirroring fields; feature=ovs_dpdk_mirroring; upstream_status=in_progress; general=;
 Change-Id=Ic4774e27ebfb39c67c0468054c3bbe7ebbecc716; subject=netdev-offload-dpdk: Support remote mirroring; feature=ovs_dpdk_mirroring; upstream_status=in_progress; general=;
 Change-Id=Idc7f1315dae75a351bb6062df29a7815b1a154a5; subject=Update metadata - 2.15-mirroring; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ieeba4c0c3d3716e17f1e95c6459ff9ed72266896; subject=dpif-netdev: e2e: Merge vlan matching; feature=e2e_cache; upstream_status=in_progress; general=;
+Change-Id=I61a9758a6b77d8e150df0c832cc03427711828ed; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;

@@ -154,3 +154,16 @@ Change-Id=I8ad6efe0d6fe08eb848eb11637f753037e677903; subject=netdev-offload: Get
 Change-Id=I89f2ec5a18df327980a11a32993b0053a9673bb8; subject=netdev-offload-dpdk: Set number of skipped actions for flow miss; feature=ovs_dpdk_mirroring; upstream_status=in_progress; general=;
 Change-Id=I60003bae00d4326ec777d1579029ae5b756929c8; subject=netdev-offload-dpdk: Fix assert on miss flow race condition; feature=bp_2_15; upstream_status=NA; general=;
 Change-Id=I181d2b4ff7c30534ac2c10307054b59b9ee8e488; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I356146b3954d7339cd778aaf79e9f2c2e6ff7d94; subject=dp-packet: e2e: Init e2e fields for all packets; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I77242b99d1364527de16b770b7ca75c4eb856512; subject=netdev-offload-dpdk: Fix freeing flow handle in case of miss race; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=If0febabad566aa3794a41150bc10b0f17a4cdd84; subject=dpif-netdev: Do not proceed SW processing for error packet recovery; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I7eace20633922666670ac9e9c8db163da00cbc7c; subject=netdev-offload-dpdk: Use has_vlan match attribute; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I8c27dabb94c40c8cee375a3d003c11ccdf67460d; subject=netdev-offload-dpdk: Fix ethernet type for VLANs; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I0397dbfaac4a754bcbc6b9e010b6bd66cd11d650; subject=dpif-netdev: e2e: Don't offload to MT in case merge fails; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I97ce8dd502fd6fcba5723bacd042870badecc0bc; subject=netdev-dpdk-vdpa: Refactor HW relay destuction; feature=ovs_dpdk_vdpa; upstream_status=in_progress; general=;
+Change-Id=I9adc2e65ee035037c100e3d70c039b1a2013a471; subject=netdev-dpdk-vdpa: Introduce relays map; feature=ovs_dpdk_vdpa; upstream_status=in_progress; general=;
+Change-Id=I2b9174606570c42a3bb2eb8b3395ac2d14268bbf; subject=netdev-dpdk-vdpa: Query stats only if started; feature=ovs_dpdk_vdpa; upstream_status=in_progress; general=;
+Change-Id=I8122eec9d6036cb502d3caaa9a10b3d9bfb78a2f; subject=netdev-dpdk-vdpa: Handle forward traffic only if port is started; feature=ovs_dpdk_vdpa; upstream_status=in_progress; general=;
+Change-Id=Iaee208d1200f1ced56b9af3721d9bc4bf1dd7ab7; subject=netdev-dpdk-vdpa: Remove vdpa device upon destruct; feature=ovs_dpdk_vdpa; upstream_status=in_progress; general=;
+Change-Id=I5c28b86b1fe7c1559da472b8ab52c7acd1a529a1; subject=netdev-dpdk-vdpa: Rollback memory allocation for error handling; feature=ovs_dpdk_vdpa; upstream_status=in_progress; general=;
+Change-Id=I40c30cdd3b87f1aca7336461c320c28841887e15; subject=netdev-dpdk: Fix port lookup by devargs; feature=ovs_dpdk_vdpa; upstream_status=in_progress; general=;
