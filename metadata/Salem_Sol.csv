@@ -36,3 +36,13 @@ Change-Id=I6957cb6c6586308319b723b6ec2c7d907f199ce3; subject=dpif-netdev: Add ch
 Change-Id=I09228ab53bb4e25aa87d1ad7cbc71816068357bc; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I3cf8f74a33f00838ccfba01b7ce344abe17986af; subject=netdev-offload-dpdk: Add sanity check in shared_age_id_alloc; feature=e2e_cache; upstream_status=ignore; general=;
 Change-Id=I19ddc214865babc8baf586ab11deca64d3e545ff; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ifa90ac9d2fa43465f46eaa464c507f5d1b5daf3a; subject=netdev-offload-dpdk: Remove tunnel metadata from id allocation; feature=ovs_dpdk_geneve; upstream_status=in_progress; general=;
+Change-Id=I31908efbc2811280891de76d8566c9aa9bed84b9; subject=netdev-offload-dpdk: Refactor tunnel decap; feature=ovs_dpdk_geneve; upstream_status=in_progress; general=;
+Change-Id=If7d7999fa078e744fb0f345a1cb13e938fc4a0eb; subject=netdev-offload-dpdk: Store IP version for tunnels; feature=ovs_dpdk_geneve; upstream_status=in_progress; general=;
+Change-Id=I3d90890b5d24a18e13a81a56bc5cd810f043b3a1; subject=netdev-offload-dpdk: Add geneve header pattern match; feature=ovs_dpdk_geneve; upstream_status=in_progress; general=;
+Change-Id=I55a8c430a4305070a29c6a24d6d9c6373dd5143d; subject=netdev-offload-dpdk: Refactor act_vars; feature=ovs_dpdk_geneve; upstream_status=in_progress; general=;
+Change-Id=I13dd14f3c22fbb1cb7f8e5d9b40e88ffa4318d45; subject=netdev-offload-dpdk: Add support for geneve header decap offload; feature=ovs_dpdk_geneve; upstream_status=in_progress; general=;
+Change-Id=Ib9064fbccfefc7b711bb3e41741c5bed950cf8c4; subject=netdev-dpdk: Add flow_api support for netdev geneve vports; feature=ovs_dpdk_geneve; upstream_status=in_progress; general=;
+Change-Id=I01bad54ae05df6de8a63c57d50c2468697df5bd8; subject=netdev-offload-dpdk: Add support for geneve tlv offload; feature=ovs_dpdk_geneve; upstream_status=in_progress; general=;
+Change-Id=I26cda2b66666d5636a1c8f96350b7aaf29692b61; subject=netdev-native-tnl: Set FLOW_TNL_F_UDPIF only if geneve options exists; feature=ovs_dpdk_geneve; upstream_status=in_progress; general=;
+Change-Id=I296d04d997e65bbe770a164b7ee7446ea4bff020; subject=Update metadata - 2.15-geneve; feature=ofed_scripts; upstream_status=ignore; general=;
