@@ -150,3 +150,5 @@ Change-Id=I889d7f446124bf9b93d2e3a6eb832aec543ba35d; subject=conntrack: RCU prot
 Change-Id=Ief4fee8182fd2747fc41823e5f8b8b80b0f292bd; subject=dpif-netdev: Reset CT offload stats upon dp destroy; feature=bp_2_15; upstream_status=in_progress; general=;
 Change-Id=I7d0fef636f703940e999d851f691465a0e0fa04f; subject=dpctl: Align offload stats display to 7 digits numbers; feature=bp_2_15; upstream_status=in_progress; general=;
 Change-Id=Iffacd7fed701d8e93178e003dc75f55cb917fe6f; subject=netdev-offload: Protect offload data with RCU; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I8ad6efe0d6fe08eb848eb11637f753037e677903; subject=netdev-offload: Get skip actions number from packet recover; feature=ovs_dpdk_mirroring; upstream_status=in_progress; general=;
+Change-Id=I89f2ec5a18df327980a11a32993b0053a9673bb8; subject=netdev-offload-dpdk: Set number of skipped actions for flow miss; feature=ovs_dpdk_mirroring; upstream_status=in_progress; general=;

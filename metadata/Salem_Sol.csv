@@ -57,3 +57,10 @@ Change-Id=Icd05fcee8cc311d6a137aa1846bbd39eaae53e9e; subject=netdev-offload-dpdk
 Change-Id=I9acef302a42d2ff35768ce8ca96b759a24d208dc; subject=netdev-offload-dpdk: Mask arp fields for non nd / arp flows; feature=bp_2_15; upstream_status=in_progress; general=;
 Change-Id=I5892922547474c10f7f8bc84b85e1703f344f256; subject=netdev-offload-dpdk: Mask igmp field for non nd / igmp flows; feature=bp_2_15; upstream_status=in_progress; general=;
 Change-Id=I62499ace95c3c780700a29f51cecf2d05fbe7b3a; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ida330066d943a261d5c90aff7d5d50eeb6acf1a8; subject=dpif-netdev: Skip SW execution of actions done by HW; feature=ovs_dpdk_mirroring; upstream_status=in_progress; general=;
+Change-Id=Ib773dba3468db053f0639534c0c7840c04f8e65c; subject=netdev-offload-dpdk: Introduce helper function get_netdev_by_port; feature=ovs_dpdk_mirroring; upstream_status=in_progress; general=;
+Change-Id=Id770f0094235a7521b01241b9fdca6affe81437a; subject=netdev-offload-dpdk: Support local mirroring; feature=ovs_dpdk_mirroring; upstream_status=in_progress; general=;
+Change-Id=I54ec711089700c71ce3527f4598755d1a586b068; subject=netdev-offload-dpdk: Introduce helper function format_raw_encap; feature=ovs_dpdk_mirroring; upstream_status=in_progress; general=;
+Change-Id=I68b032742e139e4e204e9b746a395dcecc2c1ef2; subject=netdev-offload-dpdk: Propogate remote mirroring fields; feature=ovs_dpdk_mirroring; upstream_status=in_progress; general=;
+Change-Id=Ic4774e27ebfb39c67c0468054c3bbe7ebbecc716; subject=netdev-offload-dpdk: Support remote mirroring; feature=ovs_dpdk_mirroring; upstream_status=in_progress; general=;
+Change-Id=Idc7f1315dae75a351bb6062df29a7815b1a154a5; subject=Update metadata - 2.15-mirroring; feature=ofed_scripts; upstream_status=ignore; general=;
