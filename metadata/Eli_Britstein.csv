@@ -167,3 +167,5 @@ Change-Id=I8122eec9d6036cb502d3caaa9a10b3d9bfb78a2f; subject=netdev-dpdk-vdpa: H
 Change-Id=Iaee208d1200f1ced56b9af3721d9bc4bf1dd7ab7; subject=netdev-dpdk-vdpa: Remove vdpa device upon destruct; feature=ovs_dpdk_vdpa; upstream_status=in_progress; general=;
 Change-Id=I5c28b86b1fe7c1559da472b8ab52c7acd1a529a1; subject=netdev-dpdk-vdpa: Rollback memory allocation for error handling; feature=ovs_dpdk_vdpa; upstream_status=in_progress; general=;
 Change-Id=I40c30cdd3b87f1aca7336461c320c28841887e15; subject=netdev-dpdk: Fix port lookup by devargs; feature=ovs_dpdk_vdpa; upstream_status=in_progress; general=;
+Change-Id=I0a1b40a9ef9521e5ce4528f5fbffc36380a589ca; subject=dpdk: Add debug appctl to get socket statistics.; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=Ia945238fa335aef4b03e05c12471a782bb4460cc; subject=dpdk: Add debug appctl to get malloc statistics.; feature=bp_2_15; upstream_status=in_progress; general=;

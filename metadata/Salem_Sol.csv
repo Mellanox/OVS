@@ -81,3 +81,4 @@ Change-Id=Ia63c165b60131e25536c7062f7969054f6d06386; subject=ofproto: Introduce 
 Change-Id=I887ed8763d03689ba05f5b745418f056abf30e73; subject=dpif-netdev: Handle sFlow packets; feature=sflow; upstream_status=in_progress; general=;
 Change-Id=I086cf06d6bf1ce8de34a8990d19f8441039dee11; subject=netdev-offload-dpdk: Add support for sFlow; feature=sflow; upstream_status=in_progress; general=;
 Change-Id=I05ab481bdcb96eac6f3f0675aeb238701ff5fc11; subject=Update metadata - 2.15-sflow; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I1415ba86846bc916da219c16d5fa8a4d952c6b37; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;

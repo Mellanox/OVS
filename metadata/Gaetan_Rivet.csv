@@ -105,3 +105,16 @@ Change-Id=I41c3f7d091e0da84e4603e57d984116152672b94; subject=cmap: Add set min l
 Change-Id=I014322769978e708c339ed48dbda6a65308904d2; subject=netdev-offload-dpdk: Do not shrink flow cmap; feature=bp_2_15; upstream_status=in_progress; general=;
 Change-Id=I812858616eadb6456e77203cc74ec5af958316b3; subject=conntrack: Sweep the queue only once; feature=bp_2_15; upstream_status=in_progress; general=;
 Change-Id=I24d95a3cf6600b007b4e6dc2009d361f96ca9bb2; subject=conntrack: Fix sweep timeout; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I607ad9e6671b681e8543440fa51abb26fff282a6; subject=mpsc-queue: Simplify acquire / release API; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=Icb63d06e978e349cc8d9f802078e0a71d83ef21d; subject=conntrack: Fix leak of conn expirations on destroy; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I2cdd0ab17ff5d766080fee6b102fc5377773ae57; subject=conntrack: Reduce sweep timeout to respect poll limit; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=Ica295b6b8dcc5852aefc8636ef93f4e61e0b43a2; subject=mpsc-queue: Align push function semantic; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=If2c48548b8dc9be6831263cc95df2248b6e4d7d7; subject=dpif-netdev: Fix offload flush gap; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I6264a17664c011e5b3eef2bd8bbb7ca293831904; subject=ovs-rcu: Add garbage collector; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=Ie24e2ddfd98f374299e99ef9cb487b9a0bab73f9; subject=conntrack: Use gc for conn struct; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I91d321e53ad2895403ffbbeb3711973146925e34; subject=dpif-netdev: Use gc for offload items; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I83041269a66a371ea50829c6f6560019219cb4c2; subject=netdev-offload-dpdk: Use gc for rte-flow data; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I7aff2c1d80b441f4370109827d6289160c7dfba7; subject=netdev-offload-dpdk: Use gc for context-item; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=Ibb03389c2525226f516b5d7803e3e827fc260628; subject=netdev-offload-dpdk: Use gc for flows handle; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I8b1fd197a2982ecb2de5bb64ad08e33b6172cfef; subject=conntrack: Embed expiration node in connection; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I642439ff2b36d29a967ce1b9054141acd467e1a1; subject=conntrack: Do not schedule conn expiration until fully created; feature=bp_2_15; upstream_status=in_progress; general=;
