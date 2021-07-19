@@ -136,3 +136,17 @@ Change-Id=I4d5ca10941253a23c6e5bb8f9ff228fbbea18830; subject=netdev-offload-dpdk
 Change-Id=I1d0d4787ed637a6d107a26a2b9616cee5b089b06; subject=netdev-offload-dpdk: Don't postpone id_free; feature=e2e_cache; upstream_status=ignore; general=;
 Change-Id=I34eca1f1201c378dba44cef77799a0ceae8d43ac; subject=dpif-netdev: e2e: Fix aging of MT flows/CT; feature=e2e_cache; upstream_status=ignore; general=;
 Change-Id=Id718d71047c05c76f0c856343be1079400f47250; subject=netdev-offload-dpdk: Avoid error log allocating shared age context on PF; feature=e2e_cache; upstream_status=ignore; general=;
+Change-Id=I76a5db94a957959f0a28f5e47ee8dfed11358d63; subject=netdev-offload-dpdk: Fix wrong next table id jump for tunnel multi-PFs; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=Icfc0ad5ac42c2ead4c36139da8b619281d5f3897; subject=netdev-offload-dpdk: Fix multiple flow_id association; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=Id8743d7481865b04dac2cc57a5bd1bfdbdb690c8; subject=conntrack: Avoid querying during high lock contention; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=Ia73e7528e3fa8e05f8c45e6ae17ee8b056d4dba5; subject=dpif-netdev: e2e: Fix CT MT purge deletion; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I1a46b0bf2ee0968ed3f10544bd8e0e22ed70bb6f; subject=netdev-offload: Set a default value for offload_thread_nb; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I6e33774c819755ca76cb725bfd2200e39a4083a5; subject=netdev-offload-dpdk: Refactor flow destroy and data disassociate; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=Ibeb26f8faffa5773061ac01e848875c4847cdd2f; subject=netdev-offload-dpdk: Finalize data object free outside disassociate scope; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=Iebf00e8296f893eaba065de5eb14aee0715abc83; subject=netdev-offload-dpdk: Protect concurrency between flow destroy/query; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I3422cc200c2672ab8a9fc41b0fecb19489537b88; subject=dpif-netdev: e2e: Create e2e thread upon init instead upon traffic; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I36525ae153c5ba0a0ee44b86764a25f7ebe8ed94; subject=netdev-dpdk: Lock netdev_mutex before dpdk_mutex; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I889d7f446124bf9b93d2e3a6eb832aec543ba35d; subject=conntrack: RCU protected offload-class; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=Ief4fee8182fd2747fc41823e5f8b8b80b0f292bd; subject=dpif-netdev: Reset CT offload stats upon dp destroy; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I7d0fef636f703940e999d851f691465a0e0fa04f; subject=dpctl: Align offload stats display to 7 digits numbers; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=Iffacd7fed701d8e93178e003dc75f55cb917fe6f; subject=netdev-offload: Protect offload data with RCU; feature=bp_2_15; upstream_status=in_progress; general=;

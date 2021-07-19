@@ -46,3 +46,14 @@ Change-Id=Ib9064fbccfefc7b711bb3e41741c5bed950cf8c4; subject=netdev-dpdk: Add fl
 Change-Id=I01bad54ae05df6de8a63c57d50c2468697df5bd8; subject=netdev-offload-dpdk: Add support for geneve tlv offload; feature=ovs_dpdk_geneve; upstream_status=in_progress; general=;
 Change-Id=I26cda2b66666d5636a1c8f96350b7aaf29692b61; subject=netdev-native-tnl: Set FLOW_TNL_F_UDPIF only if geneve options exists; feature=ovs_dpdk_geneve; upstream_status=in_progress; general=;
 Change-Id=I296d04d997e65bbe770a164b7ee7446ea4bff020; subject=Update metadata - 2.15-geneve; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I13a950d838210201048eefbd05e9462515c2e52e; subject=netdev-offload-dpdk: Remove shared action pointer from act_vars; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=Iede9bac24db13f6ec2b79a0fee78e78944e67797; subject=netdev-offload-dpdk: e2e: Prevent rss actions on e2e-cache flows; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I094882876656841cf544cab4bc492d586b03e19e; subject=conntrack: Introduce conn_hw_update; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I9720a43d04b09ae645a365044738c0c3cdb93b46; subject=conntrack: Fix CT-NAT timeout retrieval; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=Ibf96ceb27142568560e6960e053f6ee9b3199101; subject=netdev-offload-tc: Close netdev in get_chains_from_netdev; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=Idae46e920fe6624f77e1f0fd641f2d7f12d21185; subject=netdev-offload-dpdk: Remove flow_netdev in free_flow_handle; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I347a23bddaa8cf33628912c62a9db25b54cba58e; subject=netdev-offload: Change default e2e-cache size; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=Icd05fcee8cc311d6a137aa1846bbd39eaae53e9e; subject=netdev-offload-dpdk: Mask nd_target field for non nd flows; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I9acef302a42d2ff35768ce8ca96b759a24d208dc; subject=netdev-offload-dpdk: Mask arp fields for non nd / arp flows; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I5892922547474c10f7f8bc84b85e1703f344f256; subject=netdev-offload-dpdk: Mask igmp field for non nd / igmp flows; feature=bp_2_15; upstream_status=in_progress; general=;
+Change-Id=I62499ace95c3c780700a29f51cecf2d05fbe7b3a; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
