@@ -128,3 +128,11 @@ Change-Id=I40d0940add98c411346529257b4837e1f379a876; subject=netdev-offload-dpdk
 Change-Id=I58f469e61145fdebb868fc0a60b48880429a4bdd; subject=netdev-offload-dpdk: Fix context release for associated items; feature=e2e_cache; upstream_status=ignore; general=;
 Change-Id=Ie959a6a5ed6cf2a46143cb804d35ef6c9cc74024; subject=conntrack: e2e: Fix CT deletion for e2e; feature=e2e_cache; upstream_status=ignore; general=;
 Change-Id=Ifd15e0221537c72e1d2206e6bc6560b4ef5bd3bb; subject=dpif-netdev: Fix offloads of modified flows; feature=bp_2_15; upstream_status=ignore; general=;
+Change-Id=I4787b4bdcd941580a8449a85cdbffcf823fa7810; subject=dpif-netdev: e2e: Query e2e only if there are merged flows; feature=e2e_cache; upstream_status=ignore; general=;
+Change-Id=I60dc0ec23ec52a2adb99f8b24b955ddc16704f52; subject=netdev-offload-dpdk: e2e: Avoid sending domain_id to free shared_id; feature=e2e_cache; upstream_status=ignore; general=;
+Change-Id=I7944aead406702e4ad85327079e650ec1551b11b; subject=netdev-offload-dpdk: e2e: Don't create shared action context only on uplinks; feature=e2e_cache; upstream_status=ignore; general=;
+Change-Id=I7ea91fcff55d795531a16837dfacd0077cc8b677; subject=netdev-offload-dpdk: e2e: Don't use shared action context on different domain; feature=e2e_cache; upstream_status=ignore; general=;
+Change-Id=I4d5ca10941253a23c6e5bb8f9ff228fbbea18830; subject=netdev-offload-dpdk: Init NULL as shared action conf; feature=e2e_cache; upstream_status=ignore; general=;
+Change-Id=I1d0d4787ed637a6d107a26a2b9616cee5b089b06; subject=netdev-offload-dpdk: Don't postpone id_free; feature=e2e_cache; upstream_status=ignore; general=;
+Change-Id=I34eca1f1201c378dba44cef77799a0ceae8d43ac; subject=dpif-netdev: e2e: Fix aging of MT flows/CT; feature=e2e_cache; upstream_status=ignore; general=;
+Change-Id=Id718d71047c05c76f0c856343be1079400f47250; subject=netdev-offload-dpdk: Avoid error log allocating shared age context on PF; feature=e2e_cache; upstream_status=ignore; general=;
