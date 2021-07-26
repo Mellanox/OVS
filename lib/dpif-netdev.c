@@ -3157,25 +3157,6 @@ mark_to_flow_disassociate(struct dp_offload_thread_item *offload_item)
     return ret;
 }
 
-static void
-flow_mark_flush(struct dp_netdev_pmd_thread *pmd)
-{
-    struct dp_netdev_flow *flow;
-    size_t i;
-
-    dp_netdev_offload_init();
-
-    for (i = 0; i < netdev_offload_thread_nb(); i++) {
-        struct dp_offload_thread *ofl_thread = &dp_offload_threads[i];
-
-        CMAP_FOR_EACH (flow, mark_node, &ofl_thread->mark_to_flow) {
-            if (flow->pmd_id == pmd->core_id) {
-                queue_netdev_flow_del(pmd, flow);
-            }
-        }
-    }
-}
-
 static struct dp_netdev_flow *
 mark_to_flow_find(const struct dp_netdev_pmd_thread *pmd,
                   const uint32_t mark)
@@ -6712,9 +6693,9 @@ reload_affected_pmds(struct dp_netdev *dp)
 {
     struct dp_netdev_pmd_thread *pmd;
 
+    dp_netdev_offload_init();
     CMAP_FOR_EACH (pmd, node, &dp->poll_threads) {
         if (pmd->need_reload) {
-            flow_mark_flush(pmd);
             dp_netdev_reload_pmd__(pmd);
         }
     }
