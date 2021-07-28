@@ -1,0 +1,3 @@
+sep=;
+Change-Id=Ib256abac8e92ff86848cb86414055cb5f06b6e4a; subject=debian: Convert "python" to "python2" deps; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I76f9561308d196797a3a68c2173efd386cc27e78; subject=debian: build dir and man pages; feature=ofed_scripts; upstream_status=ignore; general=;

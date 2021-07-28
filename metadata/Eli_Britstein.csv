@@ -197,3 +197,13 @@ Change-Id=I403b963db40cb7f84e9ba1d89a8de01858e1d9c7; subject=dpif-netdev: ct2ct:
 Change-Id=I81047767a5c6ec8faf635be81245eb70d58f31ab; subject=dpif-netdev: ct2ct: Management adaptations for CT2CT flows; feature=ovs_dpdk_ct2ct; upstream_status=in_progress; general=;
 Change-Id=I7ce0ab099b63136d4e22d6af4e213219d10cfb9f; subject=dpif-netdev: ct2ct: Consider prev_now for CT to be active; feature=ovs_dpdk_ct2ct; upstream_status=in_progress; general=;
 Change-Id=Id6d6d36c83c708de2a36ea58ca46b0756685cedd; subject=dpif-netdev: ct2ct: Use CT2CT for multiple CTs; feature=ovs_dpdk_ct2ct; upstream_status=in_progress; general=;
+Change-Id=I7d22ad22c954220d026de4d1eca48c88bd5d82b6; subject=dpif-netdev: Introduce merged_match struct; feature=bp_2.15; upstream_status=in_progress; general=;
+Change-Id=I70f028a08ea7cbad2046f67f2c8536c194355aa9; subject=netdev-offload: Provide 'now' argument to netdev_flow_get(); feature=bp_2.15; upstream_status=in_progress; general=;
+Change-Id=Id16f299e9fda1a4fdf73ab1c584ec81fa4f32658; subject=netdev-offload: Introduce an API to traverse ports; feature=bp_2.15; upstream_status=in_progress; general=;
+Change-Id=Ifd1508a53caa2c89b140f9cce645843da543ee1b; subject=netdev-dpdk-vdpa: Add support to vdpa auxiliary device; feature=bp_2.15; upstream_status=in_progress; general=;
+Change-Id=Ic7a9e4255c59e5bea928333df6abd1a7513e16b3; subject=dpif-netdev: Protect association of merged flows; feature=bp_2.15; upstream_status=in_progress; general=;
+Change-Id=Ic9246f304e205e4c1e2f68854f9e5777d0d87cde; subject=netdev-offload-dpdk: Fix UAF in get context error; feature=bp_2.15; upstream_status=in_progress; general=;
+Change-Id=Ib979a03161bd0d3261005e16133d289e60e33d1e; subject=netdev-offload-dpdk: Early bail out for failing id_alloc; feature=bp_2.15; upstream_status=in_progress; general=;
+Change-Id=I2ecc82987b23c310f0fa269f356a1119f4a673b3; subject=netdev-offload-dpdk: Remove not thread-safe ERR_SHARED_AGE_ID; feature=bp_2.15; upstream_status=in_progress; general=;
+Change-Id=I920ddfe54d97a1692e6f3a4d1ef60706d4df9431; subject=dpif-netdev: e2e: Fix tnl_pop trace distribution; feature=bp_2.15; upstream_status=in_progress; general=;
+Change-Id=I2d7c51c3db374f0b81d05fce2183df74586fe181; subject=acinclude: Set -O3 for gcc versions >= 8.3; feature=bp_2.15; upstream_status=in_progress; general=;
