@@ -2326,6 +2326,22 @@ nl_msg_put_act_gact(struct ofpbuf *request, uint32_t chain)
 }
 
 static void
+nl_msg_put_act_police_index(struct ofpbuf *request, uint32_t police_idx)
+{
+    struct tc_police police;
+    size_t offset;
+
+    memset(&police, 0, sizeof police);
+    police.index = police_idx;
+
+    nl_msg_put_string(request, TCA_ACT_KIND, "police");
+    offset = nl_msg_start_nested(request, TCA_ACT_OPTIONS);
+    nl_msg_put_unspec(request, TCA_POLICE_TBF, &police, sizeof police);
+    nl_msg_put_u32(request, TCA_POLICE_RESULT, TC_ACT_PIPE);
+    nl_msg_end_nested(request, offset);
+}
+
+static void
 nl_msg_put_act_ct(struct ofpbuf *request, struct tc_action *action)
 {
     uint16_t ct_action = 0;
@@ -2799,7 +2815,14 @@ nl_msg_put_flower_acts(struct ofpbuf *request, struct tc_flower *flower)
             }
             break;
             case TC_ACT_POLICE: {
-                /* Not supported yet */
+                struct tc_cookie act_cookie;
+
+                act_offset = nl_msg_start_nested(request, act_index++);
+                nl_msg_put_act_police_index(request, action->police.index);
+                act_cookie.data = &action->police.meter_id;
+                act_cookie.len = sizeof(action->police.meter_id);
+                nl_msg_put_act_cookie(request, &act_cookie);
+                nl_msg_end_nested(request, act_offset);
             }
             break;
             }

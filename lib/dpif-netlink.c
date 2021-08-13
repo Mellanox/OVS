@@ -2080,6 +2080,7 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
     struct offload_info info;
     ovs_be16 dst_port = 0;
     uint8_t csum_on = false;
+    int n_meters = 0;
     int err;
 
     info.tc_modify_flow_deleted = false;
@@ -2120,6 +2121,19 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
                 csum_on = tnl_cfg->csum;
             }
             netdev_close(outdev);
+        } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_METER) {
+            uint32_t meter_id = nl_attr_get_u32(nla);
+            uint32_t police_idx;
+
+            if (meter_id_lookup(meter_id, &police_idx)) {
+                err = EINVAL;
+                goto out;
+            }
+            if (n_meters >= MAX_OFFLOAD_METERS) {
+                err = EOPNOTSUPP;
+                goto out;
+            }
+            info.police_ids[n_meters++] = police_idx;
         }
     }
 

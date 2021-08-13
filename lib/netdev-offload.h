@@ -32,6 +32,8 @@
 extern "C" {
 #endif
 
+#define MAX_OFFLOAD_METERS 4
+
 struct netdev_class;
 struct netdev_rxq;
 struct netdev_saved_flags;
@@ -110,6 +112,8 @@ struct offload_info {
 
     uintptr_t ct_counter_key;
     struct flows_counter_key flows_counter_key;
+    uint32_t police_ids[MAX_OFFLOAD_METERS]; /* police ids of the offloaded
+                                              * meters in the flow */
 };
 
 DECLARE_EXTERN_PER_THREAD_DATA(unsigned int, netdev_offload_thread_id);
