@@ -5769,6 +5769,145 @@ tc_del_policer_action(uint32_t index, struct ofputil_meter_stats *stats)
     return error;
 }
 
+struct policer_node {
+    struct hmap_node node;
+    uint32_t police_idx;
+};
+
+static int
+parse_netlink_to_tc_policer(struct ofpbuf *reply, uint32_t police_idx[])
+{
+    static struct nl_policy actions_orders_policy[TCA_ACT_MAX_PRIO] = {};
+    struct nlattr *actions_orders[ARRAY_SIZE(actions_orders_policy)];
+    const int max_size = ARRAY_SIZE(actions_orders_policy);
+    const struct nlattr *actions;
+    struct tc_flower flower;
+    struct tcamsg *tca;
+    int i, cnt = 0;
+    int err;
+
+    for (i = 0; i < max_size; i++) {
+        actions_orders_policy[i].type = NL_A_NESTED;
+        actions_orders_policy[i].optional = true;
+    }
+
+    tca = ofpbuf_at_assert(reply, NLMSG_HDRLEN, sizeof *tca);
+    actions = nl_attr_find(reply, NLMSG_HDRLEN + sizeof *tca, TCA_ACT_TAB);
+    if (!actions || !nl_parse_nested(actions, actions_orders_policy,
+                                     actions_orders, max_size)) {
+        VLOG_ERR_RL(&rl, "failed to parse police actions");
+        return EPROTO;
+    }
+
+    for (i = 0; i < TCA_ACT_MAX_PRIO; i++) {
+        if (actions_orders[i]) {
+            memset(&flower, 0, sizeof(struct tc_flower));
+            err = tc_parse_single_action(actions_orders[i], &flower, false);
+            if (err) {
+                continue;
+            }
+            if (flower.actions[0].police.index) {
+                police_idx[cnt++] = flower.actions[0].police.index;
+            }
+        }
+    }
+
+    return 0;
+}
+
+static int
+tc_dump_tc_policer_start(struct nl_dump *dump)
+{
+    struct nla_bitfield32 flag_select;
+    size_t offset, root_offset;
+    struct ofpbuf request;
+    uint32_t prio = 0;
+
+    tc_make_action_request(RTM_GETACTION, NLM_F_DUMP, &request);
+    root_offset = nl_msg_start_nested(&request, TCA_ACT_TAB);
+    offset = nl_msg_start_nested(&request, ++prio);
+    nl_msg_put_string(&request, TCA_ACT_KIND, "police");
+    nl_msg_end_nested(&request, offset);
+    nl_msg_end_nested(&request, root_offset);
+
+    flag_select.value = TCA_FLAG_LARGE_DUMP_ON;
+    flag_select.selector = TCA_FLAG_LARGE_DUMP_ON;
+    nl_msg_put_unspec(&request, TCA_ROOT_FLAGS, &flag_select,
+                      sizeof(struct nla_bitfield32));
+    nl_dump_start(dump, NETLINK_ROUTE, &request);
+    ofpbuf_uninit(&request);
+
+    return 0;
+}
+
+static int
+tc_get_policer_action_ids(struct hmap *map)
+{
+    uint32_t police_idx[TCA_ACT_MAX_PRIO] = {};
+    struct policer_node *policer_node;
+    struct netdev_flow_dump *dump;
+    struct ofpbuf rbuffer, reply;
+    size_t hash;
+    int i, err;
+
+    dump = xzalloc(sizeof *dump);
+    dump->nl_dump = xzalloc(sizeof *dump->nl_dump);
+
+    ofpbuf_init(&rbuffer, NL_DUMP_BUFSIZE);
+    tc_dump_tc_policer_start(dump->nl_dump);
+
+    while (nl_dump_next(dump->nl_dump, &reply, &rbuffer)) {
+        if (parse_netlink_to_tc_policer(&reply, police_idx)) {
+            continue;
+        }
+
+        for (i = 0; i < TCA_ACT_MAX_PRIO; i++) {
+            if (!police_idx[i]) {
+                break;
+            }
+            policer_node = xzalloc(sizeof *policer_node);
+            policer_node->police_idx = police_idx[i];
+            hash = hash_int(police_idx[i], 0);
+            hmap_insert(map, &policer_node->node, hash);
+        }
+        memset(police_idx, 0, TCA_ACT_MAX_PRIO * sizeof(uint32_t));
+    }
+
+    err = nl_dump_done(dump->nl_dump);
+    ofpbuf_uninit(&rbuffer);
+    free(dump->nl_dump);
+    free(dump);
+
+    return err;
+}
+
+void
+tc_cleanup_policer_action(struct id_pool *meter_police_ids,
+                          uint32_t id_min, uint32_t id_max)
+{
+    struct policer_node *policer_node;
+    uint32_t police_idx;
+    struct hmap map;
+    int err;
+
+    hmap_init(&map);
+    tc_get_policer_action_ids(&map);
+
+    HMAP_FOR_EACH_POP (policer_node, node, &map) {
+        police_idx = policer_node->police_idx;
+        if (police_idx >= id_min && police_idx <= id_max) {
+            err = tc_del_policer_action(police_idx, NULL);
+            if (err) {
+                /* don't use this police any more */
+                id_pool_add(meter_police_ids, police_idx);
+            }
+        }
+        free(policer_node);
+    }
+
+    hmap_destroy(&map);
+}
+
 static void
 read_psched(void)
 {

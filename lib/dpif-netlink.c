@@ -4178,6 +4178,11 @@ probe_broken_meters__(struct dpif *dpif)
         return true;
     }
 
+    if (netdev_is_flow_api_enabled()) {
+        tc_cleanup_policer_action(meter_police_ids, METER_POLICE_IDS_BASE,
+                                  METER_POLICE_IDS_MAX);
+    }
+
     dpif_netlink_meter_del(dpif, id1, NULL, 0);
     dpif_netlink_meter_del(dpif, id2, NULL, 0);
 

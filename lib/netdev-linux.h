@@ -19,6 +19,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "id-pool.h"
 #include "openvswitch/ofp-meter.h"
 
 /* These functions are Linux specific, so they should be used directly only by
@@ -34,5 +35,7 @@ int tc_add_policer_action(uint32_t index, uint32_t kbits_rate,
                           uint32_t pkts_burst, bool update);
 int tc_del_policer_action(uint32_t index, struct ofputil_meter_stats *stats);
 int tc_get_policer_action(uint32_t index, struct ofputil_meter_stats *stats);
+void tc_cleanup_policer_action(struct id_pool *meter_police_ids,
+                               uint32_t id_min, uint32_t id_max);
 
 #endif /* netdev-linux.h */
