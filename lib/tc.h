@@ -80,6 +80,8 @@ tc_get_minor(unsigned int handle)
 
 struct tcmsg *tc_make_request(int ifindex, int type,
                               unsigned int flags, struct ofpbuf *);
+struct tcamsg *tc_make_action_request(int type, unsigned int flags,
+                                      struct ofpbuf *request);
 int tc_transact(struct ofpbuf *request, struct ofpbuf **replyp);
 int tc_add_del_qdisc(int ifindex, bool add, uint32_t block_id,
                      enum tc_qdisc_hook hook);
@@ -363,6 +365,8 @@ struct tc_flower {
     enum tc_offload_policy tc_policy;
 };
 
+struct nlattr;
+
 /* assert that if we overflow with a masked write of uint32_t to the last byte
  * of flower.rewrite we overflow inside struct flower.
  * shouldn't happen unless someone moves rewrite to the end of flower */
@@ -381,5 +385,7 @@ int parse_netlink_to_tc_flower(struct ofpbuf *reply,
                                bool terse);
 int parse_netlink_to_tc_chain(struct ofpbuf *reply, uint32_t *chain);
 void tc_set_policy(const char *policy);
+int tc_parse_single_action(struct nlattr *action, struct tc_flower *flower,
+                           bool terse);
 
 #endif /* tc.h */

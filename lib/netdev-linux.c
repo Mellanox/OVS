@@ -5640,6 +5640,135 @@ tc_add_policer(struct netdev *netdev, uint32_t kbits_rate,
     return 0;
 }
 
+int
+tc_add_policer_action(uint32_t index, uint32_t kbits_rate,
+                      uint32_t kbits_burst, uint32_t pkts_rate,
+                      uint32_t pkts_burst, bool update)
+{
+    struct tc_police tc_police;
+    struct ofpbuf request;
+    struct tcamsg *tcamsg;
+    size_t offset;
+    int flags;
+
+    tc_policer_init(&tc_police, kbits_rate, kbits_burst);
+    tc_police.index = index;
+
+    flags = (update ? NLM_F_REPLACE : NLM_F_EXCL) | NLM_F_CREATE;
+    tcamsg = tc_make_action_request(RTM_NEWACTION, flags, &request);
+    if (!tcamsg) {
+        return ENODEV;
+    }
+
+    offset = nl_msg_start_nested(&request, TCA_ACT_TAB);
+    nl_msg_put_act_police(&request, &tc_police, pkts_rate, pkts_burst);
+    nl_msg_end_nested(&request, offset);
+
+    return tc_transact(&request, NULL);
+}
+
+static int
+tc_update_policer_action_stats(struct ofpbuf *msg,
+                               struct ofputil_meter_stats *stats)
+{
+    const struct nlattr *act = NULL;
+    struct tc_flower flower;
+    struct nlattr *prio;
+    struct tcamsg *tca;
+    int error;
+
+    if (NLMSG_HDRLEN + sizeof *tca > msg->size) {
+        return EPROTO;
+    }
+
+    tca = ofpbuf_at_assert(msg, NLMSG_HDRLEN, sizeof *tca);
+
+    act = nl_attr_find(msg, NLMSG_HDRLEN + sizeof *tca, TCA_ACT_TAB);
+    if (!act) {
+        return EPROTO;
+    }
+
+    prio = (struct nlattr *) act + 1;
+    memset(&flower, 0, sizeof(struct tc_flower));
+    error = tc_parse_single_action(prio, &flower, false);
+    if (!error) {
+        stats->packet_in_count += get_32aligned_u64(&flower.stats.n_packets);
+        stats->byte_in_count += get_32aligned_u64(&flower.stats.n_bytes);
+    }
+
+    return error;
+}
+
+int
+tc_get_policer_action(uint32_t index, struct ofputil_meter_stats *stats)
+{
+    struct ofpbuf *replyp = NULL;
+    struct ofpbuf request;
+    struct tcamsg *tcamsg;
+    size_t root_offset;
+    size_t prio_offset;
+    int prio = 0;
+    int error;
+
+    tcamsg = tc_make_action_request(RTM_GETACTION, 0, &request);
+    if (!tcamsg) {
+        return ENODEV;
+    }
+
+    root_offset = nl_msg_start_nested(&request, TCA_ACT_TAB);
+    prio_offset = nl_msg_start_nested(&request, ++prio);
+    nl_msg_put_string(&request, TCA_ACT_KIND, "police");
+    nl_msg_put_u32(&request, TCA_ACT_INDEX, index);
+    nl_msg_end_nested(&request, prio_offset);
+    nl_msg_end_nested(&request, root_offset);
+
+    error = tc_transact(&request, &replyp);
+    if (error) {
+        VLOG_ERR_RL(&rl, "failed to dump police action (index: %u), err=%d",
+                    index, error);
+        return error;
+    }
+
+    error = tc_update_policer_action_stats(replyp, stats);
+    if (error) {
+        VLOG_ERR_RL(&rl, "failed to update police stats (index: %u), err=%d",
+                    index, error);
+    }
+
+    return error;
+}
+
+int
+tc_del_policer_action(uint32_t index, struct ofputil_meter_stats *stats)
+{
+    struct ofpbuf *replyp = NULL;
+    struct ofpbuf request;
+    struct tcamsg *tcamsg;
+    size_t root_offset;
+    size_t prio_offset;
+    int prio = 0;
+    int error;
+
+    tcamsg = tc_make_action_request(RTM_DELACTION, NLM_F_ACK, &request);
+    if (!tcamsg) {
+        return ENODEV;
+    }
+
+    root_offset = nl_msg_start_nested(&request, TCA_ACT_TAB);
+    prio_offset = nl_msg_start_nested(&request, ++prio);
+    nl_msg_put_string(&request, TCA_ACT_KIND, "police");
+    nl_msg_put_u32(&request, TCA_ACT_INDEX, index);
+    nl_msg_end_nested(&request, prio_offset);
+    nl_msg_end_nested(&request, root_offset);
+
+    error = tc_transact(&request, &replyp);
+    if (!error && stats) {
+        error = tc_update_policer_action_stats(replyp, stats);
+    }
+
+    return error;
+}
+
 static void
 read_psched(void)
 {
