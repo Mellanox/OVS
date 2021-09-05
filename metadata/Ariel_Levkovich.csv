@@ -1,0 +1,2 @@
+sep=;
+Change-Id=I39f4146ba7b0c7024cf97fddbeb2742178c5f387; subject=netdev-offload-tc: Add support for ct_state flag rel.; feature=bp_2_15; upstream_status=in_progress; general=;

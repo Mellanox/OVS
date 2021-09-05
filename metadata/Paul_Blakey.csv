@@ -1,0 +1,2 @@
+sep=;
+Change-Id=I4486b5ce324fd7625fcdc4c0fbc262c0ad472ba2; subject=netdev-offload-tc: Add support for ct_state flags inv and rpl; feature=bp_2_15; upstream_status=in_progress; general=;
