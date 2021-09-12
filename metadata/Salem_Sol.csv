@@ -85,3 +85,5 @@ Change-Id=I1415ba86846bc916da219c16d5fa8a4d952c6b37; subject=Update metadata; fe
 Change-Id=I51afbff0db49d0bef43d5d4d949638e1593c0b9f; subject=Update metadata - 2.15-ct2ct; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I4112b2174d455acef981d5ee83fe25dbcfa742e0; subject=dpif-netdev: Remove single-thread wrong trace to thread id; feature=bp_2.15; upstream_status=in_progress; general=;
 Change-Id=I74569c0e7ea8fc2f6228db70c05b24f1b9c313b6; subject=Update metadata - 2.15; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ie3de154c3694fdbe029b767636f228e7f86b0c0d; subject=netdev-offload-dpdk: Close rte_flow_data netdev upon disassociate; feature=bug_fixes; upstream_status=in_progress; general=;
+Change-Id=I3ca27b0b928aa0d6650d2651ad95c4b9d766fd77; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
