@@ -468,6 +468,7 @@ ufid_to_rte_flow_disassociate(struct netdev *netdev,
      */
     hash = hash_bytes(&data->ufid, sizeof data->ufid, 0);
     cmap_remove(map, CONST_CAST(struct cmap_node *, &data->node), hash);
+    netdev_close(data->netdev);
 
     offload_data_unlock(netdev);
 }
