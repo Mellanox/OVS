@@ -327,12 +327,6 @@ struct ukey_op {
     struct dpif_op dop;           /* Flow operation. */
 };
 
-enum sweep_type {
-    PURGE_NONE,
-    PURGE_SOFT,
-    PURGE_HARD,
-};
-
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
 static struct ovs_list all_udpifs = OVS_LIST_INITIALIZER(&all_udpifs);
 
@@ -351,7 +345,7 @@ static unsigned long udpif_get_n_flows(struct udpif *);
 static void revalidate(struct revalidator *);
 static void revalidator_pause(struct revalidator *);
 static void revalidator_sweep(struct revalidator *);
-static void revalidator_purge(struct revalidator *, enum sweep_type);
+static void revalidator_purge(struct revalidator *);
 static void upcall_unixctl_show(struct unixctl_conn *conn, int argc,
                                 const char *argv[], void *aux);
 static void upcall_unixctl_disable_megaflows(struct unixctl_conn *, int argc,
@@ -549,7 +543,7 @@ udpif_stop_threads(struct udpif *udpif, bool delete_flows)
 
         if (delete_flows) {
             for (i = 0; i < udpif->n_revalidators; i++) {
-                revalidator_purge(&udpif->revalidators[i], PURGE_HARD);
+                revalidator_purge(&udpif->revalidators[i]);
             }
         }
 
@@ -2823,8 +2817,7 @@ revalidator_pause(struct revalidator *revalidator)
 }
 
 static void
-revalidator_sweep__(struct revalidator *revalidator,
-                    enum sweep_type sweep_type)
+revalidator_sweep__(struct revalidator *revalidator, bool purge)
 {
     struct udpif *udpif;
     uint64_t dump_seq, reval_seq;
@@ -2855,13 +2848,13 @@ revalidator_sweep__(struct revalidator *revalidator,
             }
             ukey_state = ukey->state;
             if (ukey_state == UKEY_OPERATIONAL
-                || (ukey_state == UKEY_VISIBLE && sweep_type == PURGE_HARD)) {
+                || (ukey_state == UKEY_VISIBLE && purge)) {
                 struct recirc_refs recircs = RECIRC_REFS_EMPTY_INITIALIZER;
                 bool seq_mismatch = (ukey->dump_seq != dump_seq
                                      && ukey->reval_seq != reval_seq);
                 enum reval_result result;
 
-                if (sweep_type > PURGE_NONE) {
+                if (purge) {
                     result = UKEY_DELETE;
                 } else if (!seq_mismatch) {
                     result = UKEY_KEEP;
@@ -2908,13 +2901,13 @@ revalidator_sweep__(struct revalidator *revalidator,
 static void
 revalidator_sweep(struct revalidator *revalidator)
 {
-    revalidator_sweep__(revalidator, PURGE_NONE);
+    revalidator_sweep__(revalidator, false);
 }
 
 static void
-revalidator_purge(struct revalidator *revalidator, enum sweep_type sweep_type)
+revalidator_purge(struct revalidator *revalidator)
 {
-    revalidator_sweep__(revalidator, sweep_type);
+    revalidator_sweep__(revalidator, true);
 }
 
 /* In reaction to dpif purge, purges all 'ukey's with same 'pmd_id'. */
@@ -3108,7 +3101,7 @@ upcall_unixctl_purge(struct unixctl_conn *conn, int argc OVS_UNUSED,
         int n;
 
         for (n = 0; n < udpif->n_revalidators; n++) {
-            revalidator_purge(&udpif->revalidators[n], PURGE_SOFT);
+            revalidator_purge(&udpif->revalidators[n]);
         }
     }
     unixctl_command_reply(conn, "");
