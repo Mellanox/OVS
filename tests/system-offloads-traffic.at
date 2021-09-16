@@ -71,6 +71,107 @@ AT_CHECK([ovs-appctl upcall/show | grep -E "offloaded flows : [[1-9]]"], [0], [i
 OVS_TRAFFIC_VSWITCHD_STOP
 AT_CLEANUP
 
+AT_SETUP([sflow offloads with sampling=1 - ping between two ports - offloads enabled])
+OVS_TRAFFIC_VSWITCHD_START()
+
+on_exit 'kill `cat test-sflow.pid`'
+AT_CHECK([ovstest test-sflow --log-file --detach --no-chdir --pidfile 0:127.0.0.1 > sflow.log], [0], [], [ignore])
+AT_CAPTURE_FILE([sflow.log])
+PARSE_LISTENING_PORT([test-sflow.log], [SFLOW_PORT])
+
+AT_CHECK([ovs-vsctl set Open_vSwitch . other_config:hw-offload=true])
+
+AT_CHECK([ovs-appctl -t ovsdb-server exit])
+AT_CHECK([ovs-appctl -t ovs-vswitchd exit])
+AT_CHECK([rm -f ovsdb-server.pid])
+AT_CHECK([rm -f ovs-vswitchd.pid])
+AT_CHECK([ovsdb-server --detach --no-chdir --pidfile --log-file --remote=punix:$OVS_RUNDIR/db.sock], [0], [], [stderr])
+AT_CHECK([ovs-vswitchd --detach --no-chdir --pidfile --log-file -vvconn -vofproto_dpif -vunixctl], [0], [], [stderr])
+on_exit "kill `cat ovsdb-server.pid`"
+on_exit "kill_ovs_vswitchd `cat ovs-vswitchd.pid`"
+
+AT_CHECK([ovs-ofctl add-flow br0 "actions=normal"])
+
+ADD_NAMESPACES(at_ns0, at_ns1)
+
+ADD_VETH(p0, at_ns0, br0, "10.1.1.1/24")
+ADD_VETH(p1, at_ns1, br0, "10.1.1.2/24")
+AT_CHECK([ovs-appctl dpctl/dump-flows], [0], [ignore])
+
+NS_CHECK_EXEC([at_ns0], [ping -c 10 -w 12 10.1.1.2 | FORMAT_PING], [0], [dnl
+10 packets transmitted, 10 received, 0% packet loss, time 0ms
+])
+AT_CHECK([ovs-vsctl -- --id=@sflow create sflow agent=lo target=\"127.0.0.1:$SFLOW_PORT\" header=128 sampling=1 polling=100 -- set bridge br0 sflow=@sflow], [0], [ignore])
+NS_CHECK_EXEC([at_ns0], [ping -c 10 -w 12 10.1.1.2 | FORMAT_PING], [0], [dnl
+10 packets transmitted, 10 received, 0% packet loss, time 0ms
+])
+
+m4_define([DUMP_SFLOW], [sed -e "s/used:[[0-9]].[[0-9]]*s/used:0.001s/;s/eth(src=[[a-z0-9:]]*,dst=[[a-z0-9:]]*)/eth(macs)/;s/pid=[[0-9]]*/pid=1/;s/output=$P1_IFINDEX/output=1/"])
+P1_IFINDEX=$(cat /sys/class/net/ovs-p1/ifindex)
+AT_CHECK([ovs-appctl dpctl/dump-flows type=tc,offloaded | grep "in_port(2)" | grep "eth_type(0x0800)" | grep "actions:userspace" | grep "sFlow" | DUMP_SFLOW], [0], [dnl
+recirc_id(0),in_port(2),eth(macs),eth_type(0x0800),ipv4(frag=no), packets:10, bytes:840, used:0.001s, actions:userspace(pid=1,sFlow(vid=0,pcp=0,output=1),actions),3
+])
+
+m4_define([DUMP_SFLOW], [sed -e "s/used:[[0-9]].[[0-9]]*s/used:0.001s/;s/eth(src=[[a-z0-9:]]*,dst=[[a-z0-9:]]*)/eth(macs)/;s/pid=[[0-9]]*/pid=1/;s/output=$P0_IFINDEX/output=1/"])
+P0_IFINDEX=$(cat /sys/class/net/ovs-p0/ifindex)
+AT_CHECK([ovs-appctl dpctl/dump-flows type=tc,offloaded | grep "in_port(3)" | grep "eth_type(0x0800)" | grep "actions:userspace" | grep "sFlow" | DUMP_SFLOW], [0], [dnl
+recirc_id(0),in_port(3),eth(macs),eth_type(0x0800),ipv4(frag=no), packets:10, bytes:840, used:0.001s, actions:userspace(pid=1,sFlow(vid=0,pcp=0,output=1),actions),2
+])
+
+OVS_TRAFFIC_VSWITCHD_STOP
+OVS_APP_EXIT_AND_WAIT([test-sflow])
+count=`cat sflow.log | wc -l`
+AT_CHECK([[[[ $count -le 22 && $count -ge 18 ]]]])
+AT_CLEANUP
+
+AT_SETUP([sflow offloads with sampling=2 - ping between two ports - offloads enabled])
+OVS_TRAFFIC_VSWITCHD_START()
+
+on_exit 'kill `cat test-sflow.pid`'
+AT_CHECK([ovstest test-sflow --log-file --detach --no-chdir --pidfile 0:127.0.0.1 > sflow.log], [0], [], [ignore])
+AT_CAPTURE_FILE([sflow.log])
+PARSE_LISTENING_PORT([test-sflow.log], [SFLOW_PORT])
+
+AT_CHECK([ovs-vsctl set Open_vSwitch . other_config:hw-offload=true])
+
+AT_CHECK([ovs-appctl -t ovsdb-server exit])
+AT_CHECK([ovs-appctl -t ovs-vswitchd exit])
+AT_CHECK([rm -f ovsdb-server.pid])
+AT_CHECK([rm -f ovs-vswitchd.pid])
+AT_CHECK([ovsdb-server --detach --no-chdir --pidfile --log-file --remote=punix:$OVS_RUNDIR/db.sock], [0], [], [stderr])
+AT_CHECK([ovs-vswitchd --detach --no-chdir --pidfile --log-file -vvconn -vofproto_dpif -vunixctl], [0], [], [stderr])
+on_exit "kill `cat ovsdb-server.pid`"
+on_exit "kill_ovs_vswitchd `cat ovs-vswitchd.pid`"
+
+AT_CHECK([ovs-ofctl add-flow br0 "actions=normal"])
+
+ADD_NAMESPACES(at_ns0, at_ns1)
+
+ADD_VETH(p0, at_ns0, br0, "10.1.1.1/24")
+ADD_VETH(p1, at_ns1, br0, "10.1.1.2/24")
+AT_CHECK([ovs-appctl dpctl/dump-flows], [0], [ignore])
+
+AT_CHECK([ovs-vsctl -- --id=@sflow create sflow agent=lo target=\"127.0.0.1:$SFLOW_PORT\" header=128 sampling=2 polling=100 -- set bridge br0 sflow=@sflow], [0], [ignore])
+NS_CHECK_EXEC([at_ns0], [ping -c 1000 -i 0.01 -w 12 10.1.1.2], [0], [ignore])
+
+P1_IFINDEX=$(cat /sys/class/net/ovs-p1/ifindex)
+m4_define([DUMP_SFLOW], [sed -e "s/packets:[[0-9]]*/packets:1/;s/bytes:[[0-9]]*/bytes:1/;s/used:[[0-9]].[[0-9]]*s/used:0.001s/;s/eth(src=[[a-z0-9:]]*,dst=[[a-z0-9:]]*)/eth(macs)/;s/pid=[[0-9]]*/pid=1/;s/output=$P1_IFINDEX/output=1/"])
+AT_CHECK([ovs-appctl dpctl/dump-flows type=tc,offloaded | grep "in_port(2)" | grep "eth_type(0x0800)" | grep "actions:sample" | grep "sFlow" | DUMP_SFLOW], [0], [dnl
+recirc_id(0),in_port(2),eth(macs),eth_type(0x0800),ipv4(frag=no), packets:1, bytes:1, used:0.001s, actions:sample(sample=50.0%,actions(userspace(pid=1,sFlow(vid=0,pcp=0,output=1),actions))),3
+])
+
+P0_IFINDEX=$(cat /sys/class/net/ovs-p0/ifindex)
+m4_define([DUMP_SFLOW], [sed -e "s/packets:[[0-9]]*/packets:1/;s/bytes:[[0-9]]*/bytes:1/;s/used:[[0-9]].[[0-9]]*s/used:0.001s/;s/eth(src=[[a-z0-9:]]*,dst=[[a-z0-9:]]*)/eth(macs)/;s/pid=[[0-9]]*/pid=1/;s/output=$P0_IFINDEX/output=1/"])
+AT_CHECK([ovs-appctl dpctl/dump-flows type=tc,offloaded | grep "in_port(3)" | grep "eth_type(0x0800)" | grep "actions:sample" | grep "sFlow" | DUMP_SFLOW], [0], [dnl
+recirc_id(0),in_port(3),eth(macs),eth_type(0x0800),ipv4(frag=no), packets:1, bytes:1, used:0.001s, actions:sample(sample=50.0%,actions(userspace(pid=1,sFlow(vid=0,pcp=0,output=1),actions))),2
+])
+
+OVS_TRAFFIC_VSWITCHD_STOP
+OVS_APP_EXIT_AND_WAIT([test-sflow])
+count=`cat sflow.log | wc -l`
+AT_CHECK([[[[ $count -le 1100 && $count -ge 900 ]]]])
+AT_CLEANUP
+
 AT_SETUP([offloads - set ingress_policing_rate and ingress_policing_burst - offloads disabled])
 AT_KEYWORDS([ingress_policing])
 AT_SKIP_IF([test $HAVE_TC = "no"])
