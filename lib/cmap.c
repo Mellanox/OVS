@@ -177,7 +177,9 @@ struct cmap_impl {
 BUILD_ASSERT_DECL(sizeof(struct cmap_impl) == CACHE_LINE_SIZE * 2);
 
 /* An empty cmap. */
-OVS_ALIGNED_VAR(CACHE_LINE_SIZE) const struct cmap_impl empty_cmap;
+OVS_ALIGNED_VAR(CACHE_LINE_SIZE) const struct cmap_impl empty_cmap = {
+    .min_load = CMAP_MIN_LOAD,
+};
 
 static struct cmap_impl *cmap_rehash(struct cmap *, uint32_t mask);
 
