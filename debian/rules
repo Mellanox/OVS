@@ -88,7 +88,7 @@ override_dh_auto_clean:
 
 override_dh_auto_test:
 ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
-	if $(MAKE) check TESTSUITEFLAGS='$(PARALLEL)' RECHECK=yes; then :; \
+	if $(MAKE) -C $(BUILD_DIR) check TESTSUITEFLAGS='$(PARALLEL)' RECHECK=yes; then :; \
 	else \
 		cat tests/testsuite.log; \
 		exit 1; \
@@ -134,7 +134,7 @@ override_dh_install-indep:
 	$(MAKE) -C $(BUILD_DIR)/datapath print-build-modules
 
 	# Prepare dkms.conf from the dkms.conf.in template
-	sed "s/__VERSION__/$(DEB_VERSION_UPSTREAM)/g; s/__MODULES__/$(shell $(MAKE) -C datapath print-build-modules | grep -v make)/" debian/dkms.conf.in > debian/$(PACKAGE_DKMS)/usr/src/$(PACKAGE)-$(DEB_VERSION_UPSTREAM)/dkms.conf
+	sed "s/__VERSION__/$(DEB_VERSION_UPSTREAM)/g; s/__MODULES__/$(shell $(MAKE) -C $(BUILD_DIR)/datapath print-build-modules | grep -v make)/" debian/dkms.conf.in > debian/$(PACKAGE_DKMS)/usr/src/$(PACKAGE)-$(DEB_VERSION_UPSTREAM)/dkms.conf
 
 	# We don't need the debian folder in there, just upstream sources...
 	rm -rf debian/$(PACKAGE_DKMS)/usr/src/$(PACKAGE)-$(DEB_VERSION_UPSTREAM)/debian
