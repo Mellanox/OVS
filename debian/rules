@@ -88,7 +88,7 @@ override_dh_auto_clean:
 
 override_dh_auto_test:
 ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
-	if $(MAKE) -C $(BUILD_DIR) check TESTSUITEFLAGS='$(PARALLEL)' RECHECK=yes; then :; \
+	if $(MAKE) -C $(BUILD_DIR) $(PARALLEL) check TESTSUITEFLAGS='$(PARALLEL)' RECHECK=yes; then :; \
 	else \
 		cat tests/testsuite.log; \
 		exit 1; \
