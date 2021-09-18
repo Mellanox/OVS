@@ -99,6 +99,7 @@ Package: openvswitch-switch
 Architecture: linux-any
 Suggests: openvswitch-datapath-module
 Depends: kmod | module-init-tools,
+         ifupdown,
          netbase,
          openvswitch-common (= ${binary:Version}),
          procps,
