@@ -111,12 +111,12 @@ override_dh_auto_clean:
 	dh_auto_clean
 
 override_dh_install-arch:
-	dh_install -a
+	dh_install -a $(EXCLUDE)
 	# openvswitch-switch
 	cp debian/openvswitch-switch.template debian/openvswitch-switch/usr/share/openvswitch/switch/default.template
 
 override_dh_install-indep:
-	dh_install -i
+	dh_install -i $(EXCLUDE)
 
 	# openvswitch-datapath-source
 	cp debian/rules.modules debian/openvswitch-datapath-source/usr/src/modules/openvswitch-datapath/debian/rules
