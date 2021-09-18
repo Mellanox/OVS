@@ -143,3 +143,10 @@ Change-Id=I873215f5e484326d34da34742ea3a30f6a9675b6; subject=configure: Only tak
 Change-Id=I02a0f9ffe8e03eb8855d7c7c795a69d6612cc865; subject=configure: Use provided PKG_CONFIG_PATH if set; feature=bp_2.15; upstream_status=in_progress; general=;
 Change-Id=Id196c4cd19da25fef5f61955ef748ec6a618c721; subject=configure: Add explicit DPDK link option; feature=bp_2.15; upstream_status=in_progress; general=;
 Change-Id=I7cf3d21149588b29eeb022700dd5a027e4b567bc; subject=configure: Use custom path if no DPDK is found in PKG_CONFIG_PATH; feature=bp_2.15; upstream_status=in_progress; general=;
+Change-Id=Id6bdae2230a31f4ec5c980a0fe59b43a7006314a; subject=ofproto-dpif-upcall: Revert "Fix race condition while purging"; feature=bp_2.15; upstream_status=NA; general=;
+Change-Id=I73862ad33f350a265be4ee88d8f4727e6b724601; subject=cmap: Fix default min load; feature=bp_2.15; upstream_status=NA; general=;
+Change-Id=Ia5bdffd6a5685a5d5545de2c6d352949686046c9; subject=debian: Fix build dir use; feature=bp_2.15; upstream_status=NA; general=;
+Change-Id=Ibf96c0d281e65a355d9affef18341538fad65ecb; subject=debian: Allow parallel build with proper parameter; feature=bp_2.15; upstream_status=NA; general=;
+Change-Id=I6744d0a167e8975554474ace8559650711dbc19c; subject=debian: Exclude files at installation; feature=bp_2.15; upstream_status=NA; general=;
+Change-Id=Ib8a9c09852578914d20b1d1f1c9388b25d26ae79; subject=debian: Add ifupdown to switch dependencies; feature=bp_2.15; upstream_status=NA; general=;
+Change-Id=Ie1bc07bd75bea606340a11ef738093c828cff97a; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
