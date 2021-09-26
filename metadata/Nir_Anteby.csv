@@ -1,0 +1,5 @@
+sep=;
+Change-Id=I085c8f344549371a4ea4a7dd59e048e324e888fa; subject=netdev-dpdk: Add flow api support for netdev gre vports; feature=ovs_dpdk_tunnel; upstream_status=sent; general=;
+Change-Id=If5e6043a50545a661993e021c94453462d0cc57c; subject=netdev-offload-dpdk: Implicit NVGRE decap on gre flows; feature=ovs_dpdk_tunnel; upstream_status=NA; general=;
+Change-Id=I4927f2e965f2d358acf3864156bc6cd5721fe8c3; subject=netdev-offload-dpdk: Add support for matching on gre fields; feature=ovs_dpdk_tunnel; upstream_status=sent; general=;
+Change-Id=Ia2a8835075bab1136bc92dfcacbcf8b90c7b9fc4; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
