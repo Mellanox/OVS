@@ -5818,7 +5818,6 @@ parse_netlink_to_tc_policer(struct ofpbuf *reply, uint32_t police_idx[])
 static int
 tc_dump_tc_policer_start(struct nl_dump *dump)
 {
-    struct nla_bitfield32 flag_select;
     size_t offset, root_offset;
     struct ofpbuf request;
     uint32_t prio = 0;
@@ -5830,10 +5829,6 @@ tc_dump_tc_policer_start(struct nl_dump *dump)
     nl_msg_end_nested(&request, offset);
     nl_msg_end_nested(&request, root_offset);
 
-    flag_select.value = TCA_FLAG_LARGE_DUMP_ON;
-    flag_select.selector = TCA_FLAG_LARGE_DUMP_ON;
-    nl_msg_put_unspec(&request, TCA_ROOT_FLAGS, &flag_select,
-                      sizeof(struct nla_bitfield32));
     nl_dump_start(dump, NETLINK_ROUTE, &request);
     ofpbuf_uninit(&request);
 
