@@ -5692,8 +5692,14 @@ tc_update_policer_action_stats(struct ofpbuf *msg,
     memset(&flower, 0, sizeof(struct tc_flower));
     error = tc_parse_single_action(prio, &flower, false);
     if (!error) {
-        stats->packet_in_count += get_32aligned_u64(&flower.stats.n_packets);
-        stats->byte_in_count += get_32aligned_u64(&flower.stats.n_bytes);
+        stats->packet_in_count +=
+            get_32aligned_u64(&flower.stats_sw.n_packets);
+        stats->packet_in_count +=
+            get_32aligned_u64(&flower.stats_hw.n_packets);
+        stats->byte_in_count +=
+            get_32aligned_u64(&flower.stats_sw.n_bytes);
+        stats->byte_in_count +=
+            get_32aligned_u64(&flower.stats_hw.n_bytes);
     }
 
     return error;
