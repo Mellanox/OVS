@@ -246,7 +246,6 @@ add_flow_item(struct flows_handle *flows,
 struct ufid_to_rte_flow_data {
     struct cmap_node node;
     ovs_u128 ufid;
-    struct netdev *netdev;
     struct flows_handle flows;
     bool actions_offloaded;
     struct dpif_flow_stats stats;
@@ -428,7 +427,6 @@ ufid_to_rte_flow_associate(const ovs_u128 *ufid, struct netdev *netdev,
 
     data = xzalloc(sizeof *data);
     data->ufid = *ufid;
-    data->netdev = netdev_ref(netdev);
     data->actions_offloaded = actions_offloaded;
     memcpy(&data->flows, flows, sizeof data->flows);
     memcpy(&data->act_resources, act_resources, sizeof data->act_resources);
@@ -469,7 +467,6 @@ ufid_to_rte_flow_disassociate(struct netdev *netdev,
      */
     hash = hash_bytes(&data->ufid, sizeof data->ufid, 0);
     cmap_remove(map, CONST_CAST(struct cmap_node *, &data->node), hash);
-    netdev_close(data->netdev);
 
     offload_data_unlock(netdev);
 }
@@ -5603,19 +5600,18 @@ out:
 }
 
 static int
-netdev_offload_dpdk_remove_flows(struct ufid_to_rte_flow_data *rte_flow_data)
+netdev_offload_dpdk_remove_flows(struct netdev *netdev,
+                                 struct ufid_to_rte_flow_data *rte_flow_data)
     OVS_EXCLUDED(data->lock)
 {
     struct netdev *flow_netdev;
     struct flows_handle *flows;
-    struct netdev *netdev;
     const ovs_u128 *ufid;
     int ret;
     int i;
     int j;
 
     flows = &rte_flow_data->flows;
-    netdev = rte_flow_data->netdev;
     ufid = &rte_flow_data->ufid;
 
     if (rte_flow_data->dead) {
@@ -5699,7 +5695,7 @@ netdev_offload_dpdk_flow_put(struct netdev *netdev, struct match *match,
     if (rte_flow_data) {
         old_stats = rte_flow_data->stats;
         modification = true;
-        ret = netdev_offload_dpdk_remove_flows(rte_flow_data);
+        ret = netdev_offload_dpdk_remove_flows(netdev, rte_flow_data);
         if (ret < 0) {
             return ret;
         }
@@ -5740,7 +5736,7 @@ netdev_offload_dpdk_flow_del(struct netdev *netdev OVS_UNUSED,
     if (stats) {
         memset(stats, 0, sizeof *stats);
     }
-    return netdev_offload_dpdk_remove_flows(rte_flow_data);
+    return netdev_offload_dpdk_remove_flows(netdev, rte_flow_data);
 }
 
 static bool
@@ -5872,7 +5868,7 @@ netdev_offload_dpdk_flow_flush(struct netdev *netdev)
         /* Destroy flow rules that were inserted by
          * the current thread. */
         if (flows->items[0].creation_tid == tid) {
-            netdev_offload_dpdk_remove_flows(data);
+            netdev_offload_dpdk_remove_flows(netdev, data);
         }
     }
 
