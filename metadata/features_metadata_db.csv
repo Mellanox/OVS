@@ -13,3 +13,4 @@ name=sflow; type=features; upstream_status=in_progress;
 name=ovs_dpdk_ct2ct; type=features; upstream_status=in_progress;
 name=metering; type=features; upstream_status=in_progress;
 name=ovs_dpdk_tunnel; type=features; upstream_status=in_progress;
+name=ipsec_full; type=features; upstream_status=in_progress;
