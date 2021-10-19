@@ -22,8 +22,9 @@
  * exposed over OpenFlow as a single switch.  Datapaths and the collections of
  * ports that they contain may be fixed or dynamic. */
 
-#include "openflow/openflow.h"
 #include "dpif.h"
+#include "dpif-offload-provider.h"
+#include "openflow/openflow.h"
 #include "util.h"
 
 #ifdef  __cplusplus
@@ -35,6 +36,7 @@ extern "C" {
  * This structure should be treated as opaque by dpif implementations. */
 struct dpif {
     const struct dpif_class *dpif_class;
+    const struct dpif_offload_class *offload_class;
     char *base_name;
     char *full_name;
     uint8_t netflow_engine_type;
