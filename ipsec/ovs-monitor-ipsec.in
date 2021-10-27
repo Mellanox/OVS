@@ -14,12 +14,12 @@
 # limitations under the License.
 
 import argparse
+import copy
 import ipaddress
+import os
 import re
 import subprocess
 import sys
-import copy
-import os
 import time
 from string import Template
 
@@ -81,9 +81,10 @@ $auth_section
 """)}
 vlog = ovs.vlog.Vlog("ovs-monitor-ipsec")
 exiting = False
+need_connection_init = False
+initiated_tunnels = set()
 monitor = None
 xfrm = None
-
 
 class XFRM(object):
     """This class is a simple wrapper around ip-xfrm (8) command line
@@ -221,7 +222,7 @@ conn prevent_unencrypted_vxlan
     leftcert=$certificate""")}
 
     SWANCTL_CONF = """connections {
-   gw-gw {
+    gw-gw-%s {
       local_addrs  = %s
       remote_addrs = %s
 
@@ -235,10 +236,10 @@ conn prevent_unencrypted_vxlan
       }
 
       children {
-         net-net {
+         net-net-%s {
             local_ts  = %s/32
             remote_ts = %s/32
-            esp_proposals = aes128gcm128-noesn
+            esp_proposals = aes128gcm128-esn
             mode = transport
             policies_fwd_out = yes
             hw_offload = %s
@@ -259,17 +260,14 @@ secrets {
 }
 """
 
-
     def __init__(self, root_prefix):
         self.CHARON_CONF = root_prefix + "/etc/strongswan.d/ovs.conf"
         self.IPSEC = root_prefix + "/usr/sbin/ipsec"
-        self.SWANCTL = root_prefix + "/usr/sbin/swanctl"
         self.IPSEC_CONF = root_prefix + "/etc/ipsec.conf"
         self.IPSEC_SECRETS = root_prefix + "/etc/ipsec.secrets"
         self.os_release = subprocess.run("cat /etc/os-release".split(), stdout=subprocess.PIPE).stdout.decode('utf-8')
-        self.SWANCTL_CONFIG = root_prefix + "/etc/swanctl/conf.d/ovs-swanctl.conf" if "Ubuntu" in self.os_release else root_prefix + "/etc/strongswan/swanctl/conf.d/ovs-swanctl.conf"
-        self.SSL_DIR = root_prefix + "/etc/ssl/"
-        self.swanctl_conf_file = None
+        self.SWANCTL_CONFIG_DIR = root_prefix + "/etc/swanctl/conf.d/" if "Ubuntu" in self.os_release else root_prefix + "/etc/strongswan/swanctl/conf.d/"
+        self.swanctl_conf_files = {}
         self.conf_file = None
         self.secrets_file = None
 
@@ -320,10 +318,8 @@ secrets {
     def config_init(self):
         self.conf_file = open(self.IPSEC_CONF, "w")
         self.secrets_file = open(self.IPSEC_SECRETS, "w")
-        self.swanctl_conf_file = open(self.SWANCTL_CONFIG, "w")
         self.conf_file.write(self.CONF_HEADER)
         self.secrets_file.write(FILE_HEADER)
-        self.swanctl_conf_file.write(FILE_HEADER)
 
     def config_global(self, monitor):
         """Configure the global state of IPsec tunnels."""
@@ -345,21 +341,68 @@ secrets {
 
         return needs_refresh
 
-    def config_tunnel(self, tunnel):
+    def _get_ECPF(self,tunnel):
+        res = None
+        out = subprocess.run("ip address".split(), stdout=subprocess.PIPE).stdout.decode('utf-8')
+        for line in out.split('\n'):
+            if "p0" in line and tunnel.conf["local_ip"] in line:
+                res = "p0"
+                break
+            if "p1" in line and tunnel.conf["local_ip"] in line:
+                res = "p1"
+                break
+        return res
+
+    def create_swanctl_conf_file(self,tunnel,name):
+        global need_connection_init
+        global initiated_tunnels
+        #get ECPF
+        ECPF = self._get_ECPF(tunnel)
+        if ECPF is None:
+            vlog.info("Vxlan local IP option does not match any of ECPF's IP")
+            return
+        #get offload mode
+        offload_mode = subprocess.run(("cat /sys/class/net/" + ECPF + "/compat/devlink/ipsec_mode").split(), stdout=subprocess.PIPE).stdout.decode('utf-8')
+        #check if offload is required
+        hw_offload = subprocess.run("ovs-vsctl get Open_vSwitch . other_config".split(), stdout=subprocess.PIPE).stdout.decode('utf-8')
+        hw_offload = "full" if "hw-offload=\"true\"" in hw_offload else "no"
+        if hw_offload == "full" and "full" not in offload_mode:
+            vlog.info("IPsec can't use full offload in mode other than full offload, please move to IPsec full offlaod mode to use full offload")
+            hw_offload = "no"
+        #check if HW supports offload
+        if hw_offload == "full":
+            lscpu_out = subprocess.run(("lscpu").split(), stdout=subprocess.PIPE).stdout.decode('utf-8')
+            HW_offload_support = False
+            for line in lscpu_out.split('\n'):
+                if "Flags" in line and "sha1" in line and "sha2" in line and "aes" in line:
+                        HW_offload_support = True
+            if hw_offload == "full" and HW_offload_support == False:
+                hw_offload = "no"
+                vlog.info("HW does not support offload, IPsec configured with no offload")
+        #at this point all is good it is legal to write to conf file
+        self.swanctl_conf_files[name].write(self.SWANCTL_CONF % (name,
+                                                     tunnel.conf["local_ip"],
+                                                     tunnel.conf["remote_ip"],
+                                                     tunnel.conf["local_ip"],
+                                                     tunnel.conf["remote_ip"],
+                                                     name,
+                                                     tunnel.conf["local_ip"],
+                                                     tunnel.conf["remote_ip"],
+                                                     hw_offload,
+                                                     tunnel.conf["local_ip"]))
+        need_connection_init = True if name not in initiated_tunnels else False
+
+    def config_tunnel(self, tunnel,name):
         if tunnel.conf["psk"]:
+            if name not in self.swanctl_conf_files:
+                file_path = self.SWANCTL_CONFIG_DIR  + "ovs-swanctl-" + name + ".conf"
+                self.swanctl_conf_files[name] = open(file_path, "w")
+                self.swanctl_conf_files[name].write(FILE_HEADER)
+
             self.secrets_file.write('0.0.0.0 %s : PSK "%s"\n' %
                             (tunnel.conf["remote_ip"], tunnel.conf["psk"]))
             auth_section = self.auth_tmpl["psk"].substitute(tunnel.conf)
-            hw_offload = subprocess.run("ovs-vsctl get Open_vSwitch . other_config".split(), stdout=subprocess.PIPE).stdout.decode('utf-8')
-            hw_offload = "full" if "hw-offload=\"true\"" in hw_offload else "no"
-            self.swanctl_conf_file.write(self.SWANCTL_CONF % (tunnel.conf["local_ip"],
-                                                              tunnel.conf["remote_ip"],
-                                                              tunnel.conf["local_ip"],
-                                                              tunnel.conf["remote_ip"],
-                                                              tunnel.conf["local_ip"],
-                                                              tunnel.conf["remote_ip"],
-                                                              hw_offload,
-                                                              tunnel.conf["local_ip"]))
+            self.create_swanctl_conf_file(tunnel,name)
         else:
             self.secrets_file.write("0.0.0.0 %s : RSA %s\n" %
                                         (tunnel.conf["remote_ip"],
@@ -380,10 +423,16 @@ secrets {
     def config_fini(self):
         self.secrets_file.close()
         self.conf_file.close()
-        self.swanctl_conf_file.close()
         self.secrets_file = None
         self.conf_file = None
-        self.swanctl_conf_file = None
+        for name, fd in self.swanctl_conf_files.items():
+            fd.close()
+        self.swanctl_conf_files.clear()
+
+    def del_swanctl_config(self,name):
+        file_path = self.SWANCTL_CONFIG_DIR  + "ovs-swanctl-" + name + ".conf"
+        bashCommand = "rm -f " + file_path
+        subprocess.run(bashCommand.split(), stdout=subprocess.PIPE)
 
     def refresh(self, monitor):
         """This functions refreshes strongSwan configuration.  Behind the
@@ -399,6 +448,8 @@ secrets {
         vlog.info("Refreshing StrongSwan configuration")
         subprocess.call([self.IPSEC, "update"])
         subprocess.call([self.IPSEC, "rereadsecrets"])
+        global initiated_tunnels
+        global need_connection_init
         # "ipsec update" command does not remove those tunnels that were
         # updated or that disappeared from the ipsec.conf file.  So, we have
         # to manually remove them by calling "ipsec stroke down-nb <tunnel>"
@@ -409,6 +460,8 @@ secrets {
         # about possibility of ovs-monitor-ipsec to block for each tunnel
         # while strongSwan sends IKE messages over Internet.
         conns_dict = self.get_active_conns()
+        monitor.load_ipsec_connections()
+
         for ifname, conns in conns_dict.items():
             tunnel = monitor.tunnels.get(ifname)
             for conn in conns:
@@ -429,34 +482,17 @@ secrets {
                     vlog.err("%s does not contain version number")
                     continue
 
+                splited_conn_name = conn.split("-", 1)
+                tunnel_name  = splited_conn_name[0]
+
                 if not tunnel or tunnel.version != ver:
                     vlog.info("%s is outdated %u" % (conn, ver))
                     subprocess.call([self.IPSEC, "stroke", "down-nb", conn])
-
-    def initiate_connection(self):
-        bashCommand = self.SWANCTL + " -i --child net-net"
-        process = subprocess.run(bashCommand.split(), stdout=subprocess.PIPE)
-        vlog.info("IPsec connection initiated")
-
-    def terminate_connection(self):
-        bashCommand = self.SWANCTL + " -t --child net-net"
-        process = subprocess.run(bashCommand.split(), stdout=subprocess.PIPE)
-        vlog.info("IPsec connection terminated")
-
-    def load_connection(self):
-        cmd = "cp " + self.SSL_DIR + "openssl.cnf.orig " + self.SSL_DIR + "openssl.cnf"
-        time.sleep(0.2)
-        subprocess.run(cmd.split(), stdout=subprocess.PIPE)
-        cmd = self.IPSEC + " restart"
-        time.sleep(0.2)
-        subprocess.run(cmd.split(), stdout=subprocess.PIPE)
-        cmd = "cp " + self.SSL_DIR + "openssl.cnf.mlnx " + self.SSL_DIR + "openssl.cnf"
-        time.sleep(0.2)
-        subprocess.run(cmd.split(), stdout=subprocess.PIPE)
-        cmd = self.SWANCTL + " --load-all"
-        subprocess.run(cmd.split(), stdout=subprocess.PIPE)
-
-
+                    if tunnel_name in initiated_tunnels:
+                        initiated_tunnels.remove(tunnel_name)
+                        if not need_connection_init and initiated_tunnels != set():
+                            vlog.info("neet_connection_init = True because of a refresh")
+                            need_connection_init = True
 
 class LibreSwanHelper(object):
     """This class does LibreSwan specific configurations."""
@@ -597,7 +633,7 @@ conn prevent_unencrypted_vxlan
 
         return needs_refresh
 
-    def config_tunnel(self, tunnel):
+    def config_tunnel(self, tunnel, name):
         if tunnel.conf["psk"]:
             self.secrets_file.write('%%any %s : PSK "%s"\n' %
                             (tunnel.conf["remote_ip"], tunnel.conf["psk"]))
@@ -841,16 +877,6 @@ conn prevent_unencrypted_vxlan
         except Exception as e:
             vlog.err("Delete cert and key failed.\n" + str(e))
 
-    def initiate_connection(self):
-        pass
-
-    def terminate_connection(self):
-        pass
-
-    def load_connection(self):
-        pass
-
-
 class IPsecTunnel(object):
     """This is the base class for IPsec tunnel."""
 
@@ -1075,6 +1101,8 @@ class IPsecMonitor(object):
         if restart:
             vlog.info("Restarting IKE daemon")
             self.ike_helper.restart_ike_daemon()
+        self.SSL_DIR = root_prefix + "/etc/ssl/"
+        self.SWANCTL = root_prefix + "/usr/sbin/swanctl"
 
     def is_tunneling_type_supported(self, tunnel_type):
         """Returns True if we know how to configure IPsec for these
@@ -1097,6 +1125,8 @@ class IPsecMonitor(object):
         """Updates configuration of already existing tunnel with 'name'."""
         tunnel = self.tunnels[name]
         if tunnel.update_conf(row):
+            tunnel = self.tunnels[name]
+        if tunnel.update_conf(row):
             vlog.info("Tunnel's '%s' configuration changed in OVSDB to %u" %
                       (tunnel.name, tunnel.version))
 
@@ -1104,6 +1134,8 @@ class IPsecMonitor(object):
         """Deletes tunnel by 'name'."""
         vlog.info("Tunnel %s disappeared from OVSDB" % (name))
         self.tunnels[name].mark_for_removal()
+        self.ike_helper.del_swanctl_config(name)
+        self.terminate_ipsec_connection(name)
 
     def update_conf(self, pki, skb_mark):
         """Update the global configuration for IPsec tunnels"""
@@ -1205,7 +1237,7 @@ class IPsecMonitor(object):
             if tunnel.state == "REMOVED" or tunnel.state == "INVALID":
                 removed_tunnels.append(name)
             elif tunnel.state == "CONFIGURED":
-                self.ike_helper.config_tunnel(self.tunnels[name])
+                self.ike_helper.config_tunnel(self.tunnels[name],name)
 
         self.ike_helper.config_fini()
 
@@ -1235,6 +1267,41 @@ class IPsecMonitor(object):
             return None
 
         return m.group(1)
+
+    def initiate_ipsec_connections(self):
+        global initiated_tunnels
+        result = True
+        for name, tunnel in self.tunnels.items():
+            if tunnel.conf["psk"] and tunnel.name not in initiated_tunnels:
+                bashCommand = self.SWANCTL + " -i --child net-net-" + name
+                process = subprocess.run(bashCommand.split(), stdout=subprocess.PIPE).stdout.decode('utf-8')
+                if "initiate completed successfully" in process:
+                    vlog.info("IPsec connection initiated for " + name)
+                    initiated_tunnels.add(name)
+                else:
+                    result = False
+        return result
+
+    def terminate_ipsec_connection(self,name):
+        global initiated_tunnels
+        bashCommand = self.SWANCTL + " -t --child net-net-" + name
+        process = subprocess.run(bashCommand.split(), stdout=subprocess.PIPE)
+        vlog.info("IPsec connection terminated for " + name)
+        if name in initiated_tunnels:
+            initiated_tunnels.remove(name)
+
+    def load_ipsec_connections(self):
+        cmd = "cp " + self.SSL_DIR + "openssl.cnf.orig " + self.SSL_DIR + "openssl.cnf"
+        time.sleep(0.15)
+        subprocess.run(cmd.split(), stdout=subprocess.PIPE)
+        cmd = self.IPSEC + " restart"
+        time.sleep(0.15)
+        subprocess.run(cmd.split(), stdout=subprocess.PIPE)
+        cmd = "cp " + self.SSL_DIR + "openssl.cnf.mlnx " + self.SSL_DIR + "openssl.cnf"
+        time.sleep(0.15)
+        subprocess.run(cmd.split(), stdout=subprocess.PIPE)
+        cmd = self.SWANCTL + " --load-all"
+        subprocess.run(cmd.split(), stdout=subprocess.PIPE)
 
 
 def address_family(address):
@@ -1307,22 +1374,6 @@ def unixctl_exit(conn, argv, unused_aux):
 
     conn.reply(ret)
 
-def unixctl_ipsec_start(conn, unused_argv, unused_aux):
-    global monitor
-    monitor.ike_helper.initiate_connection()
-    conn.reply("IPsec initiated")
-
-def unixctl_ipsec_stop(conn, unused_argv, unused_aux):
-    global monitor
-    monitor.ike_helper.terminate_connection()
-    conn.reply("IPsec terminated")
-
-def unixctl_ipsec_load(conn, unused_argv, unused_aux):
-    global monitor
-    monitor.ike_helper.load_connection()
-    conn.reply("Loaded IPsec configurations")
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("database", metavar="DATABASE",
@@ -1344,6 +1395,8 @@ def main():
 
     global monitor
     global xfrm
+    global need_connection_init
+    global initiated_tunnels
 
     root_prefix = args.root_prefix if args.root_prefix else ""
     xfrm = XFRM(root_prefix)
@@ -1371,13 +1424,6 @@ def main():
     ovs.unixctl.command_register("refresh", "", 0, 0, unixctl_refresh, None)
     ovs.unixctl.command_register("exit", "[--no-cleanup]", 0, 1,
                                  unixctl_exit, None)
-    ovs.unixctl.command_register("ipsec/start", "", 0, 0,
-                                 unixctl_ipsec_start, None)
-    ovs.unixctl.command_register("ipsec/stop", "", 0, 0,
-                                 unixctl_ipsec_stop, None)
-    ovs.unixctl.command_register("ipsec/load", "", 0, 0,
-                                 unixctl_ipsec_load, None)
-
 
     error, unixctl_server = ovs.unixctl.server.UnixctlServer.create(None)
     if error:
@@ -1398,6 +1444,13 @@ def main():
 
         monitor.run()
 
+        res = False
+        if need_connection_init:
+            monitor.load_ipsec_connections()
+            while res == False:
+                res = monitor.initiate_ipsec_connections()
+            need_connection_init = False
+
         poller = ovs.poller.Poller()
         unixctl_server.wait(poller)
         idl.wait(poller)
@@ -1405,7 +1458,6 @@ def main():
 
     unixctl_server.close()
     idl.close()
-
 
 if __name__ == '__main__':
     try:
