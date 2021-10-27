@@ -212,3 +212,5 @@ Change-Id=I89f0c98f616c71c65576433928655acd7a7e8ea8; subject=Update metadata; fe
 Change-Id=Ic671ce60263c12822afc1dbbba4381181c271d95; subject=netdev-dpdk-vdpa: Move dev lock to vdpa custom stats impl; feature=ovs_dpdk_vdpa; upstream_status=NA; general=;
 Change-Id=I3426ed36e248be7ca967c82bbcc037f6706c6811; subject=netdev-dpdk-vdpa: Add custom stats if representor is configured; feature=ovs_dpdk_vdpa; upstream_status=NA; general=;
 Change-Id=Iacab2d65cfff1af95ed25082ece8bc7ab0cd1f40; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I5fa8176710a394ba68019fe59e060f6f79979fec; subject=netdev-offload-dpdk: Fix CT offload with VLANs; feature=ovs_dpdk_ct; upstream_status=NA; general=;
+Change-Id=Ibde1f1e1978cc978f14b99e7a65ccbab2da7dfff; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
