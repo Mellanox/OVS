@@ -3635,7 +3635,9 @@ parse_flow_match(struct netdev *netdev,
     consumed_masks->packet_type = 0;
 
     /* Eth */
-    if (match->wc.masks.dl_type ||
+    if (act_vars->is_ct_conn) {
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_ETH, NULL, NULL, NULL);
+    } else if (match->wc.masks.dl_type ||
         !eth_addr_is_zero(match->wc.masks.dl_src) ||
         !eth_addr_is_zero(match->wc.masks.dl_dst)) {
         struct rte_flow_item_eth *spec, *mask;
@@ -3832,7 +3834,8 @@ parse_flow_match(struct netdev *netdev,
         memset(&consumed_masks->ipv6_dst, 0, sizeof consumed_masks->ipv6_dst);
     }
 
-    if (proto != IPPROTO_ICMP && proto != IPPROTO_UDP  &&
+    if (!act_vars->is_ct_conn &&
+        proto != IPPROTO_ICMP && proto != IPPROTO_UDP  &&
         proto != IPPROTO_SCTP && proto != IPPROTO_TCP  &&
         (match->wc.masks.tp_src ||
          match->wc.masks.tp_dst ||
@@ -3944,7 +3947,8 @@ parse_flow_match(struct netdev *netdev,
         }
     }
     /* ct-label */
-    if (!is_all_zeros(&match->wc.masks.ct_label,
+    if (!act_vars->is_ct_conn &&
+        !is_all_zeros(&match->wc.masks.ct_label,
                       sizeof match->wc.masks.ct_label)) {
         uint32_t label_match_value, mask;
         ovs_u128 tmp_u128;
