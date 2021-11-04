@@ -1,3 +1,4 @@
 sep=;
 Change-Id=Ib256abac8e92ff86848cb86414055cb5f06b6e4a; subject=debian: Convert "python" to "python2" deps; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I76f9561308d196797a3a68c2173efd386cc27e78; subject=debian: build dir and man pages; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ia683b87a22884e758eeab81723ee054886845352; subject=deb: install python3 under unversions "python3"; feature=ofed_scripts; upstream_status=ignore; general=;
