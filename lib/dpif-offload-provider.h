@@ -19,6 +19,7 @@
 
 #include "dp-packet.h"
 #include "netlink-protocol.h"
+#include "openvswitch/ofp-meter.h"
 #include "openvswitch/packets.h"
 #include "openvswitch/types.h"
 
@@ -74,6 +75,18 @@ struct dpif_offload_class {
     /* Polls for an upcall from psample for an upcall handler.
      * Return 0 for success. */
     int (*sflow_recv)(struct dpif_offload_sflow *sflow);
+
+    /* Offload meter while dpif adds it, or modify its config in HW */
+    int (*meter_set)(ofproto_meter_id meter_id,
+                     struct ofputil_meter_config *config);
+
+    /* Get stats of the offloaded meter from HW */
+    int (*meter_get)(ofproto_meter_id meter_id,
+                     struct ofputil_meter_stats *stats, uint16_t max_bands);
+
+    /* Del the offloaded meter, and return the stats if possible */
+    int (*meter_del)(ofproto_meter_id meter_id,
+                     struct ofputil_meter_stats *stats, uint16_t max_bands);
 };
 
 void dp_offload_initialize(void);
@@ -88,6 +101,13 @@ struct registered_dpif_offload_class *dp_offload_class_lookup(const char *);
 void dpif_offload_sflow_recv_wait(const struct dpif *dpif);
 int dpif_offload_sflow_recv(const struct dpif *dpif,
                             struct dpif_offload_sflow *sflow);
+
+int dpif_offload_meter_set(const struct dpif *, ofproto_meter_id,
+                           struct ofputil_meter_config *);
+int dpif_offload_meter_get(const struct dpif *, ofproto_meter_id,
+                           struct ofputil_meter_stats *, uint16_t);
+int dpif_offload_meter_del(const struct dpif *, ofproto_meter_id,
+                           struct ofputil_meter_stats *, uint16_t);
 
 bool dpif_offload_netlink_psample_supported(void);
 

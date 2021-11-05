@@ -198,3 +198,41 @@ dpif_offload_sflow_recv(const struct dpif *dpif,
 
     return EOPNOTSUPP;
 }
+
+int dpif_offload_meter_set(const struct dpif *dpif, ofproto_meter_id meter_id,
+                           struct ofputil_meter_config *config)
+{
+    const struct dpif_offload_class *offload_class = dpif->offload_class;
+
+    if (offload_class && offload_class->meter_set) {
+        return offload_class->meter_set(meter_id, config);
+    }
+
+    return EOPNOTSUPP;
+}
+
+int dpif_offload_meter_get(const struct dpif *dpif, ofproto_meter_id meter_id,
+                           struct ofputil_meter_stats *stats,
+                           uint16_t max_band)
+{
+    const struct dpif_offload_class *offload_class = dpif->offload_class;
+
+    if (offload_class && offload_class->meter_get) {
+        return offload_class->meter_get(meter_id, stats, max_band);
+    }
+
+    return EOPNOTSUPP;
+}
+
+int dpif_offload_meter_del(const struct dpif *dpif, ofproto_meter_id meter_id,
+                           struct ofputil_meter_stats *stats,
+                           uint16_t max_band)
+{
+    const struct dpif_offload_class *offload_class = dpif->offload_class;
+
+    if (offload_class && offload_class->meter_del) {
+        return offload_class->meter_del(meter_id, stats, max_band);
+    }
+
+    return EOPNOTSUPP;
+}
