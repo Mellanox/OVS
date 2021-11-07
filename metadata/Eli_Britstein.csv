@@ -214,3 +214,5 @@ Change-Id=I3426ed36e248be7ca967c82bbcc037f6706c6811; subject=netdev-dpdk-vdpa: A
 Change-Id=Iacab2d65cfff1af95ed25082ece8bc7ab0cd1f40; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I5fa8176710a394ba68019fe59e060f6f79979fec; subject=netdev-offload-dpdk: Fix CT offload with VLANs; feature=ovs_dpdk_ct; upstream_status=NA; general=;
 Change-Id=Ibde1f1e1978cc978f14b99e7a65ccbab2da7dfff; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Id4dd702783093a2658f66a9e752d1b235aeb12da; subject=Revert "dpif-netdev: Do not flush PMD offloads on reload."; feature=bug_fixes; upstream_status=in_progress; general=;
+Change-Id=Ice580c20a37611c690d3c9fcbee8a34ffe8b75d6; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
