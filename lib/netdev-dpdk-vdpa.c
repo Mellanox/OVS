@@ -42,8 +42,6 @@ VLOG_DEFINE_THIS_MODULE(netdev_dpdk_vdpa);
 #define NETDEV_DPDK_VDPA_INVALID_QUEUE_ID   0xFFFF
 #define NETDEV_DPDK_VDPA_STATS_MAX_STR_SIZE 128
 #define NETDEV_DPDK_VDPA_RX_DESC_DEFAULT    512
-#define NETDEV_DPDK_VDPA_PCI_STR_SIZE       sizeof("XXXX:XX:XX.X")
-#define NETDEV_DPDK_VDPA_ARGS_LEN           24
 
 enum netdev_dpdk_vdpa_port_type {
     NETDEV_DPDK_VDPA_PORT_TYPE_VM,
@@ -86,6 +84,7 @@ struct netdev_dpdk_vdpa_relay {
         bool started;
         enum netdev_dpdk_vdpa_mode hw_mode;
         struct rte_vdpa_device *vdpa_dev;
+        struct rte_device *rte_dev;
         int vid;
         struct shash_node *map_item;
         struct ovs_mutex lock;
@@ -714,32 +713,74 @@ static const struct vhost_device_ops netdev_dpdk_vdpa_sample_devops = {
 };
 
 static int
+bus_name_cmp(const struct rte_bus *bus, const void *name)
+{
+    return strncmp(bus->name, name, strlen(bus->name));
+}
+
+static int
 netdev_dpdk_vdpa_config_hw_impl(struct netdev_dpdk_vdpa_relay *relay)
 {
+    struct rte_dev_iterator dev_iter;
     struct rte_pci_addr pci_addr;
-    struct rte_vdpa_device *dev;
-    const char *vf_devargs;
     const char *vhost_path;
+    char *vf_devargs;
+    char *comma;
     bool is_pci;
     int err;
 
-    vf_devargs = relay->vf_devargs;
+    vf_devargs = xstrdup(relay->vf_devargs);
     vhost_path = relay->vm_socket;
 
-    is_pci = !rte_pci_addr_parse(vf_devargs, &pci_addr);
-    err = rte_eal_hotplug_add(is_pci ? "pci" : "auxiliary", vf_devargs,
-                              "class=vdpa");
+    /* If bus is not explicitly provided, choose "pci"/"auxiliary" based
+     * on provided string. */
+    if (!rte_bus_find(NULL, bus_name_cmp, vf_devargs)) {
+        /* If provided devargs, need to omit them for the pci check. */
+        comma = strchr(vf_devargs, ',');
+        if (comma) {
+            *comma = '\0';
+            is_pci = !rte_pci_addr_parse(vf_devargs, &pci_addr);
+            *comma = ',';
+        } else {
+            is_pci = !rte_pci_addr_parse(vf_devargs, &pci_addr);
+        }
+
+        /* If not PCI, implicitly add auxiliary. */
+        if (!is_pci) {
+            char *new_vf_devargs;
+
+            new_vf_devargs = xasprintf("auxiliary:%s", vf_devargs);
+            free(vf_devargs);
+            vf_devargs = new_vf_devargs;
+        }
+    }
+
+    /* If not explicitly provided, add class=vdpa devarg. */
+    if (!strstr(vf_devargs, ",class=vdpa")) {
+        vf_devargs = xrealloc(vf_devargs, strlen(vf_devargs) +
+                              strlen(",class=vdpa") + 1);
+        strcat(vf_devargs, ",class=vdpa");
+    }
+
+    err = rte_dev_probe(vf_devargs);
+    VLOG_INFO("Probe for VDPA device '%s'. User conf '%s'", vf_devargs,
+              relay->vf_devargs);
     if (err) {
         VLOG_ERR("Failed to probe for VDPA device %s, working in SW mode",
                  vf_devargs);
-        goto err_hotplug;
+        goto err_probe;
     }
 
-    dev = rte_vdpa_find_device_by_name(vf_devargs);
-    if (!dev) {
-        VLOG_ERR("Failed to find vdpa device id for %s, working in SW mode",
-                 vf_devargs);
-        goto err_find;
+    RTE_DEV_FOREACH (relay->rte_dev, "class=vdpa", &dev_iter) {
+        relay->vdpa_dev = rte_vdpa_find_device_by_name(relay->rte_dev->name);
+        if (!relay->vdpa_dev) {
+            VLOG_ERR("Failed to find vdpa device id for %s, working in SW "
+                     "mode", relay->rte_dev->name);
+            goto err_probe;
+        }
+        if (strstr(vf_devargs, relay->rte_dev->name)) {
+            break;
+        }
     }
 
     err = rte_vhost_driver_register(vhost_path, RTE_VHOST_USER_CLIENT);
@@ -756,7 +797,7 @@ netdev_dpdk_vdpa_config_hw_impl(struct netdev_dpdk_vdpa_relay *relay)
         goto err_cb_reg;
     }
 
-    err = rte_vhost_driver_attach_vdpa_device(vhost_path, dev);
+    err = rte_vhost_driver_attach_vdpa_device(vhost_path, relay->vdpa_dev);
     if (err) {
         VLOG_ERR("Failed to attach vdpa device, working in SW mode");
         goto err_cb_reg;
@@ -771,11 +812,9 @@ netdev_dpdk_vdpa_config_hw_impl(struct netdev_dpdk_vdpa_relay *relay)
 
     netdev_dpdk_vdpa_free(relay->vhost_name);
     relay->vhost_name = xstrdup(vhost_path);
-    relay->vdpa_dev = dev;
     relays_map_add(relay);
     relay->hw_mode = NETDEV_DPDK_VDPA_MODE_HW;
-
-    return 0;
+    goto out;
 
 err_start:
     if (rte_vhost_driver_detach_vdpa_device(vhost_path)) {
@@ -786,14 +825,14 @@ err_cb_reg:
         VLOG_ERR("Failed to unregister vhost driver for %s", relay->vm_socket);
     }
 err_find:
-    /* We cannot use rte_dev_remove here, because we need the vdpa_dev to get
-     * the rte_device *. Here, we may not have it, so use the bus we plugged
-     * on.
-     */
-    rte_eal_hotplug_remove(is_pci ? "pci" : "auxiliary", vf_devargs);
-err_hotplug:
+    if (rte_dev_remove(relay->rte_dev)) {
+        VLOG_ERR("Failed to rte_dev_remove %p", relay->vdpa_dev);
+    }
+err_probe:
     relay->hw_mode = NETDEV_DPDK_VDPA_MODE_SW;
 
+out:
+    free(vf_devargs);
     return err;
 }
 
@@ -946,8 +985,6 @@ out:
 static void
 netdev_dpdk_hw_vdpa_destruct(struct netdev_dpdk_vdpa_relay *relay)
 {
-    struct rte_device *rte_dev;
-
     relay->started = false;
     if (rte_vhost_driver_detach_vdpa_device(relay->vm_socket)) {
         VLOG_ERR("Failed to detach vdpa device: %s", relay->vm_socket);
@@ -958,8 +995,7 @@ netdev_dpdk_hw_vdpa_destruct(struct netdev_dpdk_vdpa_relay *relay)
     }
     relay->hw_mode = NETDEV_DPDK_VDPA_MODE_INIT;
     relays_map_remove(relay);
-    rte_dev = rte_vdpa_get_rte_device(relay->vdpa_dev);
-    rte_dev_remove(rte_dev);
+    rte_dev_remove(relay->rte_dev);
     netdev_dpdk_vdpa_free_relay_strings(relay);
 }
 
