@@ -1,5 +1,6 @@
 sep=;
-Change-Id=I6c1330149981cf9ddd8eda920806a5e0b9640316; subject=IPsec: Added support for configuring IPsec full offload using OVS; feature=ipsec_full; upstream_status=in_progress; general=;
+Change-Id=I6c1330149981cf9ddd8eda920806a5e0b9640316; subject=IPsec: Added support for configuring IPsec full offload using OVS; feature=ipsec_full; upstream_status=ignore; general=;
 Change-Id=I9ce86c6731017ccee4939ea4f00be4f803516922; subject=IPsec: Support configuring IPsec full offload using OVS with multiple tunnels; feature=ipsec_full; upstream_status=ignore; general=;
 Change-Id=Ife5176b3d12eeb021d804f8a3562d97af8a07b2d; subject=deb: Update Build-Depends; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I120d37aa7bc54dc7632c2a5d881588d9575b46e1; subject=Revert "IPsec: Support configuring IPsec full offload using OVS with multiple tunnels"; feature=ipsec_full; upstream_status=ignore; general=;
+Change-Id=I7801ed2e4d1998146c84e011e4d9afbded5eb2df; subject=Revert "IPsec: Added support for configuring IPsec full offload using OVS"; feature=ipsec_full; upstream_status=ignore; general=;

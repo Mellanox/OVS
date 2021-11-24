@@ -20,7 +20,6 @@ import subprocess
 import sys
 import copy
 import os
-import time
 from string import Template
 
 import ovs.daemon
@@ -220,56 +219,11 @@ conn prevent_unencrypted_vxlan
     rightid=$remote_name
     leftcert=$certificate""")}
 
-    SWANCTL_CONF = """connections {
-   gw-gw {
-      local_addrs  = %s
-      remote_addrs = %s
-
-      local {
-         auth = psk
-         id = %s
-      }
-      remote {
-         auth = psk
-         id = %s
-      }
-
-      children {
-         net-net {
-            local_ts  = %s/32
-            remote_ts = %s/32
-            esp_proposals = aes128gcm128-noesn
-            mode = transport
-            policies_fwd_out = yes
-            hw_offload = %s
-         }
-      }
-      version = 2
-      mobike = no
-      reauth_time = 0
-      proposals = aes128-sha256-modp3072
-   }
-}
-
-secrets {
-        ike-BF {
-            id = %s
-            secret = 0sv+NknY9LLZvgj4qCC2o/gGrWTF2d21jE
-        }
-}
-"""
-
-
     def __init__(self, root_prefix):
         self.CHARON_CONF = root_prefix + "/etc/strongswan.d/ovs.conf"
         self.IPSEC = root_prefix + "/usr/sbin/ipsec"
-        self.SWANCTL = root_prefix + "/usr/sbin/swanctl"
         self.IPSEC_CONF = root_prefix + "/etc/ipsec.conf"
         self.IPSEC_SECRETS = root_prefix + "/etc/ipsec.secrets"
-        self.os_release = subprocess.run("cat /etc/os-release".split(), stdout=subprocess.PIPE).stdout.decode('utf-8')
-        self.SWANCTL_CONFIG = root_prefix + "/etc/swanctl/conf.d/ovs-swanctl.conf" if "Ubuntu" in self.os_release else root_prefix + "/etc/strongswan/swanctl/conf.d/ovs-swanctl.conf"
-        self.SSL_DIR = root_prefix + "/etc/ssl/"
-        self.swanctl_conf_file = None
         self.conf_file = None
         self.secrets_file = None
 
@@ -320,10 +274,8 @@ secrets {
     def config_init(self):
         self.conf_file = open(self.IPSEC_CONF, "w")
         self.secrets_file = open(self.IPSEC_SECRETS, "w")
-        self.swanctl_conf_file = open(self.SWANCTL_CONFIG, "w")
         self.conf_file.write(self.CONF_HEADER)
         self.secrets_file.write(FILE_HEADER)
-        self.swanctl_conf_file.write(FILE_HEADER)
 
     def config_global(self, monitor):
         """Configure the global state of IPsec tunnels."""
@@ -350,16 +302,6 @@ secrets {
             self.secrets_file.write('0.0.0.0 %s : PSK "%s"\n' %
                             (tunnel.conf["remote_ip"], tunnel.conf["psk"]))
             auth_section = self.auth_tmpl["psk"].substitute(tunnel.conf)
-            hw_offload = subprocess.run("ovs-vsctl get Open_vSwitch . other_config".split(), stdout=subprocess.PIPE).stdout.decode('utf-8')
-            hw_offload = "full" if "hw-offload=\"true\"" in hw_offload else "no"
-            self.swanctl_conf_file.write(self.SWANCTL_CONF % (tunnel.conf["local_ip"],
-                                                              tunnel.conf["remote_ip"],
-                                                              tunnel.conf["local_ip"],
-                                                              tunnel.conf["remote_ip"],
-                                                              tunnel.conf["local_ip"],
-                                                              tunnel.conf["remote_ip"],
-                                                              hw_offload,
-                                                              tunnel.conf["local_ip"]))
         else:
             self.secrets_file.write("0.0.0.0 %s : RSA %s\n" %
                                         (tunnel.conf["remote_ip"],
@@ -380,10 +322,8 @@ secrets {
     def config_fini(self):
         self.secrets_file.close()
         self.conf_file.close()
-        self.swanctl_conf_file.close()
         self.secrets_file = None
         self.conf_file = None
-        self.swanctl_conf_file = None
 
     def refresh(self, monitor):
         """This functions refreshes strongSwan configuration.  Behind the
@@ -432,30 +372,6 @@ secrets {
                 if not tunnel or tunnel.version != ver:
                     vlog.info("%s is outdated %u" % (conn, ver))
                     subprocess.call([self.IPSEC, "stroke", "down-nb", conn])
-
-    def initiate_connection(self):
-        bashCommand = self.SWANCTL + " -i --child net-net"
-        process = subprocess.run(bashCommand.split(), stdout=subprocess.PIPE)
-        vlog.info("IPsec connection initiated")
-
-    def terminate_connection(self):
-        bashCommand = self.SWANCTL + " -t --child net-net"
-        process = subprocess.run(bashCommand.split(), stdout=subprocess.PIPE)
-        vlog.info("IPsec connection terminated")
-
-    def load_connection(self):
-        cmd = "cp " + self.SSL_DIR + "openssl.cnf.orig " + self.SSL_DIR + "openssl.cnf"
-        time.sleep(0.2)
-        subprocess.run(cmd.split(), stdout=subprocess.PIPE)
-        cmd = self.IPSEC + " restart"
-        time.sleep(0.2)
-        subprocess.run(cmd.split(), stdout=subprocess.PIPE)
-        cmd = "cp " + self.SSL_DIR + "openssl.cnf.mlnx " + self.SSL_DIR + "openssl.cnf"
-        time.sleep(0.2)
-        subprocess.run(cmd.split(), stdout=subprocess.PIPE)
-        cmd = self.SWANCTL + " --load-all"
-        subprocess.run(cmd.split(), stdout=subprocess.PIPE)
-
 
 
 class LibreSwanHelper(object):
@@ -840,15 +756,6 @@ conn prevent_unencrypted_vxlan
 
         except Exception as e:
             vlog.err("Delete cert and key failed.\n" + str(e))
-
-    def initiate_connection(self):
-        pass
-
-    def terminate_connection(self):
-        pass
-
-    def load_connection(self):
-        pass
 
 
 class IPsecTunnel(object):
@@ -1307,21 +1214,6 @@ def unixctl_exit(conn, argv, unused_aux):
 
     conn.reply(ret)
 
-def unixctl_ipsec_start(conn, unused_argv, unused_aux):
-    global monitor
-    monitor.ike_helper.initiate_connection()
-    conn.reply("IPsec initiated")
-
-def unixctl_ipsec_stop(conn, unused_argv, unused_aux):
-    global monitor
-    monitor.ike_helper.terminate_connection()
-    conn.reply("IPsec terminated")
-
-def unixctl_ipsec_load(conn, unused_argv, unused_aux):
-    global monitor
-    monitor.ike_helper.load_connection()
-    conn.reply("Loaded IPsec configurations")
-
 
 def main():
     parser = argparse.ArgumentParser()
@@ -1371,13 +1263,6 @@ def main():
     ovs.unixctl.command_register("refresh", "", 0, 0, unixctl_refresh, None)
     ovs.unixctl.command_register("exit", "[--no-cleanup]", 0, 1,
                                  unixctl_exit, None)
-    ovs.unixctl.command_register("ipsec/start", "", 0, 0,
-                                 unixctl_ipsec_start, None)
-    ovs.unixctl.command_register("ipsec/stop", "", 0, 0,
-                                 unixctl_ipsec_stop, None)
-    ovs.unixctl.command_register("ipsec/load", "", 0, 0,
-                                 unixctl_ipsec_load, None)
-
 
     error, unixctl_server = ovs.unixctl.server.UnixctlServer.create(None)
     if error:
