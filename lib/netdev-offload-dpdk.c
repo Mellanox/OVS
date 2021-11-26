@@ -2451,6 +2451,8 @@ struct act_vars {
     uint8_t gnv_opts_cnt;
     bool is_pre_ct;
     bool is_ct_conn;
+    rte_be16_t vlan_tpid;
+    uint8_t vlan_pcp;
 };
 
 static void
@@ -3684,6 +3686,8 @@ parse_flow_match(struct netdev *netdev,
             eth_mask->type = match->wc.masks.vlans[0].tpid;
         }
 
+        act_vars->vlan_tpid = match->flow.vlans[0].tpid;
+        act_vars->vlan_pcp = vlan_tci_to_pcp(match->flow.vlans[0].tci);
         add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_VLAN, spec, mask, NULL);
     }
     /* For untagged matching match->wc.masks.vlans[0].tci is 0xFFFF and
@@ -4488,20 +4492,31 @@ err:
 
 static int
 parse_vlan_push_action(struct flow_actions *actions,
-                       const struct ovs_action_push_vlan *vlan_push)
+                       const struct ovs_action_push_vlan *vlan_push,
+                       struct act_vars *act_vars)
 {
     struct rte_flow_action_of_push_vlan *rte_push_vlan;
     struct rte_flow_action_of_set_vlan_pcp *rte_vlan_pcp;
     struct rte_flow_action_of_set_vlan_vid *rte_vlan_vid;
+    struct rte_flow_action *last_action = NULL;
 
-    rte_push_vlan = per_thread_xzalloc(sizeof *rte_push_vlan);
-    rte_push_vlan->ethertype = vlan_push->vlan_tpid;
-    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_OF_PUSH_VLAN, rte_push_vlan);
+    if (actions->cnt > 0) {
+        last_action = &actions->actions[actions->cnt - 1];
+    }
+    if (last_action && last_action->type == RTE_FLOW_ACTION_TYPE_OF_POP_VLAN &&
+        act_vars->vlan_tpid == vlan_push->vlan_tpid &&
+        act_vars->vlan_pcp == vlan_tci_to_pcp(vlan_push->vlan_tci)) {
+        actions->cnt--;
+    } else {
+        rte_push_vlan = per_thread_xzalloc(sizeof *rte_push_vlan);
+        rte_push_vlan->ethertype = vlan_push->vlan_tpid;
+        add_flow_action(actions, RTE_FLOW_ACTION_TYPE_OF_PUSH_VLAN, rte_push_vlan);
 
-    rte_vlan_pcp = per_thread_xzalloc(sizeof *rte_vlan_pcp);
-    rte_vlan_pcp->vlan_pcp = vlan_tci_to_pcp(vlan_push->vlan_tci);
-    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_OF_SET_VLAN_PCP,
-                    rte_vlan_pcp);
+        rte_vlan_pcp = per_thread_xzalloc(sizeof *rte_vlan_pcp);
+        rte_vlan_pcp->vlan_pcp = vlan_tci_to_pcp(vlan_push->vlan_tci);
+        add_flow_action(actions, RTE_FLOW_ACTION_TYPE_OF_SET_VLAN_PCP,
+                        rte_vlan_pcp);
+    }
 
     rte_vlan_vid = per_thread_xzalloc(sizeof *rte_vlan_vid);
     rte_vlan_vid->vlan_vid = htons(vlan_tci_to_vid(vlan_push->vlan_tci));
@@ -5321,7 +5336,7 @@ parse_flow_actions(struct netdev *netdev,
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_PUSH_VLAN) {
             const struct ovs_action_push_vlan *vlan = nl_attr_get(nla);
 
-            if (parse_vlan_push_action(actions, vlan)) {
+            if (parse_vlan_push_action(actions, vlan, act_vars)) {
                 return -1;
             }
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_POP_VLAN) {
