@@ -4403,28 +4403,33 @@ parse_set_actions(struct flow_actions *actions,
  */
 #define TUNNEL_ITEMS_NUM 5 + TUN_METADATA_NUM_OPTS
 
-static int
+struct vxlan_data {
+    struct rte_flow_action_vxlan_encap conf;
+    struct rte_flow_item items[TUNNEL_ITEMS_NUM];
+};
+BUILD_ASSERT_DECL(offsetof(struct vxlan_data, conf) == 0);
+
+static struct vxlan_data *
 add_vxlan_encap_action(struct flow_actions *actions,
                        const void *header,
-                       struct rte_flow_item *vxlan_items)
+                       struct vxlan_data *vxlan_data_)
 {
+    struct vxlan_data *vxlan_data = NULL;
+    struct rte_flow_item *vxlan_items;
     const struct eth_header *eth;
     const struct udp_header *udp;
-    struct vxlan_data {
-        struct rte_flow_action_vxlan_encap conf;
-        struct rte_flow_item items[TUNNEL_ITEMS_NUM];
-    } *vxlan_data = NULL;
-    BUILD_ASSERT_DECL(offsetof(struct vxlan_data, conf) == 0);
     const void *vxlan;
     const void *l3;
     const void *l4;
     int field;
 
-    if (!vxlan_items) {
+    if (!vxlan_data_) {
         vxlan_data = per_thread_xzalloc(sizeof *vxlan_data);
-        vxlan_items = vxlan_data->items;
-        vxlan_data->conf.definition = vxlan_items;
+        vxlan_data->conf.definition = vxlan_data->items;
+    } else {
+        vxlan_data = vxlan_data_;
     }
+    vxlan_items = vxlan_data->items;
     field = 0;
 
     eth = header;
@@ -4478,16 +4483,16 @@ add_vxlan_encap_action(struct flow_actions *actions,
 
     vxlan_items[field].type = RTE_FLOW_ITEM_TYPE_END;
 
-    if (vxlan_data) {
+    if (!vxlan_data_) {
         add_flow_action(actions, RTE_FLOW_ACTION_TYPE_VXLAN_ENCAP, vxlan_data);
     }
 
-    return 0;
+    return vxlan_data;
 err:
-    if (vxlan_data) {
+    if (!vxlan_data_) {
         per_thread_free(vxlan_data);
     }
-    return -1;
+    return NULL;
 }
 
 static int
@@ -4532,8 +4537,9 @@ parse_clone_actions(struct netdev *netdev,
                     const size_t clone_actions_len,
                     int *outdev_id,
                     struct rte_flow_action_raw_encap *raw_encap,
-                    struct rte_flow_item *tnl_items)
+                    struct vxlan_data *vxlan_data_)
 {
+    struct vxlan_data *vxlan_data = NULL;
     const struct nlattr *ca;
     struct netdev *outdev;
     unsigned int cleft;
@@ -4545,10 +4551,12 @@ parse_clone_actions(struct netdev *netdev,
             const struct ovs_action_push_tnl *tnl_push = nl_attr_get(ca);
             struct rte_flow_action_raw_encap *actions_raw_encap = NULL;
 
-            if (tnl_push->tnl_type == OVS_VPORT_TYPE_VXLAN &&
-                !add_vxlan_encap_action(actions,
-                                        tnl_push->header, tnl_items)) {
-                continue;
+            if (tnl_push->tnl_type == OVS_VPORT_TYPE_VXLAN) {
+                vxlan_data = add_vxlan_encap_action(actions, tnl_push->header,
+                                                    vxlan_data_);
+                if (vxlan_data) {
+                    continue;
+                }
             }
             if (!raw_encap) {
                 actions_raw_encap = per_thread_xzalloc(sizeof *raw_encap);
@@ -4599,8 +4607,7 @@ add_mirror_action(struct netdev *netdev,
         struct rte_flow_action_sample sample;
         struct rte_flow_action_port_id port_id;
         struct rte_flow_action_raw_encap raw_encap;
-        struct rte_flow_action_vxlan_encap vxlan_encap;
-        struct rte_flow_item vxlan_items[TUNNEL_ITEMS_NUM];
+        struct vxlan_data vxlan_data;
         struct rte_flow_action sample_actions[MIRROR_ACTIONS_NUM];
     } *sample_conf;
     BUILD_ASSERT_DECL(offsetof(struct sample_conf, sample) == 0);
@@ -4621,14 +4628,14 @@ add_mirror_action(struct netdev *netdev,
         if (parse_clone_actions(netdev, NULL, nla,
                                 clone_actions_len, &port_id,
                                 &sample_conf->raw_encap,
-                                sample_conf->vxlan_items)) {
+                                &sample_conf->vxlan_data)) {
             goto err;
         }
         /* Identify whether to use vxlan_encap or raw_encap */
-        is_vxlan = sample_conf->vxlan_items[0].type !=
+        is_vxlan = sample_conf->vxlan_data.items[0].type !=
             RTE_FLOW_ITEM_TYPE_END;
         is_raw = sample_conf->raw_encap.size > 0;
-        sample_conf->vxlan_encap.definition = sample_conf->vxlan_items;
+        sample_conf->vxlan_data.conf.definition = sample_conf->vxlan_data.items;
     }
 
     /* Initialize sample struct */
@@ -4636,7 +4643,7 @@ add_mirror_action(struct netdev *netdev,
     sample_conf->sample.actions = sample_conf->sample_actions;
     sample_conf->port_id.id = port_id;
     if (is_vxlan) {
-        sample_itr->conf = &sample_conf->vxlan_encap;
+        sample_itr->conf = &sample_conf->vxlan_data.conf;
         sample_itr->type = RTE_FLOW_ACTION_TYPE_VXLAN_ENCAP;
         sample_itr++;
     } else if (is_raw) {
