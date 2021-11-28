@@ -2348,6 +2348,7 @@ static void
 dump_vxlan_encap(struct ds *s, const struct rte_flow_item *items)
 {
     const struct rte_flow_item_eth *eth = NULL;
+    const struct rte_flow_item_vlan *vlan = NULL;
     const struct rte_flow_item_ipv4 *ipv4 = NULL;
     const struct rte_flow_item_ipv6 *ipv6 = NULL;
     const struct rte_flow_item_udp *udp = NULL;
@@ -2356,6 +2357,8 @@ dump_vxlan_encap(struct ds *s, const struct rte_flow_item *items)
     for (; items && items->type != RTE_FLOW_ITEM_TYPE_END; items++) {
         if (items->type == RTE_FLOW_ITEM_TYPE_ETH) {
             eth = items->spec;
+        } else if (items->type == RTE_FLOW_ITEM_TYPE_VLAN) {
+            vlan = items->spec;
         } else if (items->type == RTE_FLOW_ITEM_TYPE_IPV4) {
             ipv4 = items->spec;
         } else if (items->type == RTE_FLOW_ITEM_TYPE_IPV6) {
@@ -2367,7 +2370,8 @@ dump_vxlan_encap(struct ds *s, const struct rte_flow_item *items)
         }
     }
 
-    ds_put_format(s, "set vxlan ip-version %s ",
+    ds_put_format(s, "set vxlan%s ip-version %s ",
+                  vlan ? "-with-vlan" : "",
                   ipv4 ? "ipv4" : ipv6 ? "ipv6" : "ERR");
     if (vxlan) {
         ds_put_format(s, "vni %"PRIu32" ",
@@ -2392,6 +2396,9 @@ dump_vxlan_encap(struct ds *s, const struct rte_flow_item *items)
         memcpy(&addr, ipv6->hdr.dst_addr, sizeof addr);
         ipv6_format_mapped(&addr, s);
         ds_put_cstr(s, " ");
+    }
+    if (vlan) {
+        ds_put_format(s, "vlan-tci 0x%"PRIx16" ", ntohs(vlan->tci));
     }
     if (eth) {
         ds_put_format(s, "eth-src "ETH_ADDR_FMT" eth-dst "ETH_ADDR_FMT,
@@ -4399,13 +4406,16 @@ parse_set_actions(struct flow_actions *actions,
 }
 
 /* Maximum number of items in vxlan/geneve encap/decap.
- * ETH / IPv4(6) / UDP / VXLAN(GENEVE) / GENEVE-OPTS / END
+ * ETH / (VLANs) / IPv4(6) / UDP / VXLAN(GENEVE) / GENEVE-OPTS / END
  */
-#define TUNNEL_ITEMS_NUM 5 + TUN_METADATA_NUM_OPTS
+#define VXLAN_VLANS 1
+#define TUNNEL_ITEMS_NUM (5 + VXLAN_VLANS + TUN_METADATA_NUM_OPTS)
 
 struct vxlan_data {
     struct rte_flow_action_vxlan_encap conf;
     struct rte_flow_item items[TUNNEL_ITEMS_NUM];
+    struct vlan_header vlans[VXLAN_VLANS];
+    uint32_t vlan_index;
 };
 BUILD_ASSERT_DECL(offsetof(struct vxlan_data, conf) == 0);
 
@@ -4531,6 +4541,39 @@ parse_vlan_push_action(struct flow_actions *actions,
 }
 
 static int
+push_vlan_vxlan(struct vxlan_data *vxlan_data,
+                const struct ovs_action_push_vlan *vlan)
+{
+    struct rte_flow_item_eth *vx_eth_spec;
+    struct vlan_header *vx_vlan;
+    uint32_t i;
+
+    /* If there is no empty slot available, error. */
+    if (vxlan_data->vlan_index < VXLAN_VLANS &&
+        vxlan_data->items[TUNNEL_ITEMS_NUM - 1].type != RTE_FLOW_ITEM_TYPE_END &&
+        vxlan_data->items[TUNNEL_ITEMS_NUM - 2].type != RTE_FLOW_ITEM_TYPE_END) {
+        return -1;
+    }
+
+    /* Make room for the VLAN entry */
+    for (i = TUNNEL_ITEMS_NUM - 2; i > 1; i--) {
+        vxlan_data->items[i] = vxlan_data->items[i - 1];
+    }
+
+    vx_vlan = &vxlan_data->vlans[vxlan_data->vlan_index++];
+    vxlan_data->items[1].type = RTE_FLOW_ITEM_TYPE_VLAN;
+    vxlan_data->items[1].spec = vx_vlan;
+    vxlan_data->items[1].mask = &rte_flow_item_vlan_mask;
+    vx_eth_spec = CONST_CAST(struct rte_flow_item_eth *,
+                             vxlan_data->items[0].spec);
+    vx_vlan->vlan_next_type = vx_eth_spec->type;
+    vx_eth_spec->type = vlan->vlan_tpid;
+    vx_vlan->vlan_tci = vlan->vlan_tci & htons(~VLAN_CFI);
+
+    return 0;
+}
+
+static int
 parse_clone_actions(struct netdev *netdev,
                     struct flow_actions *actions,
                     const struct nlattr *clone_actions,
@@ -4581,6 +4624,14 @@ parse_clone_actions(struct netdev *netdev,
                 }
                 netdev_close(outdev);
             }
+        } else if (clone_type == OVS_ACTION_ATTR_PUSH_VLAN) {
+            const struct ovs_action_push_vlan *vlan = nl_attr_get(ca);
+
+            if (vxlan_data && !push_vlan_vxlan(vxlan_data, vlan)) {
+                continue;
+            }
+
+            return -1;
         } else {
             VLOG_DBG_RL(&rl,
                         "Unsupported nested action inside clone(), "
