@@ -218,3 +218,8 @@ Change-Id=Id4dd702783093a2658f66a9e752d1b235aeb12da; subject=Revert "dpif-netdev
 Change-Id=Ice580c20a37611c690d3c9fcbee8a34ffe8b75d6; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I4271207c81691bbf1ceb1057e60ca68729930a88; subject=netdev-dpdk-vdpa: Support VDPA device devargs; feature=ovs_dpdk_vdpa; upstream_status=NA; general=;
 Change-Id=I0742282c1b3910c5bc188868ad77884b74dbe2a1; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I587feb7ae8b3dc08faf2620d49c4f27503c22785; subject=netdev-offload-dpdk: Support VLAN pop+push by skipping them both; feature=ovs_dpdk_tunnel; upstream_status=NA; general=;
+Change-Id=I45b53ca5cc300b4ae7c77bcf1939f4528f9ed07b; subject=netdev-offload-dpdk: Refactor struct vxlan_data; feature=ovs_dpdk_tunnel; upstream_status=NA; general=;
+Change-Id=I7344e8909802b0f7ca8fd6b70cfc902c9132bc4c; subject=netdev-offload-dpdk: Support VLAN push to vxlan_encap; feature=ovs_dpdk_tunnel; upstream_status=NA; general=;
+Change-Id=Ibaba5f7cefbd93139ea8d9f5e895712133e5815e; subject=netdev-offload-dpdk: Support VLAN push to raw_encap; feature=ovs_dpdk_tunnel; upstream_status=NA; general=;
+Change-Id=Ic0db610f4d074e9eb19610ceb9a15bd7d6056201; subject=Udate metadata; feature=ofed_scripts; upstream_status=ignore; general=;
