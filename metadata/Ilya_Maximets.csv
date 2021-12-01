@@ -1,3 +1,4 @@
 sep=;
 Change-Id=I8acea2249370f045c00b6b0ae1e6cbad5917117e; subject=netdev-offload: Allow offloading to netdev without ifindex.; feature=ovs_dpdk_vxlan; upstream_status=in_progress; general=;
 Change-Id=Iac3e3a33f383f988ffb827a7fb487c41707f5d59; subject=netdev-offload: Disallow offloading to unrelated tunneling vports.; feature=ovs_dpdk_vxlan; upstream_status=in_progress; general=;
+Change-Id=I6886f049730d7c6e1c4c7e87ef4d9aa6b55b7003; subject=bridge: Fix incorrect configuration of netdev's dpif type.; feature=bug_fixes; upstream_status=in_progress; general=;

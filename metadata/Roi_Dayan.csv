@@ -1,3 +1,4 @@
 sep=;
 Change-Id=I4ba244a62de26aae98b9e5537fa8d51b11beacc6; subject=netdev-offload: Add e2e-enable config option; feature=e2e_cache; upstream_status=NA; general=;
 Change-Id=Ia4ebf231ac299c7c0827dc2fd81d6334e5900306; subject=metadata: update; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I91afdadd277dc81d274e5dd7ceee1b55849047b5; subject=tc: Fix incorrect TC rule for decap+encap datapath flow; feature=bug_fixes; upstream_status=in_progress; general=;

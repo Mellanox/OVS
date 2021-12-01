@@ -1,0 +1,2 @@
+sep=;
+Change-Id=I8c424b73d06f07ba465c768c84177f6614c2bc97; subject=tc: Set action flags for tunnel_key release.; feature=bug_fixes; upstream_status=in_progress; general=;
