@@ -179,8 +179,7 @@ char *netdev_flow_counter_key_to_string(const struct flows_counter_key *,
                                         char *, size_t);
 
 struct dpif_port;
-int netdev_ports_insert(struct netdev *, const char *dpif_type,
-                        struct dpif_port *);
+int netdev_ports_insert(struct netdev *, struct dpif_port *);
 struct netdev *netdev_ports_get(odp_port_t port, const char *dpif_type);
 struct netdev *netdev_get(const char *dpif_type);
 int netdev_ports_remove(odp_port_t port, const char *dpif_type);
