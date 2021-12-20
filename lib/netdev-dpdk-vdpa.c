@@ -1244,7 +1244,11 @@ void netdev_dpdk_vdpa_get_hw_stats(struct netdev_dpdk_vdpa_relay *relay,
                                    sizeof *cstm_stats->counters);
 
     for (q = 0; q < num_q; q++) {
-        if (rte_vdpa_get_stats(vdev, q, stats, stats_n) <= 0) {
+        int ret = rte_vdpa_get_stats(vdev, q, stats, stats_n);
+
+        if (ret == 0) {
+            continue;
+        } else if (ret < 0) {
             VLOG_ERR("Failed to get vdpa queue statistics for device %s "
                      "queue %d.", relay->vf_devargs, q);
             break;
@@ -1253,23 +1257,21 @@ void netdev_dpdk_vdpa_get_hw_stats(struct netdev_dpdk_vdpa_relay *relay,
         for (i = 0; i < stats_n; ++i) {
             counter = 0;
             if (!strncmp(vdpa_stats_names[stats[i].id].name,
-                        "completed_descriptors", RTE_VDPA_STATS_NAME_SIZE))
-            {
+                         "completed_descriptors", RTE_VDPA_STATS_NAME_SIZE)) {
                 index = VDPA_CUSTOM_STATS_PACKETS;
                 counter = q * 2 + 1;
             } else if (!strncmp(vdpa_stats_names[stats[i].id].name,
-                    "completion errors", RTE_VDPA_STATS_NAME_SIZE))
-            {
+                       "completion errors", RTE_VDPA_STATS_NAME_SIZE)) {
                 index = VDPA_CUSTOM_STATS_ERRORS;
                 counter = q * 2 + 1 + 1;
             }
 
             if (counter > 0) {
                 snprintf(name, NETDEV_CUSTOM_STATS_NAME_SIZE, "%s queue_%u_%s",
-                         stats_names[index], (q / 2),
-                         ((q % 2 == 0) ? "rx" : "tx"));
+                         stats_names[index], q / 2,
+                         q % 2 == 0 ? "rx" : "tx");
                 ovs_strlcpy(cstm_stats->counters[counter].name, name,
-                       NETDEV_CUSTOM_STATS_NAME_SIZE);
+                            NETDEV_CUSTOM_STATS_NAME_SIZE);
                 cstm_stats->counters[counter].value = stats[i].value;
             }
         }
