@@ -645,12 +645,12 @@ ovs_set_program_name(const char *argv0, const char *version)
 
     free(program_version);
     if (!strcmp(version, VERSION)) {
-        program_version = xasprintf("%s (Open vSwitch) "VERSION"\n",
-                                    program_name);
+        program_version = xasprintf("%s (Open vSwitch) "VERSION"-%s\n",
+                                    program_name, GIT_SHA_STR);
     } else {
-        program_version = xasprintf("%s %s\n"
+        program_version = xasprintf("%s %s-%s\n"
                                     "Open vSwitch Library "VERSION"\n",
-                                    program_name, version);
+                                    program_name, version, GIT_SHA_STR);
     }
 }
 
