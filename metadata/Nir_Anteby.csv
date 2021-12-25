@@ -3,3 +3,6 @@ Change-Id=I085c8f344549371a4ea4a7dd59e048e324e888fa; subject=netdev-dpdk: Add fl
 Change-Id=If5e6043a50545a661993e021c94453462d0cc57c; subject=netdev-offload-dpdk: Implicit NVGRE decap on gre flows; feature=ovs_dpdk_tunnel; upstream_status=NA; general=;
 Change-Id=I4927f2e965f2d358acf3864156bc6cd5721fe8c3; subject=netdev-offload-dpdk: Add support for matching on gre fields; feature=ovs_dpdk_tunnel; upstream_status=sent; general=;
 Change-Id=Ia2a8835075bab1136bc92dfcacbcf8b90c7b9fc4; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I19b5c71976b4a92cc0cf80d1d87822e1434d948a; subject=netdev-offload-dpdk: Add support for tunnel type ip6gre; feature=ovs_dpdk_tunnel; upstream_status=sent; general=;
+Change-Id=I45709fcd0ffe488fca52aeeeb9f43b8976a8bb19; subject=vswitchd: gre/ip6gre documentation update; feature=ovs_dpdk_tunnel; upstream_status=sent; general=;
+Change-Id=I85328aced7a0459cd3ca2b1b44a65cad74013400; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
