@@ -3422,9 +3422,10 @@ parse_tnl_match(struct flow_patterns *patterns,
         act_vars->tnl_type = TNL_TYPE_GENEVE;
         return parse_geneve_match(patterns, match, act_vars);
     }
-    if (!strcmp(netdev_get_type(netdev), "gre")) {
-        act_vars->tnl_type = TNL_TYPE_GRE;
-        return parse_gre_match(patterns, match);
+    if (!strcmp(netdev_get_type(netdev), "gre") ||
+        !strcmp(netdev_get_type(netdev), "ip6gre")) {
+            act_vars->tnl_type = TNL_TYPE_GRE;
+            return parse_gre_match(patterns, match);
     }
 
     return -1;
