@@ -2652,14 +2652,15 @@
 
           <dt><code>gre</code></dt>
           <dd>
-            Generic Routing Encapsulation (GRE) over IPv4 tunnel,
-            configurable to encapsulate layer 2 or layer 3 traffic.
+            Generic Routing Encapsulation (GRE) over IPv4 (when using dpdk also
+            support IPv6) tunnel, configurable to encapsulate layer 2 or layer
+            3 traffic.
           </dd>
 
           <dt><code>ip6gre</code></dt>
           <dd>
-            Generic Routing Encapsulation (GRE) over IPv6 tunnel,
-            encapsulate layer 2 traffic.
+            Generic Routing Encapsulation (GRE) over IPv6 (when using dpdk also
+            support IPv4) tunnel, encapsulate layer 2 traffic.
           </dd>
 
           <dt><code>vxlan</code></dt>
