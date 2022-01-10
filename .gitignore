@@ -37,6 +37,7 @@
 /all-distfiles
 /all-gitfiles
 /autom4te.cache
+/boot_git_sha.txt
 /build-arch-stamp
 /build-indep-stamp
 /compile
