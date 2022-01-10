@@ -227,3 +227,6 @@ Change-Id=I3076e67c9a8a99b02ac3d5f576839cfef89f0868; subject=netdev-dpdk-vdpa: F
 Change-Id=I4848d8b1dceb59b581143eb6ded48e16e67b33c9; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I6c62d3004c9e9dd2b1f6653c923c6d3a943824e0; subject=util: Add the git sha to OVS version; feature=ofed_scripts; upstream_status=NA; general=;
 Change-Id=I8ed0299414d0aecd9242ef5e680c8a2a02d44af2; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ica9a8e33d99d33e550b1e949380595d02e6c2279; subject=python: Fix version.py to have GIT_SHA; feature=bug_fixes; upstream_status=NA; general=;
+Change-Id=I55108b7241c40146147185df850661dacfcef0b4; subject=Makefile.am: Get git sha in configure as a fallback to no git in compilation; feature=ofed_scripts; upstream_status=NA; general=;
+Change-Id=Id8abed0fd76d48e05c2860ab1407265f8e8a0706; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
