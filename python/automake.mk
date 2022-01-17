@@ -100,7 +100,7 @@ ovs-uninstall-local:
 ALL_LOCAL += $(srcdir)/python/ovs/version.py
 $(srcdir)/python/ovs/version.py: config.status
 	$(AM_V_GEN)$(ro_shell) > $(@F).tmp && \
-	echo 'VERSION = "$(VERSION)"' >> $(@F).tmp && \
+	echo 'VERSION = "$(VERSION)-$(GIT_SHA)"' >> $(@F).tmp && \
 	if cmp -s $(@F).tmp $@; then touch $@; rm $(@F).tmp; else mv $(@F).tmp $@; fi
 
 ALL_LOCAL += $(srcdir)/python/ovs/dirs.py
