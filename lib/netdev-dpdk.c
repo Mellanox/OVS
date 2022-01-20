@@ -1123,6 +1123,28 @@ add_meter_policy(dpdk_port_t port_id, uint32_t policy_id)
     }
 }
 
+static dpdk_port_t
+netdev_dpdk_find_esw_mgr_port_id(uint16_t dev_port_id)
+{
+    struct rte_eth_dev_info info;
+    dpdk_port_t port_id;
+    uint16_t domain_id;
+
+    rte_eth_dev_info_get(dev_port_id, &info);
+    domain_id = info.switch_info.domain_id;
+    RTE_ETH_FOREACH_DEV (port_id) {
+        rte_eth_dev_info_get(port_id, &info);
+        if (info.switch_info.domain_id == domain_id &&
+            !(*info.dev_flags & RTE_ETH_DEV_REPRESENTOR)) {
+            VLOG_INFO("Found ESW manager port "DPDK_PORT_ID_FMT" for device "
+                      DPDK_PORT_ID_FMT, port_id, dev_port_id);
+            return port_id;
+        }
+    }
+
+    return dev_port_id;
+}
+
 static int
 dpdk_eth_dev_init(struct netdev_dpdk *dev)
     OVS_REQUIRES(dev->mutex)
@@ -2074,7 +2096,8 @@ netdev_dpdk_set_config(struct netdev *netdev, const struct smap *args,
                     dev->requested_socket_id = sid < 0 ? SOCKET0 : sid;
                     dev->devargs = xstrdup(new_devargs);
                     dev->port_id = new_port_id;
-                    dev->esw_mgr_port_id = new_port_id;
+                    dev->esw_mgr_port_id =
+                        netdev_dpdk_find_esw_mgr_port_id(new_port_id);
                     netdev_request_reconfigure(&dev->up);
                     netdev_dpdk_clear_xstats(dev);
                     err = 0;
