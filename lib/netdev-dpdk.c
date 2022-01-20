@@ -35,6 +35,7 @@
 #include <rte_malloc.h>
 #include <rte_mbuf.h>
 #include <rte_meter.h>
+#include <rte_mtr.h>
 #include <rte_pci.h>
 #include <rte_version.h>
 #include <rte_vhost.h>
@@ -155,6 +156,8 @@ typedef uint16_t dpdk_port_t;
                                    | DEV_TX_OFFLOAD_UDP_CKSUM    \
                                    | DEV_TX_OFFLOAD_IPV4_CKSUM)
 
+#define NETDEV_DPDK_METER_PORT_ID 0
+#define NETDEV_DPDK_METER_POLICY_ID 25
 
 static const struct rte_eth_conf port_conf = {
     .rxmode = {
@@ -1096,6 +1099,26 @@ dpdk_eth_flow_ctrl_setup(struct netdev_dpdk *dev) OVS_REQUIRES(dev->mutex)
     if (rte_eth_dev_flow_ctrl_set(dev->port_id, &dev->fc_conf)) {
         VLOG_WARN("Failed to enable flow control on device "DPDK_PORT_ID_FMT,
                   dev->port_id);
+    }
+}
+
+static void
+add_meter_policy(dpdk_port_t port_id, uint32_t policy_id)
+{
+    const struct rte_flow_action end = { RTE_FLOW_ACTION_TYPE_DROP, NULL };
+    struct rte_mtr_meter_policy_params policy = {
+        .actions[RTE_COLOR_GREEN] = NULL,
+        .actions[RTE_COLOR_YELLOW] = NULL,
+        .actions[RTE_COLOR_RED] = &end,
+    };
+    struct rte_mtr_error error;
+    int rv;
+
+    VLOG_INFO("Creating meter policy %u on port "DPDK_PORT_ID_FMT,
+              policy_id, port_id);
+    rv = rte_mtr_meter_policy_add(port_id, policy_id, &policy, &error);
+    if (rv) {
+        VLOG_WARN("cannot add meter policy, error: %s\n", error.message);
     }
 }
 
@@ -4450,6 +4473,8 @@ netdev_dpdk_class_init(void)
                      rte_strerror(-ret));
         }
 
+        add_meter_policy(NETDEV_DPDK_METER_PORT_ID,
+                         NETDEV_DPDK_METER_POLICY_ID);
         ovsthread_once_done(&once);
     }
 
@@ -5671,6 +5696,161 @@ netdev_dpdk_indirect_action_query(struct netdev *netdev,
     ret = rte_flow_action_handle_query(dev->port_id, act_hdl, data, error);
     ovs_mutex_unlock(&dev->mutex);
     return ret;
+}
+
+static void
+fill_meter_profile(struct rte_mtr_meter_profile *profile,
+                   struct ofputil_meter_config *config)
+{
+    profile->alg = RTE_MTR_SRTCM_RFC2697;
+    profile->srtcm_rfc2697.ebs = 0;
+
+    if (config->flags & OFPMF13_PKTPS) {
+        profile->packet_mode = 1;
+        profile->srtcm_rfc2697.cir = config->bands[0].rate;
+        profile->srtcm_rfc2697.cbs = config->bands[0].burst_size;
+    } else {
+        profile->packet_mode = 0;
+        /* Convert from kilobits per second to bytes per second */
+        profile->srtcm_rfc2697.cir = config->bands[0].rate * 125;
+        profile->srtcm_rfc2697.cbs = config->bands[0].burst_size * 125;
+    }
+}
+
+static int
+add_meter_profile(uint32_t profile_id,
+                  struct ofputil_meter_config *config,
+                  struct rte_mtr_error *error)
+{
+    struct rte_mtr_meter_profile profile;
+
+    if (config->n_bands != 1) {
+        return -1;
+    }
+
+    memset(&profile, 0, sizeof(profile));
+    fill_meter_profile(&profile, config);
+    return rte_mtr_meter_profile_add(NETDEV_DPDK_METER_PORT_ID, profile_id,
+                                     &profile, error);
+}
+
+static int
+create_meter(uint32_t mtr_id, uint32_t profile_id,
+             struct rte_mtr_error *error)
+{
+    struct rte_mtr_params params;
+
+    memset(&params, 0, sizeof params);
+    params.meter_enable = 1;
+    params.use_prev_mtr_color = 0;
+    params.meter_policy_id = NETDEV_DPDK_METER_POLICY_ID;
+    params.meter_profile_id = profile_id;
+    params.dscp_table = NULL; /* no input color. */
+    /* Enable all stats. */
+    params.stats_mask = RTE_MTR_STATS_N_BYTES_GREEN |
+                        RTE_MTR_STATS_N_BYTES_YELLOW |
+                        RTE_MTR_STATS_N_BYTES_RED |
+                        RTE_MTR_STATS_N_BYTES_DROPPED |
+                        RTE_MTR_STATS_N_PKTS_GREEN |
+                        RTE_MTR_STATS_N_PKTS_YELLOW |
+                        RTE_MTR_STATS_N_PKTS_RED |
+                        RTE_MTR_STATS_N_PKTS_DROPPED;
+
+    return rte_mtr_create(NETDEV_DPDK_METER_PORT_ID, mtr_id,
+                          &params, true, error);
+}
+
+int
+netdev_dpdk_meter_set(ofproto_meter_id meter_id,
+                      struct ofputil_meter_config *config)
+{
+    uint32_t profile_id = meter_id.uint32;
+    uint32_t mtr_id = meter_id.uint32;
+    struct rte_mtr_error mtr_error;
+    int ret;
+
+    if (config->n_bands != 1) {
+        VLOG_WARN("cannot create meter with more than one band");
+        return -1;
+    }
+    ret = add_meter_profile(profile_id, config, &mtr_error);
+    if (ret) {
+        VLOG_WARN("cannot add meter profile, error: %s",
+                  mtr_error.message);
+        return ret;
+    }
+
+    ret = create_meter(mtr_id, profile_id, &mtr_error);
+    if (ret) {
+        VLOG_WARN("cannot create meter: %u with profile: %u, error: %s",
+                  mtr_id, profile_id, mtr_error.message);
+        return ret;
+    }
+
+    return ret;
+}
+
+int
+netdev_dpdk_meter_get(ofproto_meter_id meter_id,
+                      struct ofputil_meter_stats *stats,
+                      uint16_t n_bands)
+{
+    uint16_t port_id = NETDEV_DPDK_METER_PORT_ID;
+    uint32_t mtr_id = meter_id.uint32;
+    struct rte_mtr_stats mtr_stats;
+    struct rte_mtr_error error;
+    uint64_t stats_mask;
+
+    /* If a meter has more than one band it means it's DPDK object was not
+     * created, do not attempt to query it.
+     */
+    if (n_bands != 1) {
+        return EOPNOTSUPP;
+    }
+    memset(&mtr_stats, 0x0, sizeof mtr_stats);
+    if (rte_mtr_stats_read(port_id, mtr_id, &mtr_stats,
+                           &stats_mask, 0, &error)) {
+        return -1;
+    }
+    stats->packet_in_count += (mtr_stats.n_pkts[RTE_COLOR_GREEN] +
+                               mtr_stats.n_pkts[RTE_COLOR_YELLOW] +
+                               mtr_stats.n_pkts[RTE_COLOR_RED]);
+    stats->byte_in_count += (mtr_stats.n_bytes[RTE_COLOR_GREEN] +
+                             mtr_stats.n_bytes[RTE_COLOR_YELLOW] +
+                             mtr_stats.n_bytes[RTE_COLOR_RED]);
+
+    stats->bands[0].packet_count += mtr_stats.n_pkts_dropped;
+    stats->bands[0].byte_count += mtr_stats.n_bytes_dropped;
+    return 0;
+}
+
+static int
+netdev_dpdk_meter_del_(uint16_t port_id, uint32_t mtr_id, uint32_t profile_id)
+{
+    struct rte_mtr_error error;
+
+    if (rte_mtr_destroy(port_id, mtr_id, &error)) {
+        return -1;
+    }
+    return rte_mtr_meter_profile_delete(port_id, profile_id, &error);
+}
+
+int
+netdev_dpdk_meter_del(ofproto_meter_id meter_id,
+                      struct ofputil_meter_stats *stats OVS_UNUSED,
+                      uint16_t n_bands)
+{
+    uint16_t port_id = NETDEV_DPDK_METER_PORT_ID;
+    uint32_t mtr_id = meter_id.uint32;
+    uint32_t profile_id = mtr_id;
+
+    /* If a meter has more than one band it means it's DPDK object was not
+     * created, do not attempt to destroy it.
+     */
+    if (n_bands != 1) {
+        return EOPNOTSUPP;
+    }
+    return netdev_dpdk_meter_del_(port_id, mtr_id, profile_id);
 }
 
 #define NETDEV_DPDK_CLASS_COMMON                            \
