@@ -165,6 +165,7 @@ struct act_resources {
     uint32_t ctid;
     uint32_t counter_id;
     uint32_t sflow_id;
+    uint32_t meter_id;
 };
 
 #define NUM_RTE_FLOWS_PER_PORT 2
@@ -1922,6 +1923,7 @@ put_action_resources(struct netdev *netdev,
     put_ct_counter_id(act_resources->ctid);
     put_flows_counter_id(act_resources->counter_id);
     put_sflow_id(act_resources->sflow_id);
+    netdev_dpdk_meter_unref(act_resources->meter_id - 1);
 }
 
 /*
@@ -2698,6 +2700,14 @@ dump_flow_action(struct ds *s, struct ds *s_extra,
             ds_put_cstr(s_extra, "end;");
             ds_put_format(s, "sample ratio %d index 0 / ", sample->ratio);
         }
+    } else if (actions->type == RTE_FLOW_ACTION_TYPE_METER) {
+        const struct rte_flow_action_meter *meter = actions->conf;
+
+        ds_put_cstr(s, "meter ");
+        if (meter) {
+            ds_put_format(s, "mtr_id %d ", meter->mtr_id);
+        }
+        ds_put_cstr(s, "/ ");
     } else {
         ds_put_format(s, "unknown rte flow action (%d)\n", actions->type);
     }
@@ -4618,13 +4628,39 @@ push_vlan_vxlan(struct vxlan_data *vxlan_data,
 }
 
 static int
+add_meter_action(struct flow_actions *actions,
+                 const struct nlattr *nla,
+                 struct act_resources *act_resources)
+{
+    uint32_t mtr_id = nl_attr_get_u32(nla);
+    struct rte_flow_action_meter *meter;
+
+    /* Support single meter per flow. */
+    if (act_resources->meter_id) {
+        return -1;
+    }
+
+    if (!netdev_dpdk_meter_ref(mtr_id)) {
+        return -1;
+    }
+    act_resources->meter_id = mtr_id + 1; /* Keep +1 to diffrenciate with no
+                                             meter where it's 0. */
+    meter = per_thread_xzalloc(sizeof *meter);
+    meter->mtr_id = mtr_id;
+    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_METER, meter);
+
+    return 0;
+}
+
+static int
 parse_clone_actions(struct netdev *netdev,
                     struct flow_actions *actions,
                     const struct nlattr *clone_actions,
                     const size_t clone_actions_len,
                     int *outdev_id,
                     struct raw_encap_data *raw_encap_data,
-                    struct vxlan_data *vxlan_data_)
+                    struct vxlan_data *vxlan_data_,
+                    struct act_resources *act_resources)
 {
     struct vxlan_data *vxlan_data = NULL;
     const struct nlattr *ca;
@@ -4689,6 +4725,10 @@ parse_clone_actions(struct netdev *netdev,
             memmove(veh, (char *)veh + VLAN_HEADER_LEN, 2 * ETH_ADDR_LEN);
             veh->veth_type = vlan->vlan_tpid;
             veh->veth_tci = vlan->vlan_tci & htons(~VLAN_CFI);
+        } else if (clone_type == OVS_ACTION_ATTR_METER ) {
+            if (add_meter_action(actions, ca, act_resources)) {
+                return -1;
+            }
         } else {
             VLOG_DBG_RL(&rl,
                         "Unsupported nested action inside clone(), "
@@ -4708,7 +4748,8 @@ static int
 add_mirror_action(struct netdev *netdev,
                   struct flow_actions *actions,
                   const struct nlattr *nla,
-                  const size_t clone_actions_len)
+                  const size_t clone_actions_len,
+                  struct act_resources *act_resources)
 {
     struct netdev *outdev;
     struct sample_conf {
@@ -4736,7 +4777,7 @@ add_mirror_action(struct netdev *netdev,
         if (parse_clone_actions(netdev, NULL, nla,
                                 clone_actions_len, &port_id,
                                 &sample_conf->raw_encap_data,
-                                &sample_conf->vxlan_data)) {
+                                &sample_conf->vxlan_data, act_resources)) {
             goto err;
         }
         /* Identify whether to use vxlan_encap or raw_encap */
@@ -5271,7 +5312,8 @@ split_pre_post_ct_actions(const struct rte_flow_action *actions,
             actions->type == RTE_FLOW_ACTION_TYPE_SET_TAG ||
             actions->type == RTE_FLOW_ACTION_TYPE_SET_META ||
             actions->type == RTE_FLOW_ACTION_TYPE_RAW_DECAP ||
-            actions->type == RTE_FLOW_ACTION_TYPE_SAMPLE) {
+            actions->type == RTE_FLOW_ACTION_TYPE_SAMPLE ||
+            actions->type == RTE_FLOW_ACTION_TYPE_METER) {
             add_flow_action(pre_ct_actions, actions->type, actions->conf);
         } else {
             add_flow_action(post_ct_actions, actions->type, actions->conf);
@@ -5433,7 +5475,7 @@ parse_flow_actions(struct netdev *netdev,
                    return -1;
                 }
             } else {
-                if (add_mirror_action(netdev, actions, nla, 0)) {
+                if (add_mirror_action(netdev, actions, nla, 0, act_resources)) {
                     return -1;
                 }
                 act_vars->pre_ct_cnt++;
@@ -5470,12 +5512,12 @@ parse_flow_actions(struct netdev *netdev,
             if (left <= NLA_ALIGN(nla->nla_len)) {
                 if (parse_clone_actions(netdev, actions, clone_actions,
                                         clone_actions_len, NULL,
-                                        NULL, NULL)) {
+                                        NULL, NULL, act_resources)) {
                     return -1;
                 }
             } else {
                 if (add_mirror_action(netdev, actions, clone_actions,
-                                      clone_actions_len)) {
+                                      clone_actions_len, act_resources)) {
                     return -1;
                 }
                 act_vars->pre_ct_cnt++;
@@ -5527,6 +5569,10 @@ parse_flow_actions(struct netdev *netdev,
                 return -1;
             }
             add_empty_sample_action(1, actions);
+        } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_METER) {
+            if (add_meter_action(actions, nla, act_resources)) {
+                return -1;
+            }
         } else {
             VLOG_DBG_RL(&rl, "Unsupported action type %d", nl_attr_type(nla));
             return -1;
