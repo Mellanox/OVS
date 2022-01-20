@@ -71,6 +71,8 @@ netdev_dpdk_indirect_action_query(struct netdev *,
                                   void *,
                                   struct rte_flow_error *);
 int
+netdev_dpdk_get_esw_mgr_port_id(struct netdev *netdev);
+int
 netdev_dpdk_get_port_id(struct netdev *netdev);
 bool
 netdev_dpdk_is_uplink_port(struct netdev *netdev);

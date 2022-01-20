@@ -2742,7 +2742,7 @@ create_rte_flow(struct netdev *netdev,
             extra_str = ds_cstr(&s_extra);
             VLOG_DBG_RL(&rl, "%s: rte_flow 0x%"PRIxPTR" %s  flow create %d %s",
                         netdev_get_name(netdev), (intptr_t) fi->rte_flow[pos],
-                        extra_str, netdev_dpdk_get_port_id(netdev),
+                        extra_str, netdev_dpdk_get_esw_mgr_port_id(netdev),
                         ds_cstr(&s));
         }
     } else {
@@ -2758,7 +2758,7 @@ create_rte_flow(struct netdev *netdev,
             extra_str = ds_cstr(&s_extra);
             VLOG_RL(&rl, level, "%s: Failed flow: %s  flow create %d %s",
                     netdev_get_name(netdev), extra_str,
-                    netdev_dpdk_get_port_id(netdev), ds_cstr(&s));
+                    netdev_dpdk_get_esw_mgr_port_id(netdev), ds_cstr(&s));
         }
     }
     ds_destroy(&s);
