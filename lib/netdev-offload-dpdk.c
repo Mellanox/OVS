@@ -4264,7 +4264,8 @@ add_output_action(struct netdev *netdev,
 static int
 add_set_flow_action__(struct flow_actions *actions,
                       const void *value, void *mask,
-                      const size_t size, const int attr)
+                      const size_t size, const int attr,
+                      struct act_vars *act_vars)
 {
     void *spec;
 
@@ -4288,6 +4289,14 @@ add_set_flow_action__(struct flow_actions *actions,
     /* Clear used mask for later checking. */
     if (mask) {
         memset(mask, 0, size);
+    }
+    if (attr == RTE_FLOW_ACTION_TYPE_SET_IPV4_SRC ||
+        attr == RTE_FLOW_ACTION_TYPE_SET_IPV4_DST ||
+        attr == RTE_FLOW_ACTION_TYPE_SET_IPV6_SRC ||
+        attr == RTE_FLOW_ACTION_TYPE_SET_IPV6_DST ||
+        attr == RTE_FLOW_ACTION_TYPE_SET_TP_SRC ||
+        attr == RTE_FLOW_ACTION_TYPE_SET_TP_DST) {
+        act_vars->pre_ct_tuple_rewrite |= act_vars->ct_mode == CT_MODE_NONE;
     }
     return 0;
 }
@@ -4330,7 +4339,7 @@ parse_set_actions(struct flow_actions *actions,
 #define add_set_flow_action(field, type)                                      \
     if (add_set_flow_action__(actions, &key->field,                           \
                               mask ? CONST_CAST(void *, &mask->field) : NULL, \
-                              sizeof key->field, type)) {                     \
+                              sizeof key->field, type, act_vars)) {           \
         return -1;                                                            \
     }
 
@@ -4358,7 +4367,6 @@ parse_set_actions(struct flow_actions *actions,
                 VLOG_DBG_RL(&rl, "Unsupported IPv4 set action");
                 return -1;
             }
-            act_vars->pre_ct_tuple_rewrite = act_vars->ct_mode == CT_MODE_NONE;
         } else if (nl_attr_type(sa) == OVS_KEY_ATTR_IPV6) {
             const struct ovs_key_ipv6 *key = nl_attr_get(sa);
             const struct ovs_key_ipv6 *mask = masked ? key + 1 : NULL;
@@ -4371,7 +4379,6 @@ parse_set_actions(struct flow_actions *actions,
                 VLOG_DBG_RL(&rl, "Unsupported IPv6 set action");
                 return -1;
             }
-            act_vars->pre_ct_tuple_rewrite = act_vars->ct_mode == CT_MODE_NONE;
         } else if (nl_attr_type(sa) == OVS_KEY_ATTR_TCP) {
             const struct ovs_key_tcp *key = nl_attr_get(sa);
             const struct ovs_key_tcp *mask = masked ? key + 1 : NULL;
@@ -4383,7 +4390,6 @@ parse_set_actions(struct flow_actions *actions,
                 VLOG_DBG_RL(&rl, "Unsupported TCP set action");
                 return -1;
             }
-            act_vars->pre_ct_tuple_rewrite = act_vars->ct_mode == CT_MODE_NONE;
         } else if (nl_attr_type(sa) == OVS_KEY_ATTR_UDP) {
             const struct ovs_key_udp *key = nl_attr_get(sa);
             const struct ovs_key_udp *mask = masked ? key + 1 : NULL;
@@ -4395,7 +4401,6 @@ parse_set_actions(struct flow_actions *actions,
                 VLOG_DBG_RL(&rl, "Unsupported UDP set action");
                 return -1;
             }
-            act_vars->pre_ct_tuple_rewrite = act_vars->ct_mode == CT_MODE_NONE;
         } else {
             VLOG_DBG_RL(&rl,
                         "Unsupported set action type %d", nl_attr_type(sa));
