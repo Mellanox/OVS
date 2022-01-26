@@ -173,7 +173,6 @@ enum tc_action_type {
     TC_ACT_MPLS_SET,
     TC_ACT_GOTO,
     TC_ACT_CT,
-    TC_ACT_SAMPLE,
     TC_ACT_POLICE,
 };
 
@@ -259,11 +258,6 @@ struct tc_action {
         } ct;
 
         struct {
-            uint32_t action_rate;
-            uint32_t action_group_id;
-        } sample;
-
-        struct {
             uint32_t index;
             uint32_t meter_id;
         } police;
@@ -306,12 +300,11 @@ tc_make_tcf_id(int ifindex, uint32_t block_id, uint16_t prio,
 
 static inline struct tcf_id
 tc_make_tcf_id_chain(int ifindex, uint32_t block_id, uint32_t chain,
-                     uint16_t prio, enum tc_qdisc_hook hook, uint32_t group_id)
+                     uint16_t prio, enum tc_qdisc_hook hook)
 {
     struct tcf_id id = tc_make_tcf_id(ifindex, block_id, prio, hook);
 
     id.chain = chain;
-    id.sflow_group_id = group_id;
 
     return id;
 }

@@ -1082,18 +1082,6 @@ parse_tc_flower_to_match(struct tc_flower *flower,
         action = flower->actions;
         for (i = 0; i < flower->action_count; i++, action++) {
             switch (action->type) {
-            case TC_ACT_SAMPLE: {
-                const struct gid_node *node;
-
-                node = gid_find(action->sample.action_group_id);
-                if (!node) {
-                    VLOG_ERR_RL(&error_rl, "gid node is NULL, gid: %d",
-                                action->sample.action_group_id);
-                    return ENOENT;
-                }
-                nl_msg_put(buf, node->sflow.sflow, node->sflow.sflow_len);
-            }
-            break;
             case TC_ACT_VLAN_POP: {
                 nl_msg_put_flag(buf, OVS_ACTION_ATTR_POP_VLAN);
             }
@@ -1862,78 +1850,6 @@ parse_match_ct_state_to_flower(struct tc_flower *flower, struct match *match)
 }
 
 static int
-parse_userspace_userdata(const struct nlattr *actions,
-                         struct dpif_sflow_attr *sflow_attr)
-{
-    const struct nlattr *nla;
-    unsigned int left;
-
-    NL_NESTED_FOR_EACH_UNSAFE (nla, left, actions) {
-        if (nl_attr_type(nla) == OVS_USERSPACE_ATTR_USERDATA) {
-            struct user_action_cookie *cookie;
-
-            cookie = CONST_CAST(struct user_action_cookie *, nl_attr_get(nla));
-            if (cookie->type == USER_ACTION_COOKIE_SFLOW) {
-                sflow_attr->userdata = CONST_CAST(void *, nl_attr_get(nla));
-                sflow_attr->userdata_len = nl_attr_get_size(nla);
-                return 0;
-            }
-        }
-    }
-
-    VLOG_ERR_RL(&error_rl, "%s: no sFlow cookie", __func__);
-    return EINVAL;
-}
-
-static int
-parse_action_userspace(const struct nlattr *actions,
-                       struct dpif_sflow_attr *sflow_attr)
-{
-    const struct nlattr *nla;
-    unsigned int left;
-
-    NL_NESTED_FOR_EACH_UNSAFE (nla, left, actions) {
-        if (nl_attr_type(nla) == OVS_ACTION_ATTR_USERSPACE) {
-            return parse_userspace_userdata(nla, sflow_attr);
-        }
-    }
-
-    VLOG_ERR_RL(&error_rl, "%s: no OVS_ACTION_ATTR_USERSPACE attribute",
-                __func__);
-    return EINVAL;
-}
-
-static int
-parse_sample_action(const struct nlattr *actions,
-                    struct dpif_sflow_attr *sflow_attr,
-                    struct tc_action *tc_action)
-{
-    const struct nlattr *nla;
-    unsigned int left;
-    int ret = EINVAL;
-
-    sflow_attr->sflow = actions;
-    sflow_attr->sflow_len = actions->nla_len;
-
-    NL_NESTED_FOR_EACH_UNSAFE (nla, left, actions) {
-        if (nl_attr_type(nla) == OVS_SAMPLE_ATTR_ACTIONS) {
-            ret = parse_action_userspace(nla, sflow_attr);
-        } else if (nl_attr_type(nla) == OVS_SAMPLE_ATTR_PROBABILITY) {
-            tc_action->type = TC_ACT_SAMPLE;
-            tc_action->sample.action_rate = UINT32_MAX / nl_attr_get_u32(nla);
-        } else {
-            return EINVAL;
-        }
-    }
-
-    if (tc_action->sample.action_rate) {
-        return ret;
-    }
-
-    return EINVAL;
-}
-
-static int
 netdev_tc_flow_put(struct netdev *netdev, struct match *match,
                    struct nlattr *actions, size_t actions_len,
                    const ovs_u128 *ufid, struct offload_info *info,
@@ -1949,7 +1865,6 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
     struct tc_action *action;
     bool recirc_act = false;
     uint32_t block_id = 0;
-    uint32_t group_id = 0;
     struct nlattr *nla;
     struct tcf_id id;
     int n_meters = 0;
@@ -2194,8 +2109,7 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
     NL_ATTR_FOR_EACH(nla, left, actions, actions_len) {
         if (flower.action_count >= TCA_ACT_MAX_NUM) {
             VLOG_DBG_RL(&rl, "Can only support %d actions", TCA_ACT_MAX_NUM);
-            err = EOPNOTSUPP;
-            goto out;
+            return EOPNOTSUPP;
         }
         action = &flower.actions[flower.action_count];
         if (nl_attr_type(nla) == OVS_ACTION_ATTR_OUTPUT) {
@@ -2205,8 +2119,7 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
 
             if (!outdev) {
                 VLOG_DBG_RL(&rl, "Can't find netdev for output port %d", port);
-                err = ENODEV;
-                goto out;
+                return ENODEV;
             }
             action->out.ifindex_out = netdev_get_ifindex(outdev);
             action->out.ingress = is_internal_port(netdev_get_type(outdev));
@@ -2244,7 +2157,7 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
 
             err = parse_put_flow_set_action(&flower, action, set, set_len);
             if (err) {
-                goto out;
+                return err;
             }
             if (action->type == TC_ACT_ENCAP) {
                 action->encap.tp_dst = info->tp_dst_port;
@@ -2257,7 +2170,7 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
             err = parse_put_flow_set_masked_action(&flower, action, set,
                                                    set_len, true);
             if (err) {
-                goto out;
+                return err;
             }
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_CT) {
             const struct nlattr *ct = nl_attr_get(nla);
@@ -2269,7 +2182,7 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
 
             err = parse_put_flow_ct_action(&flower, action, ct, ct_len);
             if (err) {
-                goto out;
+                return err;
             }
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_CT_CLEAR) {
             action->type = TC_ACT_CT;
@@ -2288,37 +2201,7 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
             struct dpif_sflow_attr sflow_attr;
 
             memset(&sflow_attr, 0, sizeof sflow_attr);
-            if (flower.tunnel) {
-                sflow_attr.tunnel = CONST_CAST(struct flow_tnl *, tnl);
-            }
-            err = parse_sample_action(nla, &sflow_attr, action);
-            if (err) {
-                goto out;
-            }
-            group_id = gid_alloc_ctx(&sflow_attr);
-            action->sample.action_group_id = group_id;
-            flower.action_count++;
-        } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_USERSPACE) {
-            struct dpif_sflow_attr sflow_attr;
-
-            /* If there is a sFlow cookie inside of a userspace attribute,
-             * but no sample attribute, that means sampling rate is 1.
-             */
-            memset(&sflow_attr, 0, sizeof sflow_attr);
-            if (flower.tunnel) {
-                sflow_attr.tunnel = CONST_CAST(struct flow_tnl *, tnl);
-            }
-            err = parse_userspace_userdata(nla, &sflow_attr);
-            if (err) {
-                goto out;
-            }
-            sflow_attr.sflow = nla;
-            sflow_attr.sflow_len = nla->nla_len;
-            group_id = gid_alloc_ctx(&sflow_attr);
-            action->type = TC_ACT_SAMPLE;
-            action->sample.action_group_id = group_id;
-            action->sample.action_rate = 1;
-            flower.action_count++;
+            gid_alloc_ctx(&sflow_attr);
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_METER) {
             action->type = TC_ACT_POLICE;
             action->police.meter_id = nl_attr_get_u32(nla);
@@ -2327,15 +2210,13 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
         } else {
             VLOG_DBG_RL(&rl, "unsupported put action type: %d",
                         nl_attr_type(nla));
-            err = EOPNOTSUPP;
-            goto out;
+            return EOPNOTSUPP;
         }
     }
 
     if ((chain || recirc_act) && !info->recirc_id_shared_with_tc) {
         VLOG_ERR_RL(&error_rl, "flow_put: recirc_id sharing not supported");
-        err = EOPNOTSUPP;
-        goto out;
+        return EOPNOTSUPP;
     }
 
     if (get_ufid_tc_mapping(ufid, &id) == 0) {
@@ -2347,30 +2228,20 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
     prio = get_prio_for_tc_flower(&flower);
     if (prio == 0) {
         VLOG_ERR_RL(&rl, "couldn't get tc prio: %s", ovs_strerror(ENOSPC));
-        err = ENOSPC;
-        goto out;
+        return ENOSPC;
     }
 
     flower.act_cookie.data = ufid;
     flower.act_cookie.len = sizeof *ufid;
 
     block_id = get_block_id_from_netdev(netdev);
-    id = tc_make_tcf_id_chain(ifindex, block_id, chain, prio, hook, group_id);
+    id = tc_make_tcf_id_chain(ifindex, block_id, chain, prio, hook);
     err = tc_replace_flower(&id, &flower);
     if (!err) {
         if (stats) {
             memset(stats, 0, sizeof *stats);
         }
         add_ufid_tc_mapping(netdev, ufid, &id);
-    } else {
-        goto out;
-    }
-
-    return 0;
-
-out:
-    if (group_id) {
-        gid_free(group_id);
     }
 
     return err;
