@@ -230,3 +230,5 @@ Change-Id=I8ed0299414d0aecd9242ef5e680c8a2a02d44af2; subject=Update metadata; fe
 Change-Id=Ica9a8e33d99d33e550b1e949380595d02e6c2279; subject=python: Fix version.py to have GIT_SHA; feature=bug_fixes; upstream_status=NA; general=;
 Change-Id=I55108b7241c40146147185df850661dacfcef0b4; subject=Makefile.am: Get git sha in configure as a fallback to no git in compilation; feature=ofed_scripts; upstream_status=NA; general=;
 Change-Id=Id8abed0fd76d48e05c2860ab1407265f8e8a0706; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I16f7ca1f2c5eb39ea3b6b2249dac97fb9c4fd058; subject=Makefile.am: Touch lib/util.c to refresh SHA; feature=ofed_scripts; upstream_status=NA; general=;
+Change-Id=I589026eeba4de932485424620afe0609d15e8a8f; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
