@@ -18,7 +18,6 @@
 
 #include <errno.h>
 #include <linux/if_ether.h>
-#include <linux/psample.h>
 
 #include "dpif.h"
 #include "hash.h"
@@ -54,7 +53,6 @@ static bool block_support = false;
 static uint16_t ct_state_support;
 
 static dpif_netlink_sflow_upcall_callback *upcall_cb;
-static int psample_family;
 
 struct netlink_field {
     int offset;
@@ -2508,45 +2506,6 @@ netdev_tc_register_sflow_upcall_cb(dpif_netlink_sflow_upcall_callback *cb)
     upcall_cb = cb;
 }
 
-static struct nl_sock *
-netdev_tc_psample_init(void)
-{
-    unsigned int psample_mcgroup;
-    struct nl_sock *sock;
-    int error;
-
-    if (nl_lookup_genl_family(PSAMPLE_GENL_NAME, &psample_family)) {
-        VLOG_INFO("%s: Generic Netlink family '%s' does not exist. "
-                  "Please make sure the kernel module psample is loaded",
-                  __func__, PSAMPLE_GENL_NAME);
-        return NULL;
-    }
-
-    if (nl_lookup_genl_mcgroup(PSAMPLE_GENL_NAME,
-                               PSAMPLE_NL_MCGRP_SAMPLE_NAME,
-                               &psample_mcgroup)) {
-        VLOG_INFO("%s: Failed to join multicast group '%s' for Generic "
-                  "Netlink family '%s'", __func__, PSAMPLE_NL_MCGRP_SAMPLE_NAME,
-                  PSAMPLE_GENL_NAME);
-        return NULL;
-    }
-
-    error = nl_sock_create(NETLINK_GENERIC, &sock);
-    if (error) {
-        VLOG_INFO("%s: Failed to create psample socket", __func__);
-        return NULL;
-    }
-
-    error = nl_sock_join_mcgroup(sock, psample_mcgroup);
-    if (error) {
-        VLOG_INFO("%s: Failed to join psample mcgroup", __func__);
-        nl_sock_destroy(sock);
-        return NULL;
-    }
-
-    return sock;
-}
-
 static int
 netdev_tc_init_flow_api(struct netdev *netdev)
 {
@@ -2596,7 +2555,6 @@ netdev_tc_init_flow_api(struct netdev *netdev)
 
         probe_multi_mask_per_prio(ifindex);
         probe_ct_state_support(ifindex);
-        netdev_tc_psample_init();
         ovsthread_once_done(&once);
     }
 
