@@ -845,24 +845,6 @@ netdev_ports_get(odp_port_t port_no, const char *dpif_type)
     return ret;
 }
 
-struct netdev *
-netdev_get(const char *dpif_type)
-{
-    struct port_to_netdev_data *data;
-    struct netdev *dev = NULL;
-
-    ovs_rwlock_rdlock(&netdev_hmap_rwlock);
-    HMAP_FOR_EACH (data, portno_node, &port_to_netdev) {
-        if (netdev_get_dpif_type(data->netdev) == dpif_type) {
-            dev = netdev_ref(data->netdev);
-            break;
-        }
-    }
-    ovs_rwlock_unlock(&netdev_hmap_rwlock);
-
-    return dev;
-}
-
 int
 netdev_ports_remove(odp_port_t port_no, const char *dpif_type)
 {
