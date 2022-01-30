@@ -26,7 +26,6 @@
 #include "ovs-thread.h"
 #include "packets.h"
 #include "flow.h"
-#include "dpif-netlink.h"
 
 #ifdef  __cplusplus
 extern "C" {
@@ -210,8 +209,6 @@ int netdev_ports_get_n_flows(const char *dpif_type,
                              odp_port_t port_no, uint64_t *n_flows);
 uint32_t netdev_offload_flow_mark_alloc(void);
 void netdev_offload_flow_mark_free(uint32_t mark);
-void netdev_regsiter_nl_sflow_upcall_cb(struct netdev *netdev,
-                                        dpif_netlink_sflow_upcall_callback *cb);
 
 extern bool netdev_offload_ct_on_ct_nat;
 

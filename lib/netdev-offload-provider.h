@@ -100,9 +100,6 @@ struct netdev_flow_api {
      */
     int (*hw_offload_stats_get)(struct netdev *netdev, uint64_t *counters);
 
-    /* Registers an upcall callback to process sFlow packet */
-    void (*register_nl_sflow_upcall_cb)(dpif_netlink_sflow_upcall_callback *);
-
     /* Initializies the netdev flow api.
      * Return 0 if successful, otherwise returns a positive errno value. */
     int (*init_flow_api)(struct netdev *);
