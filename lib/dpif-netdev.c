@@ -2283,13 +2283,16 @@ dpif_netdev_port_open_type(const struct dpif_class *class, const char *type)
 static struct dpif *
 create_dpif_netdev(struct dp_netdev *dp)
 {
+    const struct dpif_offload_class *offload_class;
     uint16_t netflow_id = hash_string(dp->name, 0);
     struct dpif_netdev *dpif;
 
     ovs_refcount_ref(&dp->ref_cnt);
 
     dpif = xmalloc(sizeof *dpif);
-    dpif_init(&dpif->dpif, dp->class, NULL, dp->name, netflow_id >> 8,
+    offload_class = !strcmp(dp->class->type, "netdev") ?
+        &dpif_offload_netdev_class : NULL;
+    dpif_init(&dpif->dpif, dp->class, offload_class, dp->name, netflow_id >> 8,
               netflow_id);
     dpif->dp = dp;
     dpif->last_port_seq = seq_read(dp->port_seq);

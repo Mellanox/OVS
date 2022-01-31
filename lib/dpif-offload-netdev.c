@@ -22,7 +22,6 @@
 
 VLOG_DEFINE_THIS_MODULE(dpif_offload_netdev);
 
-/* Currently, it is used only for dummy netdev to make tests pass. */
 const struct dpif_offload_class dpif_offload_netdev_class = {
     .type = "netdev",
     .init = NULL,
