@@ -7913,6 +7913,10 @@ dpif_netdev_meter_set(struct dpif *dpif, ofproto_meter_id meter_id,
         }
     }
 
+    if (netdev_is_flow_api_enabled()) {
+        dpif_offload_meter_set(dpif, meter_id, config);
+    }
+
     meter_lock(dp, mid);
     dp_delete_meter(dp, mid); /* Free existing meter, if any */
     dp->meters[mid] = meter;
@@ -7952,6 +7956,10 @@ dpif_netdev_meter_get(const struct dpif *dpif,
         }
 
         stats->n_bands = i;
+        if (netdev_is_flow_api_enabled()) {
+            retval = dpif_offload_meter_get(dpif, meter_id_,
+                                            stats, stats->n_bands);
+        }
     }
 
 done:
@@ -7972,6 +7980,9 @@ dpif_netdev_meter_del(struct dpif *dpif,
         uint32_t meter_id = meter_id_.uint32;
 
         meter_lock(dp, meter_id);
+        if (netdev_is_flow_api_enabled()) {
+            error = dpif_offload_meter_del(dpif, meter_id_, stats, n_bands);
+        }
         dp_delete_meter(dp, meter_id);
         meter_unlock(dp, meter_id);
     }

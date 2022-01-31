@@ -18,9 +18,33 @@
 
 #include "dpif.h"
 #include "dpif-offload-provider.h"
+#include "netdev-dpdk.h"
 #include "openvswitch/vlog.h"
 
 VLOG_DEFINE_THIS_MODULE(dpif_offload_netdev);
+
+static int
+dpif_offload_netdev_meter_set(ofproto_meter_id meter_id,
+                              struct ofputil_meter_config *config)
+{
+    return netdev_dpdk_meter_set(meter_id, config);
+}
+
+static int
+dpif_offload_netdev_meter_get(ofproto_meter_id meter_id,
+                              struct ofputil_meter_stats *stats,
+                              uint16_t n_bands)
+{
+    return netdev_dpdk_meter_get(meter_id, stats, n_bands);
+}
+
+static int
+dpif_offload_netdev_meter_del(ofproto_meter_id meter_id,
+                              struct ofputil_meter_stats *stats,
+                              uint16_t n_bands)
+{
+    return netdev_dpdk_meter_del(meter_id, stats, n_bands);
+}
 
 const struct dpif_offload_class dpif_offload_netdev_class = {
     .type = "netdev",
@@ -28,6 +52,9 @@ const struct dpif_offload_class dpif_offload_netdev_class = {
     .destroy = NULL,
     .sflow_recv_wait = NULL,
     .sflow_recv = NULL,
+    .meter_set = dpif_offload_netdev_meter_set,
+    .meter_get = dpif_offload_netdev_meter_get,
+    .meter_del = dpif_offload_netdev_meter_del,
 };
 
 void
