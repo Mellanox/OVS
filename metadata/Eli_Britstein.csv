@@ -243,3 +243,8 @@ Change-Id=I799bac6955d8833c478d885ebd1b419d2811478c; subject=netdev-offload-dpdk
 Change-Id=I0f41b7589d36a981d3544c1d249fbfbf85339d95; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I53fb3c131aab693363d0c490b7f80fb1053af43f; subject=boot: Move boot_git_sha.txt creation to boot and only if not-empty; feature=bug_fixes; upstream_status=NA; general=;
 Change-Id=I2273cc13344204e220a335ae3997eb74b62e66ad; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ic7ab81dbb38653e56d8154a51455428d083e94a9; subject=netdev-dpdk: Introduce netdev-dpdk metes API; feature=ovs_dpdk_meter; upstream_status=in_progress; general=;
+Change-Id=I9a55aede48eeed8b3cc524a379cb53ee072a105e; subject=netdev-dpdk: Use esw_mgr_port_id as a port-id argument for rte_flow_*(); feature=ovs_dpdk_meter; upstream_status=in_progress; general=;
+Change-Id=I103c75e86eb8424b3f4c88e6cff9fb3456229e0d; subject=netdev-offload-dpdk: Match port_id as an item; feature=ovs_dpdk_meter; upstream_status=in_progress; general=;
+Change-Id=Ia7f47ac979af2ecaf58d9297f059f96a67a87019; subject=netdev-dpdk: Set esw_mgr_port_id to the switch manager port id; feature=ovs_dpdk_meter; upstream_status=in_progress; general=;
+Change-Id=Ic99f5e5b8065e92839c2aea3bf4862f8345d8fcb; subject=netdev-offload-dpdk: Support meter action; feature=ovs_dpdk_meter; upstream_status=in_progress; general=;

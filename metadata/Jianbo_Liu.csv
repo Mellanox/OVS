@@ -9,3 +9,4 @@ Change-Id=Ia74e544fff1365b5172de71141ba6cde4a45d1ee; subject=dpif-netlink: Clean
 Change-Id=I3412588136cd2f6e70feae44e57f2118d57520db; subject=netdev-offload-tc: Offloading rules with police actions; feature=metering; upstream_status=in_progress; general=;
 Change-Id=Idebc66ac5f34105a4758a3c6a536477bfb04f525; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=Ic5a15a45527207d22982f6636921862ac8feb007; subject=dpif-netlink: Do not dump more than TCA_ACT_MAX_PRIO actions per batch; feature=metering; upstream_status=in_progress; general=;
+Change-Id=Ie80c7ce099ba9c3ac9978ffb6841f1b37fbfcbef; subject=dpif-offload: Add meter offload; feature=ovs_dpdk_meter; upstream_status=in_progress; general=;

@@ -98,3 +98,7 @@ Change-Id=I72b447940fe1b9115e8a40f7d3cb74c31f46931b; subject=Revert "netdev-offl
 Change-Id=I26cc3db896f4ab3114e8153f73563129ad6728da; subject=Revert "netdev-offload: Introduce register sFlow upcall callback API"; feature=sflow; upstream_status=in_progress; general=;
 Change-Id=Id45d1cc5f84aff1b18966c4a34c833472ae2b4cb; subject=Revert "compat: Add psample and tc sample action defines for older kernels"; feature=sflow; upstream_status=in_progress; general=;
 Change-Id=I0e5e6fb36d1f01258c02966ab9b463de04b45e01; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I15a2423b6394ef18e89aa9df514dda4ec53ee6cf; subject=dpif-offload-netdev.c: Implement dpif-offload-provider API; feature=ovs_dpdk_meter; upstream_status=in_progress; general=;
+Change-Id=I2dd2ef8529309bd97f58dfaee3d4b70c78c522a0; subject=dpif-offload-netdev: Implement dpif-offload-provider meter API; feature=ovs_dpdk_meter; upstream_status=in_progress; general=;
+Change-Id=I979104ebd6e8781a0ae6d107a9cdb5f7c8136e68; subject=netdev-dpdk: Ref/unref meters functions; feature=ovs_dpdk_meter; upstream_status=in_progress; general=;
+Change-Id=Ib2548cbb50a10e0da58fefbdbb2ef4ddb65ff014; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
