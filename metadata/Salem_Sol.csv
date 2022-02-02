@@ -89,3 +89,12 @@ Change-Id=Ie3de154c3694fdbe029b767636f228e7f86b0c0d; subject=netdev-offload-dpdk
 Change-Id=I3ca27b0b928aa0d6650d2651ad95c4b9d766fd77; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I00e675010afd488b52c2dfe98d9dd2e9fa8c8981; subject=netdev-offload-dpdk: Remove netdev struct from ufid_to_rte_flow_data; feature=bug_fixes; upstream_status=ignore; general=;
 Change-Id=I6503b194fd324ee7bf4b5958017a0dcc632d9077; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ib3c1e4222ab2d2b3ac2a953a29cd2515d6dba452; subject=Revert "netdev-offload-tc: Add offload support for sFlow"; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=Id7a4e743c7a54f979faa9e2c82828132e8a21a38; subject=Revert "netdev-offload-tc: Add psample receive handler"; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=I60c202e0b2342d520a29a29813536e5b07f041a4; subject=Revert "netdev-offload-tc: Create psample netlink socket"; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=Id8f02d70017d62c585a2988092cebfc734d71c06; subject=Revert "netdev-offload-tc: Introduce group ID management API"; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=I2e6b5d15742ae0cfe77a8eeddf7b4a507dbb9ad5; subject=Revert "dpif-netlink: Implement register sFlow upcall callback API"; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=I72b447940fe1b9115e8a40f7d3cb74c31f46931b; subject=Revert "netdev-offload-tc: Implement register sFlow upcall callback API"; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=I26cc3db896f4ab3114e8153f73563129ad6728da; subject=Revert "netdev-offload: Introduce register sFlow upcall callback API"; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=Id45d1cc5f84aff1b18966c4a34c833472ae2b4cb; subject=Revert "compat: Add psample and tc sample action defines for older kernels"; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=I0e5e6fb36d1f01258c02966ab9b463de04b45e01; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;

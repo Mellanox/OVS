@@ -19,3 +19,10 @@ Change-Id=I403dacc02f9475a09c029559ebc65742d5cc9956; subject=netdev-offload-tc: 
 Change-Id=Ida663e3c1dca8fcdf022088020b9cd3ce9e928d0; subject=netdev-offload-tc: Create psample netlink socket; feature=sflow; upstream_status=in_progress; general=;
 Change-Id=I1b9649d5dd53950ac9c06aaf5565b7bdb0571739; subject=netdev-offload-tc: Add psample receive handler; feature=sflow; upstream_status=in_progress; general=;
 Change-Id=Idcd2a3d58d4d80bfe1a1c0bf29744cc64f5aa0bd; subject=netdev-offload-tc: Add offload support for sFlow; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=I67822667494230bdc1d1f4b2217d019a65486ad3; subject=compat: Add psample and tc sample action defines for older kernels; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=I880b8b2aebbf6886fd8064409108ee59974ff195; subject=dpif-offload-provider: Introduce dpif-offload-provider layer; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=Ibb000960434ee428b66719dd90d14facba3cf5f6; subject=netdev-offload-tc: Introduce group ID management API; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=I950c3cc3c7092c3d87602da8928ad4aa2df4f38a; subject=dpif-offload-netlink: Implement dpif-offload-provider API; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=I40e0add3bff69751d8f957e5eeff58c665dd5d45; subject=ofproto: Introduce API to process sFlow offload packet; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=Ic73cb614a51fee1cb3f6e606c6fccaf3de70c437; subject=netdev-offload-tc: Add offload support for sFlow; feature=sflow; upstream_status=in_progress; general=;
+Change-Id=Iab54cbdd18fea3cc99d707cdbde103ecd9a17341; subject=system-offloads-traffic.at: Add sFlow offload test cases; feature=sflow; upstream_status=in_progress; general=;
