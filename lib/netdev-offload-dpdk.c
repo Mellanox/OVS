@@ -2915,10 +2915,10 @@ create_offload_flow(struct netdev *netdev,
                     goto err;
                 }
             }
-            if (add_miss_flow(netdev, fi->devargs, next_table_id,
-                              act_resources->flow_miss_ctx_id, act_vars)) {
-                goto err;
-            }
+        }
+        if (add_miss_flow(netdev, fi->devargs, next_table_id,
+                          act_resources->flow_miss_ctx_id, act_vars)) {
+            goto err;
         }
         act_vars->jump->group = fi->next_e2e_table_id ? fi->next_e2e_table_id
                                                       : next_table_id;
