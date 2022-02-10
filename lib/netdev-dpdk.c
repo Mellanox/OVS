@@ -4468,6 +4468,9 @@ netdev_dpdk_get_ingress_policer(const struct netdev_dpdk *dev)
     return ovsrcu_get(struct ingress_policer *, &dev->ingress_policer);
 }
 
+static void
+netdev_dpdk_meters_init(void);
+
 static int
 netdev_dpdk_class_init(void)
 {
@@ -4501,6 +4504,8 @@ netdev_dpdk_class_init(void)
 
         add_meter_policy(NETDEV_DPDK_METER_PORT_ID,
                          NETDEV_DPDK_METER_POLICY_ID);
+        netdev_dpdk_meters_init();
+
         ovsthread_once_done(&once);
     }
 
@@ -5805,12 +5810,23 @@ create_meter(uint32_t mtr_id, uint32_t profile_id,
                           &params, true, error);
 }
 
+struct netdev_dpdk_meter {
+    struct ovs_mutex mutex;
+    uint32_t refcnt;
+    bool valid;
+};
+
+enum { NETDEV_DPDK_MAX_METERS = 65536 };    /* Maximum number of meters. */
+
+struct netdev_dpdk_meter netdev_dpdk_meters[NETDEV_DPDK_MAX_METERS];
+
 int
 netdev_dpdk_meter_set(ofproto_meter_id meter_id,
                       struct ofputil_meter_config *config)
 {
     uint32_t profile_id = meter_id.uint32;
     uint32_t mtr_id = meter_id.uint32;
+    struct netdev_dpdk_meter *meter;
     struct rte_mtr_error mtr_error;
     int ret;
 
@@ -5831,6 +5847,10 @@ netdev_dpdk_meter_set(ofproto_meter_id meter_id,
                   mtr_id, profile_id, mtr_error.message);
         return ret;
     }
+    meter = &netdev_dpdk_meters[mtr_id];
+    ovs_mutex_lock(&meter->mutex);
+    meter->valid = true;
+    ovs_mutex_unlock(&meter->mutex);
 
     return ret;
 }
@@ -5838,20 +5858,25 @@ netdev_dpdk_meter_set(ofproto_meter_id meter_id,
 int
 netdev_dpdk_meter_get(ofproto_meter_id meter_id,
                       struct ofputil_meter_stats *stats,
-                      uint16_t n_bands)
+                      uint16_t n_bands OVS_UNUSED)
 {
     uint16_t port_id = NETDEV_DPDK_METER_PORT_ID;
     uint32_t mtr_id = meter_id.uint32;
+    struct netdev_dpdk_meter *meter;
     struct rte_mtr_stats mtr_stats;
     struct rte_mtr_error error;
     uint64_t stats_mask;
 
-    /* If a meter has more than one band it means it's DPDK object was not
-     * created, do not attempt to query it.
+    if (mtr_id >= NETDEV_DPDK_MAX_METERS) {
+        return -1;
+    }
+    /* If a meter's DPDK object was not created, do not attempt to query it.
      */
-    if (n_bands != 1) {
+    meter = &netdev_dpdk_meters[mtr_id];
+    if (!meter->valid) {
         return EOPNOTSUPP;
     }
+
     memset(&mtr_stats, 0x0, sizeof mtr_stats);
     if (rte_mtr_stats_read(port_id, mtr_id, &mtr_stats,
                            &stats_mask, 0, &error)) {
@@ -5883,19 +5908,87 @@ netdev_dpdk_meter_del_(uint16_t port_id, uint32_t mtr_id, uint32_t profile_id)
 int
 netdev_dpdk_meter_del(ofproto_meter_id meter_id,
                       struct ofputil_meter_stats *stats OVS_UNUSED,
-                      uint16_t n_bands)
+                      uint16_t n_bands OVS_UNUSED)
 {
     uint16_t port_id = NETDEV_DPDK_METER_PORT_ID;
     uint32_t mtr_id = meter_id.uint32;
+    struct netdev_dpdk_meter *meter;
     uint32_t profile_id = mtr_id;
+    int ret = 0;
 
-    /* If a meter has more than one band it means it's DPDK object was not
-     * created, do not attempt to destroy it.
+    if (mtr_id >= NETDEV_DPDK_MAX_METERS) {
+        return -1;
+    }
+    /* If a meter's DPDK object was not created, do not attempt to destroy it.
      */
-    if (n_bands != 1) {
+    meter = &netdev_dpdk_meters[mtr_id];
+    if (!meter->valid) {
         return EOPNOTSUPP;
     }
-    return netdev_dpdk_meter_del_(port_id, mtr_id, profile_id);
+
+    ovs_mutex_lock(&meter->mutex);
+    meter->valid = false;
+    if (meter->refcnt == 0) {
+        ret = netdev_dpdk_meter_del_(port_id, mtr_id, profile_id);
+    }
+    ovs_mutex_unlock(&meter->mutex);
+    return ret;
+}
+
+static void
+netdev_dpdk_meters_init(void)
+{
+    struct netdev_dpdk_meter *meter;
+    uint32_t meter_id;
+
+    for (meter_id = 0, meter = netdev_dpdk_meters;
+         meter_id < NETDEV_DPDK_MAX_METERS; meter_id++, meter++) {
+        ovs_mutex_init(&meter->mutex);
+        meter->refcnt = 0;
+        meter->valid = false;
+    }
+}
+
+bool
+netdev_dpdk_meter_ref(uint32_t meter_id)
+{
+    struct netdev_dpdk_meter *meter;
+    bool ret = false;
+
+    if (meter_id >= NETDEV_DPDK_MAX_METERS) {
+        return false;
+    }
+
+    meter = &netdev_dpdk_meters[meter_id];
+    ovs_mutex_lock(&meter->mutex);
+    if (meter->valid) {
+        meter->refcnt++;
+        ret = true;
+    }
+    ovs_mutex_unlock(&meter->mutex);
+    return ret;
+}
+
+void
+netdev_dpdk_meter_unref(uint32_t meter_id)
+{
+    struct netdev_dpdk_meter *meter;
+
+    if (meter_id >= NETDEV_DPDK_MAX_METERS) {
+        return;
+    }
+
+    meter = &netdev_dpdk_meters[meter_id];
+    ovs_mutex_lock(&meter->mutex);
+    meter->refcnt--;
+    if (!meter->valid && meter->refcnt == 0) {
+        uint16_t port_id = NETDEV_DPDK_METER_PORT_ID;
+        uint32_t profile_id;
+
+        profile_id = meter_id;
+        netdev_dpdk_meter_del_(port_id, meter_id, profile_id);
+    }
+    ovs_mutex_unlock(&meter->mutex);
 }
 
 #define NETDEV_DPDK_CLASS_COMMON                            \

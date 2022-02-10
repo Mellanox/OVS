@@ -94,6 +94,10 @@ netdev_dpdk_meter_get(ofproto_meter_id meter_id,
 int
 netdev_dpdk_meter_del(ofproto_meter_id meter_id,
                       struct ofputil_meter_stats *stats, uint16_t n_bands);
+bool
+netdev_dpdk_meter_ref(uint32_t meter_id);
+void
+netdev_dpdk_meter_unref(uint32_t meter_id);
 
 #else
 
