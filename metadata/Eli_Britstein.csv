@@ -234,3 +234,5 @@ Change-Id=I16f7ca1f2c5eb39ea3b6b2249dac97fb9c4fd058; subject=Makefile.am: Touch 
 Change-Id=I589026eeba4de932485424620afe0609d15e8a8f; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=I9aec65add3899e61b883c02efb85463570f697f7; subject=Revert "Makefile.am: Touch lib/util.c to refresh SHA"; feature=ofed_scripts; upstream_status=NA; general=;
 Change-Id=I45acfd7f8ac2a8da8dfbd6dca409982bdb0b9e5f; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ie06dbbe5b64609b0a3064ed467cf16d058b3d90f; subject=netdev-offload-dpdk: Fix not applying miss flow; feature=bug_fixes; upstream_status=NA; general=;
+Change-Id=I98a3bf8976da3a520bf0065ca72515959ba25234; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
