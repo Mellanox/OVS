@@ -236,3 +236,5 @@ Change-Id=I9aec65add3899e61b883c02efb85463570f697f7; subject=Revert "Makefile.am
 Change-Id=I45acfd7f8ac2a8da8dfbd6dca409982bdb0b9e5f; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=Ie06dbbe5b64609b0a3064ed467cf16d058b3d90f; subject=netdev-offload-dpdk: Fix not applying miss flow; feature=bug_fixes; upstream_status=NA; general=;
 Change-Id=I98a3bf8976da3a520bf0065ca72515959ba25234; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I740ca53addddeddcb31e43534f6305c98d9c02f0; subject=conntrack: Fix no offload with empty NAT configuration; feature=bug_fixes; upstream_status=NA; general=;
+Change-Id=I4c80b58a557590728f184ebe0759c06e1a4defda; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
