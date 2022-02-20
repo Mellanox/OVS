@@ -1628,10 +1628,9 @@ conntrack_offload_fill_item_add(struct ct_flow_offload_item *item,
 static void
 conntrack_offload_prepare_add(struct conn *conn,
                               struct dp_packet *packet,
-                              void *dp)
+                              void *dp,
+                              bool reply)
 {
-    /* nat_conn has opposite directions. */
-    bool reply = !!conn->master_conn ^ packet->md.reply;
     int dir = ct_get_packet_dir(reply);
 
     conn->offloads.dir_info[dir].port = packet->md.in_port.odp_port;
@@ -1750,7 +1749,7 @@ conntrack_offload_add_conn(struct conntrack *ct,
 
     if ((reply && !(conn->offloads.flags & CT_OFFLOAD_REP)) ||
         (!reply && !(conn->offloads.flags & CT_OFFLOAD_INIT))) {
-        conntrack_offload_prepare_add(conn, packet, ct->dp);
+        conntrack_offload_prepare_add(conn, packet, ct->dp, reply);
         conn->offloads.flags |= reply ? CT_OFFLOAD_REP : CT_OFFLOAD_INIT;
         if (conn->master_conn) {
             conn->master_conn->offloads.flags |= reply
@@ -1853,16 +1852,14 @@ conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
         }
         conn = packet->md.conn ? packet->md.conn : ctx.conn;
         if ((packet->md.ct_state & CS_ESTABLISHED) && conn) {
-            /* nat_conn has opposite directions. */
-            bool reply = !!conn->master_conn ^ packet->md.reply;
-
             if (netdev_is_flow_api_enabled() &&
                 !(conn->offloads.flags & CT_OFFLOAD_SKIP)) {
                 conntrack_offload_add_conn(ct, packet, conn, mark, label,
-                                           reply);
+                                           ctx.reply);
             }
             if (ct_e2e_cache_enabled) {
-                e2e_cache_trace_add_ct(ct, packet, conn, reply, mark, label);
+                e2e_cache_trace_add_ct(ct, packet, conn, ctx.reply, mark,
+                                       label);
             }
         }
     }
