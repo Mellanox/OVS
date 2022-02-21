@@ -253,6 +253,7 @@ connections {
             $ifname-$version : child-defaults {
                 local_ts = $local_ip/$subnet [gre]
                 remote_ts = $remote_ip/$subnet [gre]
+                hw_offload = $hw_offload
             }
         }
     }
@@ -270,6 +271,7 @@ connections {
             $ifname-$version : child-defaults {
                 local_ts = $local_ip/$subnet [gre]
                 remote_ts = $remote_ip/$subnet [gre]
+                hw_offload = $hw_offload
             }
         }
     }
@@ -287,10 +289,12 @@ connections {
             $ifname-in-$version : child-defaults {
                 local_ts = $local_ip/$subnet [udp/6081]
                 remote_ts = $remote_ip/$subnet [udp]
+                hw_offload = $hw_offload
             }
             $ifname-out-$version : child-defaults {
                 local_ts = $local_ip/$subnet [udp]
                 remote_ts = $remote_ip/$subnet [udp/6081]
+                hw_offload = $hw_offload
             }
         }
 
@@ -309,10 +313,12 @@ connections {
             $ifname-in-$version : child-defaults {
                 local_ts = $local_ip/$subnet [tcp/7471]
                 remote_ts = $remote_ip/$subnet [tcp]
+                hw_offload = $hw_offload
             }
             $ifname-out-$version : child-defaults {
                 local_ts = $local_ip/$subnet [tcp]
                 remote_ts = $remote_ip/$subnet [tcp/7471]
+                hw_offload = $hw_offload
             }
         }
     }
@@ -330,10 +336,12 @@ connections {
             $ifname-in-$version : child-defaults {
                 local_ts = $local_ip/$subnet [udp/4789]
                 remote_ts = $remote_ip/$subnet [udp]
+                hw_offload = $hw_offload
             }
             $ifname-out-$version : child-defaults {
                 local_ts = $local_ip/$subnet [udp]
                 remote_ts = $remote_ip/$subnet [udp/4789]
+                hw_offload = $hw_offload
             }
         }
     }
@@ -446,6 +454,11 @@ connections {
         vals = tunnel.conf.copy()
         vals["auth_section"] = auth_section
         vals["version"] = tunnel.version
+
+        #check if offload is required
+        hw_offload = subprocess.run("ovs-vsctl get Open_vSwitch . other_config".split(), stdout=subprocess.PIPE).stdout.decode('utf-8')
+        vals["hw_offload"] = "full" if "hw-offload=\"true\"" in hw_offload else "no"
+
         if tunnel.conf["address_family"] == "IPv6":
             vals["local_addrs"] = "::/0"
             vals["subnet"] = "64"
