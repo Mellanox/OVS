@@ -7,3 +7,4 @@ Change-Id=I7801ed2e4d1998146c84e011e4d9afbded5eb2df; subject=Revert "IPsec: Adde
 Change-Id=I6793c8890deb8ed6bcd5227b49f7ce4361dbb11d; subject=ovs-monitor-ipsec: Migration from ipsec.conf to swanctl.conf; feature=ipsec_full; upstream_status=in_progress; general=;
 Change-Id=I8bc2fc24ec4cd10a86c6d265e39b4e50a3fff24e; subject=ovs-monitor-ipsec: Add IPsec HW offload; feature=ipsec_full; upstream_status=in_progress; general=;
 Change-Id=I053f0ba5432a758b53071bd9b41df1e83965217c; subject=ovs-monitor-ipsec: Add work around for IPsec full offload; feature=ipsec_full; upstream_status=ignore; general=;
+Change-Id=Icec705922060bed9d325fb4dd33ab0438aee7bd5; subject=deb: Update openvswitch-ipsec dependencies; feature=ofed_scripts; upstream_status=in_progress; general=;
