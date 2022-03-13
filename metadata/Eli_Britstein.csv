@@ -241,3 +241,5 @@ Change-Id=I4c80b58a557590728f184ebe0759c06e1a4defda; subject=Update metadata; fe
 Change-Id=Ie6bb246beda78382f295f22469e9259b5ead2d6f; subject=netdev-offload-dpdk: Set pre_ct_tuple_rewrite only for tupple change; feature=ovs_dpdk_ct; upstream_status=NA; general=;
 Change-Id=I799bac6955d8833c478d885ebd1b419d2811478c; subject=netdev-offload-dpdk: Support set ipv4 ttl and ipv6 hop limit; feature=ovs_dpdk_mt_flow; upstream_status=NA; general=;
 Change-Id=I0f41b7589d36a981d3544c1d249fbfbf85339d95; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I53fb3c131aab693363d0c490b7f80fb1053af43f; subject=boot: Move boot_git_sha.txt creation to boot and only if not-empty; feature=bug_fixes; upstream_status=NA; general=;
+Change-Id=I2273cc13344204e220a335ae3997eb74b62e66ad; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
