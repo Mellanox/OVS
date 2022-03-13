@@ -418,8 +418,6 @@ AC_DEFUN([OVS_CHECK_DPDK], [
          ;;
     esac
 
-    git rev-parse --short HEAD > boot_git_sha.txt
-
     ovs_save_CFLAGS="$CFLAGS"
     ovs_save_LDFLAGS="$LDFLAGS"
     CFLAGS="$CFLAGS $DPDK_INCLUDE"
