@@ -9,3 +9,4 @@ Change-Id=I8bc2fc24ec4cd10a86c6d265e39b4e50a3fff24e; subject=ovs-monitor-ipsec: 
 Change-Id=I053f0ba5432a758b53071bd9b41df1e83965217c; subject=ovs-monitor-ipsec: Add work around for IPsec full offload; feature=ipsec_full; upstream_status=ignore; general=;
 Change-Id=Icec705922060bed9d325fb4dd33ab0438aee7bd5; subject=deb: Update openvswitch-ipsec dependencies; feature=ofed_scripts; upstream_status=in_progress; general=;
 Change-Id=If3749207c8084d67fb6cd085e20ba879c3ba1b2d; subject=rhel/usr_lib_systemd_system_openvswitch-ipsec.service: change default ike-deamon to strongswan; feature=ipsec_full; upstream_status=NA; general=;
+Change-Id=I1102db3877b6c3f0bda7419eab7ee274565e7e43; subject=Revert "ovs-monitor-ipsec: Add work around for IPsec full offload"; feature=ipsec_full; upstream_status=ignore; general=;
