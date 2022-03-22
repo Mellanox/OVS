@@ -20,6 +20,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from string import Template
 
 import ovs.daemon
@@ -119,6 +120,7 @@ conn-defaults {
       unique = replace
       reauth_time = 0
       version = 2
+      mobike = no
       proposals = aes128-sha256-x25519
 }
 
@@ -524,6 +526,9 @@ connections {
         self.update_ipsec_connections()
 
     def update_ipsec_connections(self):
+        cmd = "service strongswan-starter restart"
+        subprocess.run(cmd.split(), stdout=subprocess.PIPE)
+        time.sleep(1)
         process = subprocess.Popen((self.SWANCTL + " --load-all").split(),
                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         err = str(process.stderr.read())
