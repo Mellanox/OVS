@@ -250,3 +250,5 @@ Change-Id=Ia7f47ac979af2ecaf58d9297f059f96a67a87019; subject=netdev-dpdk: Set es
 Change-Id=Ic99f5e5b8065e92839c2aea3bf4862f8345d8fcb; subject=netdev-offload-dpdk: Support meter action; feature=ovs_dpdk_meter; upstream_status=in_progress; general=;
 Change-Id=Ia6bcaef1021e819aa3701bb24e386549e2723590; subject=Makefile.am: Fix empty SHA with debian build; feature=bug_fixes; upstream_status=NA; general=;
 Change-Id=I04abffd8addcc461b171254d1d295b0bf7c7cc31; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=Ia8b11cd7f69634ea4b1975bcac9e0642c20c507d; subject=netdev-offload-dpdk: Remove partial offload support; feature=bug_fixes; upstream_status=NA; general=;
+Change-Id=I591a3c5059fac7fe7dd769eba58352cbe7644f4b; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
