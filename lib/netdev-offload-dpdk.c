@@ -248,7 +248,6 @@ struct ufid_to_rte_flow_data {
     struct cmap_node node;
     ovs_u128 ufid;
     struct flows_handle flows;
-    bool actions_offloaded;
     struct dpif_flow_stats stats;
     struct act_resources act_resources;
     struct ovs_mutex lock;
@@ -395,7 +394,7 @@ ufid_to_rte_flow_data_find_protected(struct netdev *netdev,
 
 static inline struct ufid_to_rte_flow_data *
 ufid_to_rte_flow_associate(const ovs_u128 *ufid, struct netdev *netdev,
-                           struct flows_handle *flows, bool actions_offloaded,
+                           struct flows_handle *flows,
                            struct act_resources *act_resources,
                            bool abort_on_dup)
 {
@@ -428,7 +427,6 @@ ufid_to_rte_flow_associate(const ovs_u128 *ufid, struct netdev *netdev,
 
     data = xzalloc(sizeof *data);
     data->ufid = *ufid;
-    data->actions_offloaded = actions_offloaded;
     memcpy(&data->flows, flows, sizeof data->flows);
     memcpy(&data->act_resources, act_resources, sizeof data->act_resources);
     ovs_mutex_init(&data->lock);
@@ -2490,8 +2488,6 @@ dump_flow_action(struct ds *s, struct ds *s_extra,
             ds_put_format(s, "id %d ", mark->id);
         }
         ds_put_cstr(s, "/ ");
-    } else if (actions->type == RTE_FLOW_ACTION_TYPE_RSS) {
-        ds_put_cstr(s, "rss / ");
     } else if (actions->type == RTE_FLOW_ACTION_TYPE_COUNT) {
         const struct rte_flow_action_count *count = actions->conf;
 
@@ -2843,8 +2839,8 @@ add_e2e_miss_flow(struct netdev *netdev,
                 netdev_get_name(netdev), flow_item.rte_flow[0],
                 UUID_ARGS((struct uuid *) &ufid));
     add_flow_item(&flows, &flow_item);
-    if (!ufid_to_rte_flow_associate(&ufid, netdev, &flows, true,
-                                    &act_resources, false)) {
+    if (!ufid_to_rte_flow_associate(&ufid, netdev, &flows, &act_resources,
+                                    false)) {
         netdev_offload_dpdk_destroy_flow(netdev, flow_item.rte_flow[0],
                                          netdev_offload_thread_id(), &ufid);
         free_flow_handle(&flows, false);
@@ -4034,77 +4030,6 @@ parse_flow_match(struct netdev *netdev,
 }
 
 static void
-add_flow_mark_rss_actions(struct flow_actions *actions,
-                          uint32_t flow_mark,
-                          const struct netdev *netdev)
-{
-    struct rte_flow_action_mark *mark;
-    struct action_rss_data {
-        struct rte_flow_action_rss conf;
-        uint16_t queue[0];
-    } *rss_data;
-    BUILD_ASSERT_DECL(offsetof(struct action_rss_data, conf) == 0);
-    int i;
-
-    mark = per_thread_xzalloc(sizeof *mark);
-
-    mark->id = flow_mark;
-    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_MARK, mark);
-
-    rss_data = per_thread_xmalloc(sizeof *rss_data +
-                                  netdev_n_rxq(netdev) *
-                                  sizeof rss_data->queue[0]);
-    *rss_data = (struct action_rss_data) {
-        .conf = (struct rte_flow_action_rss) {
-            .func = RTE_ETH_HASH_FUNCTION_DEFAULT,
-            .level = 0,
-            .types = 0,
-            .queue_num = netdev_n_rxq(netdev),
-            .queue = rss_data->queue,
-            .key_len = 0,
-            .key  = NULL
-        },
-    };
-
-    /* Override queue array with default. */
-    for (i = 0; i < netdev_n_rxq(netdev); i++) {
-       rss_data->queue[i] = i;
-    }
-
-    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_RSS, &rss_data->conf);
-    add_flow_action(actions, RTE_FLOW_ACTION_TYPE_END, NULL);
-}
-
-static struct rte_flow *
-netdev_offload_dpdk_mark_rss(struct flow_patterns *patterns,
-                             struct netdev *netdev,
-                             uint32_t flow_mark,
-                             struct act_vars *act_vars)
-{
-    struct flow_actions actions = { .actions = NULL, .cnt = 0 };
-    struct flow_item flow_item = { .devargs = NULL };
-    const struct rte_flow_attr flow_attr = {
-        .group = 0,
-        .priority = 0,
-        .ingress = 1,
-        .egress = 0
-    };
-    struct rte_flow_error error;
-
-    if (act_vars->is_e2e_cache_flow) {
-        return NULL;
-    }
-
-    add_flow_mark_rss_actions(&actions, flow_mark, netdev);
-
-    create_rte_flow(netdev, &flow_attr, patterns->items, actions.actions,
-                    &error, &flow_item, 0, act_vars);
-
-    free_flow_actions(&actions, true);
-    return flow_item.rte_flow[0];
-}
-
-static void
 add_empty_sample_action(int ratio,
                         struct flow_actions *actions)
 {
@@ -4876,8 +4801,8 @@ add_miss_flow(struct netdev *netdev,
                 netdev_get_name(netdev), flow_item.rte_flow[0],
                 UUID_ARGS((struct uuid *) &ufid));
     add_flow_item(&flows, &flow_item);
-    if (!ufid_to_rte_flow_associate(&ufid, netdev, &flows, true,
-                                    &act_resources, false)) {
+    if (!ufid_to_rte_flow_associate(&ufid, netdev, &flows, &act_resources,
+                                    false)) {
         netdev_offload_dpdk_destroy_flow(netdev, flow_item.rte_flow[0],
                                          netdev_offload_thread_id(), &ufid);
         free_flow_handle(&flows, false);
@@ -5292,8 +5217,8 @@ add_ct_nat_miss(struct netdev *netdev,
                 netdev_get_name(netdev), flow_item.rte_flow[0],
                 UUID_ARGS((struct uuid *) &ufid));
     add_flow_item(&flows, &flow_item);
-    if (!ufid_to_rte_flow_associate(&ufid, netdev, &flows, true,
-                                    &act_resources, false)) {
+    if (!ufid_to_rte_flow_associate(&ufid, netdev, &flows, &act_resources,
+                                    false)) {
         netdev_offload_dpdk_destroy_flow(netdev, flow_item.rte_flow[0],
                                          netdev_offload_thread_id(), &ufid);
         free_flow_handle(&flows, false);
@@ -5727,10 +5652,8 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
     struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
     struct flows_handle flows = { .items = NULL, .cnt = 0 };
     struct act_vars act_vars = { .vport = ODPP_NONE };
-    struct flow_item flow_item = { .devargs = NULL };
     struct ufid_to_rte_flow_data *flows_data = NULL;
     struct rte_flow_item_port_id *port_id_spec;
-    bool actions_offloaded = true;
     int ret;
 
     act_vars.is_e2e_cache_flow = info->is_e2e_cache_flow;
@@ -5753,34 +5676,11 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
                                       actions_len, ufid, &act_resources,
                                       &act_vars, &flows);
     if (ret) {
-        /* If we failed to offload the rule actions fallback to MARK+RSS
-         * actions.
-         */
-        actions_offloaded = false;
-        if (act_vars.vport == ODPP_NONE && act_vars.recirc_id == 0) {
-            flow_item.rte_flow[0] =
-                netdev_offload_dpdk_mark_rss(&patterns, netdev,
-                                             info->flow_mark, &act_vars);
-        } else {
-            flow_item.rte_flow[0] = NULL;
-        }
-        ret = flow_item.rte_flow[0] ? 0 : -1;
-        if (ret) {
-            goto out;
-        }
-        VLOG_DBG_RL(&rl, "%s: installed flow %p by ufid "UUID_FMT,
-                    netdev_get_name(netdev), flow_item.rte_flow[0],
-                    UUID_ARGS((struct uuid *)ufid));
-        add_flow_item(&flows, &flow_item);
-    }
-
-    if (ret) {
         goto out;
     }
 
     flows_data = ufid_to_rte_flow_associate(ufid, netdev, &flows,
-                                            actions_offloaded, &act_resources,
-                                            true);
+                                            &act_resources, true);
 
 out:
     if (ret) {
@@ -5991,12 +5891,6 @@ netdev_offload_dpdk_flow_get(struct netdev *netdev,
     }
 
     attrs->offloaded = true;
-    if (!rte_flow_data->actions_offloaded) {
-        attrs->dp_layer = "ovs";
-        memset(stats, 0, sizeof *stats);
-        goto out;
-    }
-
     attrs->dp_layer = "dpdk";
     for (i = 0; i < rte_flow_data->flows.cnt; i++) {
         struct flow_item *fi = &rte_flow_data->flows.items[i];
