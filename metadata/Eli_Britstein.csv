@@ -252,3 +252,5 @@ Change-Id=Ia6bcaef1021e819aa3701bb24e386549e2723590; subject=Makefile.am: Fix em
 Change-Id=I04abffd8addcc461b171254d1d295b0bf7c7cc31; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
 Change-Id=Ia8b11cd7f69634ea4b1975bcac9e0642c20c507d; subject=netdev-offload-dpdk: Remove partial offload support; feature=bug_fixes; upstream_status=NA; general=;
 Change-Id=I591a3c5059fac7fe7dd769eba58352cbe7644f4b; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
+Change-Id=I3e1a31f339814cd76196bbb98801f69642c3a3f6; subject=netdev-dpdk-vdpa: Fix finding the correct vdpa-dev; feature=bug_fixes; upstream_status=NA; general=;
+Change-Id=I65c267eb41a676ca4548a3d2322e53532cb2503d; subject=Update metadata; feature=ofed_scripts; upstream_status=ignore; general=;
