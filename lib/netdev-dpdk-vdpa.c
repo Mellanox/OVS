@@ -718,6 +718,26 @@ bus_name_cmp(const struct rte_bus *bus, const void *name)
     return strncmp(bus->name, name, strlen(bus->name));
 }
 
+static bool
+netdev_dpdk_vdpa_is_same_dev(const char *vf_devargs, const char *dev_name)
+{
+    size_t len;
+    char *p;
+
+    p = strstr(vf_devargs, dev_name);
+    if (!p) {
+        return false;
+    }
+    len = strlen(dev_name);
+    /* The name ends with at least one devarg (class=vdpa). Check for end of
+     * string or the delimiter is ','.
+     */
+    if (p[len] == '\0' || p[len] == ',') {
+        return true;
+    }
+    return false;
+}
+
 static int
 netdev_dpdk_vdpa_config_hw_impl(struct netdev_dpdk_vdpa_relay *relay)
 {
@@ -778,9 +798,15 @@ netdev_dpdk_vdpa_config_hw_impl(struct netdev_dpdk_vdpa_relay *relay)
                      "mode", relay->rte_dev->name);
             goto err_probe;
         }
-        if (strstr(vf_devargs, relay->rte_dev->name)) {
+        if (netdev_dpdk_vdpa_is_same_dev(vf_devargs, relay->rte_dev->name)) {
             break;
         }
+        relay->vdpa_dev = NULL;
+    }
+    if (!relay->vdpa_dev) {
+        VLOG_ERR("Failed to find vdpa device id for %s, working in SW mode",
+                 relay->rte_dev->name);
+        goto err_probe;
     }
 
     err = rte_vhost_driver_register(vhost_path, RTE_VHOST_USER_CLIENT);
