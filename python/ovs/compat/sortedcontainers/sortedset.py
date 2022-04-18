@@ -2,7 +2,10 @@
 
 """
 
-from collections import Set, MutableSet, Sequence
+try:
+        from collections.abc import Set, MutableSet, Sequence
+except ImportError:
+        from collections import Set, MutableSet, Sequence
 from itertools import chain
 import operator as op
 
