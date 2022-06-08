@@ -126,10 +126,9 @@ netdev_dpdk_vdpa_port_from_name(const char *name)
     int port_id;
     size_t len;
 
-    len = strlen(name);
     for (port_id = 0; port_id < RTE_MAX_ETHPORTS; port_id++) {
         if (rte_eth_dev_is_valid_port(port_id) &&
-            !strncmp(name, rte_eth_devices[port_id].device->name, len)) {
+            !strcmp(name, rte_eth_devices[port_id].device->name)) {
             return port_id;
         }
     }
